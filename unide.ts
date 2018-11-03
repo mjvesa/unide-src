@@ -1,5 +1,6 @@
 // UniDe Universal Designer for components
 import modelToLitElement from "./modeltolit.js";
+import {PaletteDefinition,PaletteEntry,PaletteSection,paletteContent} from "./curated_header";
 
 let initialDesign = `div
   (
@@ -144,7 +145,7 @@ let dropElement = e => {
   let marker = document.getElementById("marker");
   marker.style.display = "none";
   let target = document.elementFromPoint(e.clientX, e.clientY);
-  let index = target.getAttribute("data-design-id") | 0;
+  let index = Number(target.getAttribute("data-design-id"));
   if (index >= previousBegin && index <= previousEnd) {
     // Do not allow dropping on itself
     return;
@@ -175,11 +176,11 @@ let selectElement = e => {
   let target = document.elementFromPoint(e.clientX, e.clientY);
   let designId = target.getAttribute("data-design-id");
   if (designId) {
-    selectedElement = designId | 0;
+    selectedElement = Number(designId);
     // Mini interpreter for extracting property values
     let stack = [];
     let props = "";
-    let ip = (designId | 0) + 1;
+    let ip = Number(designId) + 1;
     let value = currentDesign[ip].trim();
     while (value !== "(" && value !== ")" && ip < currentDesign.length) {
       if (value === "=") {
@@ -192,14 +193,14 @@ let selectElement = e => {
       ip++;
       value = currentDesign[ip].trim();
     }
-    document.getElementById("attributes").value = props;
+    (document.getElementById("attributes") as HTMLInputElement ).value = props;
     e.preventDefault();
     e.stopPropagation();
   }
 };
 
 let saveAttributes = () => {
-  let attributeString = document.getElementById("attributes").value;
+  let attributeString = (document.getElementById("attributes") as HTMLInputElement).value;
   let attributesAsStrings = attributeString.split("\n");
   let attributes = [];
   for (let i in attributesAsStrings) {
@@ -320,14 +321,14 @@ const populatePalette = () => {
   palette.innerHTML = "";
 
   // TODO gather designs from local storage and create a section for them
-  let designs = window.localStorage.getItem("designs");
+  //let designs = window.localStorage.getItem("designs");
 
   for (let j in paletteContent) {
-    let section = paletteContent[j];
+    let section : PaletteSection = paletteContent[j];
     let outer = document.createElement("div");
     outer.className = "palette-section";
     outer.innerHTML = section[0];
-    let tags = section[1];
+    let tags : PaletteEntry[] = section[1];
     outer.onmouseover = event => {
       outer.style.height = 3 + tags.length * 3 + "em";
     };
@@ -336,7 +337,7 @@ const populatePalette = () => {
     };
     palette.appendChild(outer);
     for (let i in tags) {
-      let tagAndSnippet = tags[i];
+      let tagAndSnippet : PaletteEntry = tags[i];
       let el = document.createElement("div");
       const snippet = tagAndSnippet[1];
       if (snippet) {
@@ -367,7 +368,7 @@ const populatePalette = () => {
 };
 
 let populateDesignSelector = () => {
-  let selector = document.getElementById("choose-design");
+  let selector = document.getElementById("choose-design") as HTMLSelectElement;
   selector.innerHTML = "";
   let designsStr = localStorage.getItem("designs") || "{}";
   let designs = JSON.parse(designsStr);
@@ -384,7 +385,7 @@ let populateDesignSelector = () => {
 };
 
 let saveDesign = event => {
-  let designName = document.getElementById("design-name").value;
+  let designName = (document.getElementById("design-name") as HTMLInputElement).value;
   let designsStr = localStorage.getItem("designs") || "{}";
   let designs = JSON.parse(designsStr);
   designs[designName] = currentDesign;
@@ -393,8 +394,8 @@ let saveDesign = event => {
 };
 
 let loadDesign = event => {
-  let designName = document.getElementById("choose-design").value;
-  document.getElementById("design-name").value = designName;
+  let designName = (document.getElementById("choose-design") as HTMLSelectElement).value;
+  (document.getElementById("design-name") as HTMLInputElement).value = designName;
   let designs = JSON.parse(localStorage.getItem("designs"));
   currentDesign = designs[designName];
   designStack = [];
@@ -441,7 +442,7 @@ let initDesigner = () => {
       event.preventDefault();
     }
     if (event.key === "y" && event.ctrlKey) {
-      if (redoStack.lenght > 0) {
+      if (redoStack.length > 0) {
         designStack.push(currentDesign);
         currentDesign = redoStack.pop();
         showCurrentDesign();
@@ -464,7 +465,7 @@ let initDesigner = () => {
 
   let btn = document.getElementById("showbutton");
   btn.onclick = e => {
-    document.getElementById("attributes").value = modelToLitElement(
+    (document.getElementById("attributes") as HTMLTextAreaElement).value = modelToLitElement(
       currentDesign
     );
   };

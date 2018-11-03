@@ -53,7 +53,12 @@ import "./node_modules/@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";
 import "./node_modules/@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
 import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
 import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
-let paletteContent = [
+
+export type PaletteEntry = [string, string[]];
+export type PaletteSection = [string, PaletteEntry[]];
+export type PaletteDefinition = [PaletteSection];
+
+export let paletteContent : PaletteDefinition = [
   [
     "<h2>Templates</h2>",
     [
