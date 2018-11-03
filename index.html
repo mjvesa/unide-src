@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+
+  <style>
+  body {
+    width: 100%;
+    height: 100%;
+    background-color: #223;
+    color: white;
+    overflow: hidden;
+  }
+  #container {
+    display: grid;
+    grid-template-columns: 15vw auto 15vw;
+    width: 100%;
+    height: calc(100% - 1rem);
+  }
+  #paper {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #888;
+  }
+  #palette {
+   /* width: 100%; */
+    height: 100vh;
+    overflow-y: auto;
+    padding: 1em;
+  }
+  #outline {
+    width: 100%;
+    height: 50%;
+    width: 15vw;
+  }
+
+  #outline div {
+    margin-left: 1em;
+  }
+
+  #attributes {
+    width: 100%;
+    height: 50%;
+    border: none;
+    border-top: 1px solid black;
+    width: 15vw;
+    background-color: #223;
+    color: white;
+  }
+  #marker {
+    position: absolute;
+    border: 1px solid red;
+    z-index: 10000;
+  }
+  #element-preview {
+    position: absolute;
+    background-color: #aad;
+    border: 1px solid black;
+    z-index: 10000;
+    padding: 1em;
+  }
+
+  .palette-section {
+      height: 3em;
+      overflow: hidden;
+      color: #aaa;
+      transition: all 300ms ease-in-out; 
+  }
+  .palette-section:hover {
+/*      height: 20em;*/
+      color: white;
+  }
+
+  #design-details {
+    height: 1rem;
+    padding: 2px;
+    padding-left: 15vw;
+
+  }
+
+  </style>
+</head>
+  <body>
+      <span id="design-details">
+        Design name
+        <input id="design-name" type="text"></input>
+        <button id="save-design">Save Design</button>
+        <select id="choose-design">
+        </select>
+        <select id="choose-export-format">
+          <option>Choose export format</option>
+          <option>Raw model</option>
+          <option>Flow</option>
+          <option>LitElement</option>
+          <option>Preact</option>
+          <option>VanillaJS</option>
+          <option>Vaadin on Kotlin</option>
+        </select>
+        <button id="export">Export</button>
+      </span>
+      <div id="container">
+        <div id="palette">&nbsp;</div>
+        <div id="paper">paper</div>
+        <div>
+          <div id="outline">outline</div>
+          <textarea id="attributes">attributes</textarea>
+          </div>
+      </div>
+        <button id="showbutton">Show model</button>
+        <div id="marker"></div>
+        <div id="element-preview"></div>
+      <script type="module">
+          import initDesigner from "./udesigner.js";
+          initDesigner();
+      </script>
+  </body>
+</html>
