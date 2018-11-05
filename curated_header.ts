@@ -54,9 +54,10 @@ import "./node_modules/@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
 import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
 import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
 
-export type PaletteEntry = [string, string[]];
+export type PaletteEntry = [string, string[]] | [string, undefined];
 export type PaletteSection = [string, PaletteEntry[]];
-export type PaletteDefinition = [PaletteSection];
+export type PaletteDefinition = PaletteSection[];
+
 
 export let paletteContent : PaletteDefinition = [
   [
@@ -226,16 +227,16 @@ export let paletteContent : PaletteDefinition = [
       ["tabs", ["vaadin-tabs", "(", ")"]],
       ["tab", ["vaadin-tab", "(", ")"]],
       ["item", ["vaadin-item", "(", ")"]],
-      ["vaadin-grid-filter", ["vaadin-grid-filter", "(", ")"]]
+      ["grid-filter", ["vaadin-grid-filter", "(", ")"]]
     ]
   ],
   [
     "<h2>Layout</h2>",
     [
-      ["vaadin-horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
-      ["vaadin-vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
-      ["vaadin-form-layout", ["vaadin-form-layout", "(", ")"]],
-      ["vaadin-form-item", ["vaadin-form-item", "(", ")"]],
+      ["horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
+      ["vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
+      ["form-layout", ["vaadin-form-layout", "(", ")"]],
+      ["form-item", ["vaadin-form-item", "(", ")"]],
       ["split-layout", ["vaadin-split-layout", "(", ")"]]
     ]
   ],
@@ -255,10 +256,12 @@ export let paletteContent : PaletteDefinition = [
       ["grid-sorter", ["vaadin-grid-sorter", "(", ")"]],
       ["grid-outer-scroller", ["vaadin-grid-outer-scroller", "(", ")"]],
       ["list-box", ["vaadin-list-box", "(", ")"]],
-      ["upload-file", ["vaadin-upload-file", "(", ")"]],
-      ["upload", ["vaadin-upload", "(", ")"]],
       ["dialog", ["vaadin-dialog", "(", ")"]]
     ]
   ],
-  ["<h2>Misc</h2>", []]
+  ["<h2>Misc</h2>", [
+    ["upload-file", ["vaadin-upload-file", "(", ")"]],
+    ["upload", ["vaadin-upload", "(", ")"]],
+
+  ]]
 ];
