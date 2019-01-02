@@ -11,5 +11,7 @@ UniDe is an universal UI designer that is targeted as a simply prototyping tool 
 lower the bar for using Vaadin Components.
 
 The user can produce templates quickly, add navigation and finally export the
-result to the platform of choices. Exportable platforms should include all
+result to the platform of choice. Exportable platforms should include all
 platforms supported by Vaadin Components.
+
+

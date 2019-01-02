@@ -1,19 +1,45 @@
 /**
  *  Exporter from model to LitElement
  */
-let modelToLitElement = (code:string[]) => {
-  let stack:string[] = [];
-  let tree:HTMLElement[] = [];
-  let tagTree:string[] = [];
+import jsImports from "./js_imports.js";
 
-  let current:HTMLElement = document.createElement("div");
-  let currentTag:string|undefined = "";
+export let exportToLitElement = designs => {
+  let zip = new JSZip();
+  let keys = Object.keys(designs);
+  let litElements = [];
+  for (let i in keys) {
+    let key = keys[i];
+    zip.file(key + ".js", modelToLitElement(key, designs[key]));
+  }
+  zip.generateAsync({ type: "blob" }).then(content => {
+    saveAs(content, "lit-element-designs.zip");
+  });
+};
+
+let kebabToPascalCase = str => {
+  let parts = str.split("-");
+  let result = "";
+  for (let i in parts) {
+    result = result.concat(parts[i][0].toUpperCase() + parts[i].slice(1));
+  }
+  return result;
+};
+
+export let modelToLitElement = (tagName, code) => {
+  let pascalCaseName = kebabToPascalCase(tagName);
+  let importedTags = new Set();
+  let stack = [];
+  let tree = [];
+  let tagTree = [];
+
+  let current = document.createElement("div");
+  let currentTag = "";
   let currentClosed = true;
 
   let result = `import {LitElement, html} from 'https://unpkg.com/@polymer/lit-element@latest/lit-element.js?module';
-     class MyElement extends LitElement {
+     class ${pascalCaseName} extends LitElement {
        _render() {\``;
-  code.forEach((str:string, index:number) => {
+  code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
       case "(":
@@ -24,8 +50,11 @@ let modelToLitElement = (code:string[]) => {
         let old = current;
         tree.push(current);
 
-        tagTree.push(currentTag!);
-        currentTag = stack.pop()!;
+        tagTree.push(currentTag);
+        currentTag = stack.pop();
+        if (currentTag in jsImports) {
+          importedTags.add(currentTag);
+        }
 
         current = document.createElement(currentTag);
         result = result.concat("<" + currentTag);
@@ -37,7 +66,7 @@ let modelToLitElement = (code:string[]) => {
           result = result.concat(">\n");
           currentClosed = true;
         }
-        current = tree.pop()!;
+        current = tree.pop();
         result = result.concat(`</${currentTag}>\n`);
         currentTag = tagTree.pop();
         break;
@@ -45,15 +74,15 @@ let modelToLitElement = (code:string[]) => {
         let tos = stack.pop();
         let nos = stack.pop();
         if (!nos || !tos) {
-            return;
+          return;
         }
         if (nos in current) {
           try {
             let json = JSON.parse(tos);
-            (current as any)[nos] = json;
+            current[nos] = json;
             result = result.concat(` .${nos}=\$\{"{JSON.parse(tos)}"\}`);
           } catch (e) {
-            (current as any)[nos] = tos;
+            current[nos] = tos;
             result = result.concat(` .${nos}=\$\{"${tos}"\}`);
           }
         } else {
@@ -65,11 +94,19 @@ let modelToLitElement = (code:string[]) => {
         stack.push(trimmed);
     }
   });
-  return result.concat(`\`
+
+  let importStrings = "";
+
+  importedTags.forEach(tag => {
+    importStrings = importStrings.concat(`${jsImports[tag]}\n`);
+  });
+
+  return `${importStrings}
+          ${result}\`
       }
     }
-    customElements.define('my-element', MyElement);
-  `);
+    customElements.define(${tagName}, ${pascalCaseName});
+  `;
 };
 
 export default modelToLitElement;

@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   <title>Document</title>
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="./manifest.json">
+  <script src="./node_modules/jszip/dist/jszip.js"></script>
+  <script src="./node_modules/file-saver/dist/FileSaver.js"></script>
 
   <style>
   body {
@@ -101,7 +103,7 @@
           <option>VanillaJS</option>
           <option>Vaadin on Kotlin</option>
         </select>
-        <button id="export">Export</button>
+        <button id="export-design">Export</button>
       </span>
       <div id="container">
         <div id="palette">&nbsp;</div>
