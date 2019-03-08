@@ -1,18 +1,18 @@
 /**
- *  Exporter from model to LitElement
+ *  Exporter from model to preact.js
  */
 import jsImports from "./js_imports.js";
 
-export let exportToLitElement = designs => {
+export let exportToPreact = designs => {
   let zip = new JSZip();
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".js", modelToLitElement(key, designs[key]));
+    zip.file(key + ".js", modelToPreact(key, designs[key]));
   }
   zip.generateAsync({ type: "blob" }).then(content => {
-    saveAs(content, "lit-element-designs.zip");
+    saveAs(content, "preact-designs.zip");
   });
 };
 
@@ -25,7 +25,7 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let modelToLitElement = (tagName, code) => {
+export let modelToPreact = (tagName, code) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -36,9 +36,10 @@ export let modelToLitElement = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
-  let result = `import {LitElement, html} from 'https://unpkg.com/@polymer/lit-element@latest/lit-element.js?module';
-     class ${pascalCaseName} extends LitElement {
-       _render() {\``;
+  let result = `import { h, render, Component } from 'preact';
+     /** @jsx h */
+     class ${pascalCaseName} extends Component {
+       render() {\``;
   code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
@@ -76,19 +77,8 @@ export let modelToLitElement = (tagName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
-          try {
-            let json = JSON.parse(tos);
-            current[nos] = json;
-            result = result.concat(` .${nos}=\$\{"{JSON.parse(tos)}"\}`);
-          } catch (e) {
-            current[nos] = tos;
-            result = result.concat(` .${nos}=\$\{"${tos}"\}`);
-          }
-        } else {
-          result = result.concat(` ${nos}="${tos}"`);
-          current.setAttribute(nos, tos);
-        }
+        result = result.concat(` ${nos}="${tos}"`);
+        current.setAttribute(nos, tos);
         break;
       default:
         stack.push(trimmed);
@@ -105,6 +95,5 @@ export let modelToLitElement = (tagName, code) => {
           ${result}\`
       }
     }
-    customElements.define(${tagName}, ${pascalCaseName});
   `;
 };

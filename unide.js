@@ -1,7 +1,12 @@
 // UniDe Universal Designer for components
-import { modelToLitElement, exportToLitElement } from "./modeltolit";
+import { exportToLitElement } from "./modeltolit";
+import { exportToFlow } from "./modeltoflow";
+import { exportToPreact } from "./modeltopreact";
+import { exportToVanilla } from "./modeltovanilla";
+import { exportToVoK } from "./modeltovok";
 import { paletteContent } from "./curated_header.js";
-let initialDesign = `div
+import { checkModel } from "./check-model";
+const initialDesign = `div
   (
     style
     width: 100%; height: 100%;
@@ -13,8 +18,9 @@ let selectedElement;
 let storedDesigns = {};
 
 // DnD Stuff
-let markerEl = document.createElement("div");
+const markerEl = document.createElement("div");
 let previousBegin, previousEnd;
+
 // Positions for DnD
 const POSITION_BEFORE_ELEMENT = -1;
 const POSITION_CHILD_OF_ELEMENT = 0;
@@ -26,10 +32,13 @@ let redoStack = [];
 
 // Finds the first parenthesis starting from index which is not matched.
 // That paren marks the end of the component
-let findDanglingParen = (arr, index) => {
+const findDanglingParen = (arr, index) => {
   let i = index;
   let parenCount = 0;
   do {
+    if (i >= arr.length) {
+      throw "Ran out of array while dangling" + JSON.stringify(currentDesign);
+    }
     switch (arr[i].trim()) {
       case "(":
         parenCount++;
@@ -45,16 +54,17 @@ let findDanglingParen = (arr, index) => {
   return i - 1;
 };
 
-let getPaperElement = () => {
+const getPaperElement = () => {
   let el = document.getElementById("paper");
   return el;
 };
 
-let getOutlineElement = () => {
+const getOutlineElement = () => {
   return document.getElementById("outline");
 };
 
-let showCurrentDesign = () => {
+const showCurrentDesign = () => {
+  checkModel(currentDesign);
   let paper = getPaperElement();
   paper.innerHTML = "";
   linoToDOM(currentDesign, paper);
@@ -63,18 +73,18 @@ let showCurrentDesign = () => {
   linoToOutline(currentDesign, outline);
 };
 
-let startDrag = (event, snippet) => {
+const startDrag = (event, snippet) => {
   event.dataTransfer.setData("text", JSON.stringify(snippet));
   previousBegin = previousEnd = -1;
 };
 
-let showNewDesign = newDesign => {
+const showNewDesign = newDesign => {
   designStack.push(currentDesign);
   currentDesign = newDesign;
   showCurrentDesign();
 };
 
-let startDragFromModel = (elementId, event) => {
+const startDragFromModel = (elementId, event) => {
   let newDesign = currentDesign.slice();
   previousBegin = elementId - 1;
   previousEnd = findDanglingParen(currentDesign, elementId + 1);
@@ -87,7 +97,8 @@ let startDragFromModel = (elementId, event) => {
   event.dataTransfer.setData("text", JSON.stringify(elementTree));
   event.stopPropagation();
 };
-let getPositionOnTarget = (el, clientX, clientY) => {
+
+const getPositionOnTarget = (el, clientX, clientY) => {
   let bcr = el.getBoundingClientRect();
   let radius = Math.min(bcr.right - bcr.left, bcr.bottom - bcr.top) / 2;
   let midX = (bcr.left + bcr.right) / 2;
@@ -105,7 +116,7 @@ let getPositionOnTarget = (el, clientX, clientY) => {
   }
 };
 
-let placeMarker = e => {
+const placeMarker = e => {
   let marker = document.getElementById("marker");
   marker.style.display = "none";
   let target = document.elementFromPoint(e.clientX, e.clientY);
@@ -199,7 +210,7 @@ let selectElement = e => {
   }
 };
 
-let saveAttributes = () => {
+const saveAttributes = () => {
   let attributeString = document.getElementById("attributes").value;
   let attributesAsStrings = attributeString.split("\n");
   let attributes = [];
@@ -239,9 +250,8 @@ let saveAttributes = () => {
   currentDesign = newDesign;
   showCurrentDesign();
 };
-//let linoToDOM:(code:string[], target:HTMLElement, inert?:boolean) => HTMLElement;
 
-let makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
+const makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   let stack = [];
   let tree = [];
   let current;
@@ -271,7 +281,7 @@ let makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   };
 };
 
-let linoToDOM = makeLinoInterpreter(
+const linoToDOM = makeLinoInterpreter(
   `(index, inert) => {
     let old = current;
     tree.push(current);
@@ -309,7 +319,7 @@ let linoToDOM = makeLinoInterpreter(
   "str => {stack.push(str)}"
 );
 
-let linoToOutline = makeLinoInterpreter(
+const linoToOutline = makeLinoInterpreter(
   `(index, inert) => {
       let old = current;
       tree.push(current);
@@ -330,7 +340,7 @@ const createPaletteSection = (name, tags, palette) => {
   outer.className = "palette-section";
   outer.innerHTML = name;
   outer.onmouseover = event => {
-    outer.style.height = 3 + tags.length * 3 + "em";
+    outer.style.height = 5 + tags.length + "rem";
   };
   outer.onmouseout = event => {
     outer.style.height = null;
@@ -406,14 +416,14 @@ let populateDesignSelector = () => {
   }
 };
 
-let saveDesign = event => {
+const saveDesign = event => {
   let designName = document.getElementById("design-name").value;
   storedDesigns[designName] = currentDesign;
   localStorage.setItem("designs", JSON.stringify(storedDesigns));
   populateDesignSelector();
 };
 
-let loadDesign = event => {
+const loadDesign = event => {
   let designName = document.getElementById("choose-design").value;
   document.getElementById("design-name").value = designName;
   let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
@@ -423,10 +433,18 @@ let loadDesign = event => {
   showCurrentDesign();
 };
 
-let exportDesign = () => {
+const exportDesign = () => {
   let format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
+  } else if (format === "Flow") {
+    exportToFlow(storedDesigns);
+  } else if (format === "Preact") {
+    exportToPreact(storedDesigns);
+  } else if (format === "VanillaJS") {
+    exportToVanilla(storedDesigns);
+  } else if (format === "Vaadin on Kotlin") {
+    exportToVoK(storedDesigns);
   } else {
     window.alert("Export to this format not implemented yet, sorry.");
   }
@@ -450,12 +468,12 @@ const installUIEventHandlers = () => {
   document.getElementById("export-design").onclick = exportDesign;
 };
 
-let initializeDesign = () => {
+const initializeDesign = () => {
   currentDesign = initialDesign.split("\n");
   designStack.push(currentDesign);
 };
 
-let installKeyboardHandlers = () => {
+const installKeyboardHandlers = () => {
   document.body.onkeypress = event => {
     if (event.key === "z" && event.ctrlKey) {
       if (designStack.length > 0) {
@@ -494,7 +512,7 @@ const getStoredDesigns = () => {
   storedDesigns = JSON.parse(designsStr);
 };
 
-let initDesigner = () => {
+const initDesigner = () => {
   installUIEventHandlers();
   installKeyboardHandlers();
   getStoredDesigns();

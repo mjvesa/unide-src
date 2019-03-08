@@ -4,13 +4,7 @@ import "./node_modules/@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox-group.
 import "./node_modules/@vaadin/vaadin-button/theme/lumo/vaadin-button.js";
 import "./node_modules/@vaadin/vaadin-overlay/theme/lumo/vaadin-overlay.js";
 import "./node_modules/@vaadin/vaadin-date-picker/theme/lumo/vaadin-date-picker.js";
-import "./node_modules/@vaadin/vaadin-date-picker/theme/lumo/vaadin-date-picker-light.js";
-import "./node_modules/@vaadin/vaadin-date-picker/src/vaadin-infinite-scroller.js";
-import "./node_modules/@vaadin/vaadin-date-picker/src/vaadin-date-picker-overlay.js";
-import "./node_modules/@vaadin/vaadin-date-picker/src/vaadin-date-picker-overlay-content.js";
-import "./node_modules/@vaadin/vaadin-date-picker/src/vaadin-month-calendar.js";
 import "./node_modules/@vaadin/vaadin-split-layout/theme/lumo/vaadin-split-layout.js";
-import "./node_modules/@vaadin/vaadin-split-layout/test/observer-component.js";
 import "./node_modules/@vaadin/vaadin-progress-bar/theme/lumo/vaadin-progress-bar.js";
 import "./node_modules/@vaadin/vaadin-combo-box/src/vaadin-combo-box-item.js";
 import "./node_modules/@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box-light.js";
@@ -69,7 +63,7 @@ export let paletteContent = [
           "div",
           "(",
           "style",
-          "width: 100%; display:grid;grid-template-columns: 10em auto; background-color: #ddf;padding: 1em",
+          "width: 100%; display:grid;grid-template-columns: 10em auto; background-color: #ddf;padding: 1em; box-sizing:border-box;",
           "=",
           "span",
           "(",
@@ -202,27 +196,12 @@ export let paletteContent = [
       ["password-field", ["vaadin-password-field", "(", ")"]],
       ["date-picker", ["vaadin-date-picker", "(", ")"]],
       ["combo-box", ["vaadin-combo-box", "(", ")"]],
-      ["date-picker-light", ["vaadin-date-picker-light", "(", ")"]],
-      ["infinite-scroller", ["vaadin-infinite-scroller", "(", ")"]],
-      ["date-picker-overlay", ["vaadin-date-picker-overlay", "(", ")"]],
-      [
-        "date-picker-overlay-content",
-        ["date-picker-overlay-content", "(", ")"]
-      ],
-      ["month-calendar", ["vaadin-month-calendar", "(", ")"]],
       ["progress-bar", ["vaadin-progress-bar", "(", ")"]],
-      ["combo-box-item", ["vaadin-combo-box-item", "(", ")"]],
-      ["combo-box-light", ["vaadin-combo-box-light", "(", ")"]],
-      ["combo-box-dropdown", ["vaadin-combo-box-dropdown", "(", ")"]],
-      ["combo-box-dropdown-wrapper", ["combo-box-dropdown-wrapper", "(", ")"]],
       ["context-menu", ["vaadin-context-menu", "(", ")"]],
-      ["notification", ["vaadin-notification", "(", ")"]],
-      ["device-detector", ["vaadin-device-detector", "(", ")"]],
-      ["context-menu-overlay", ["vaadin-context-menu-overlay", "(", ")"]],
-      ["tabs", ["vaadin-tabs", "(", ")"]],
-      ["tab", ["vaadin-tab", "(", ")"]],
       ["item", ["vaadin-item", "(", ")"]],
-      ["grid-filter", ["vaadin-grid-filter", "(", ")"]]
+      ["notification", ["vaadin-notification", "(", ")"]],
+      ["tabs", ["vaadin-tabs", "(", ")"]],
+      ["tab", ["vaadin-tab", "(", ")"]]
     ]
   ],
   [
@@ -250,6 +229,7 @@ export let paletteContent = [
       ["grid-filter-column", ["vaadin-grid-filter-column", "(", ")"]],
       ["grid-sorter", ["vaadin-grid-sorter", "(", ")"]],
       ["grid-outer-scroller", ["vaadin-grid-outer-scroller", "(", ")"]],
+      ["grid-filter", ["vaadin-grid-filter", "(", ")"]],
       ["list-box", ["vaadin-list-box", "(", ")"]],
       ["dialog", ["vaadin-dialog", "(", ")"]]
     ]

@@ -3,7 +3,7 @@
  */
 import jsImports from "./js_imports.js";
 
-export let exportToLitElement = designs => {
+export let exportToVanilla = designs => {
   let zip = new JSZip();
   let keys = Object.keys(designs);
   let litElements = [];
@@ -25,7 +25,7 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let modelToLitElement = (tagName, code) => {
+export let modelToVanilla = (tagName, code) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -36,8 +36,10 @@ export let modelToLitElement = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
-  let result = `import {LitElement, html} from 'https://unpkg.com/@polymer/lit-element@latest/lit-element.js?module';
-     class ${pascalCaseName} extends LitElement {
+  let elementStack = [];
+  let currentElement = "this";
+
+  let result = `class ${pascalCaseName} extends HTMLElement {
        _render() {\``;
   code.forEach((str, index) => {
     let trimmed = str.trim();
@@ -77,14 +79,8 @@ export let modelToLitElement = (tagName, code) => {
           return;
         }
         if (nos in current) {
-          try {
-            let json = JSON.parse(tos);
-            current[nos] = json;
-            result = result.concat(` .${nos}=\$\{"{JSON.parse(tos)}"\}`);
-          } catch (e) {
-            current[nos] = tos;
-            result = result.concat(` .${nos}=\$\{"${tos}"\}`);
-          }
+          current[nos] = json;
+          result = result.concat(` .${nos}=\$\{"${tos}"\}`);
         } else {
           result = result.concat(` ${nos}="${tos}"`);
           current.setAttribute(nos, tos);

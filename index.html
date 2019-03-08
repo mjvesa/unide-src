@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>Document</title>
+  <title>UniDe - Universal Desiger</title>
   <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/png" href="images/unide.png" sizes="256x256">
   <script src="./node_modules/jszip/dist/jszip.js"></script>
   <script src="./node_modules/file-saver/dist/FileSaver.js"></script>
 
@@ -24,6 +25,7 @@
     height: calc(100% - 1rem);
   }
   #paper {
+    box-sizing: border-box;
     width: 100%;
     height: 100%;
     overflow: hidden;
@@ -88,6 +90,8 @@
   </style>
 </head>
   <body>
+      <div id="marker"></div>
+      <div id="element-preview"></div>
       <span id="design-details">
         Design name
         <input id="design-name" type="text"></input>
@@ -96,12 +100,16 @@
         </select>
         <select id="choose-export-format">
           <option>Choose export format</option>
-          <option>Raw model</option>
+          <option>Angular</option>
           <option>Flow</option>
           <option>LitElement</option>
           <option>Preact</option>
+          <option>Raw model</option>
+          <option>React</option>
+          <option>Svelte</option>
           <option>VanillaJS</option>
           <option>Vaadin on Kotlin</option>
+          <option>Vue</option>
         </select>
         <button id="export-design">Export</button>
       </span>
@@ -113,9 +121,6 @@
           <textarea id="attributes">attributes</textarea>
           </div>
       </div>
-        <button id="showbutton">Show model</button>
-        <div id="marker"></div>
-        <div id="element-preview"></div>
       <script type="module">
           import initDesigner from "./unide.js";
           initDesigner();
