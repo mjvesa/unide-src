@@ -5,6 +5,7 @@ import { exportToFlow } from "./modeltoflow";
 import { exportToPreact } from "./modeltopreact";
 import { exportToVanilla } from "./modeltovanilla";
 import { exportToVoK } from "./modeltovok";
+import { exportToVue } from "./modeltovue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
 const initialDesign = `div
@@ -448,6 +449,8 @@ const exportDesign = () => {
     exportToVanilla(storedDesigns);
   } else if (format === "Vaadin on Kotlin") {
     exportToVoK(storedDesigns);
+  } else if (format === "Vue") {
+    exportToVue(storedDesigns);
   } else {
     window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
