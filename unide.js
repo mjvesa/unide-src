@@ -1,4 +1,5 @@
 // UniDe Universal Designer for components
+import { exportToAngular } from "./modeltoangular";
 import { exportToLitElement } from "./modeltolit";
 import { exportToFlow } from "./modeltoflow";
 import { exportToPreact } from "./modeltopreact";
@@ -437,6 +438,8 @@ const exportDesign = () => {
   let format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
+  } else if (format === "Angular") {
+    exportToAngular(storedDesigns);
   } else if (format === "Flow") {
     exportToFlow(storedDesigns);
   } else if (format === "Preact") {
@@ -446,7 +449,7 @@ const exportDesign = () => {
   } else if (format === "Vaadin on Kotlin") {
     exportToVoK(storedDesigns);
   } else {
-    window.alert("Export to this format not implemented yet, sorry.");
+    window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
 };
 
