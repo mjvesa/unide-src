@@ -3,6 +3,7 @@ import { exportToAngular } from "./modeltoangular";
 import { exportToLitElement } from "./modeltolit";
 import { exportToFlow } from "./modeltoflow";
 import { exportToPreact } from "./modeltopreact";
+import { exportToReact } from "./modeltoreact";
 import { exportToVanilla } from "./modeltovanilla";
 import { exportToVoK } from "./modeltovok";
 import { exportToVue } from "./modeltovue";
@@ -445,6 +446,8 @@ const exportDesign = () => {
     exportToFlow(storedDesigns);
   } else if (format === "Preact") {
     exportToPreact(storedDesigns);
+  } else if (format === "React") {
+    exportToReact(storedDesigns);
   } else if (format === "VanillaJS") {
     exportToVanilla(storedDesigns);
   } else if (format === "Vaadin on Kotlin") {
