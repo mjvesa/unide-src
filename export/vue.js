@@ -1,5 +1,5 @@
 /**
- *  Exporter from model to Vue
+ *  Exporter from model to Svelte
  */
 
 import jsImports from "./js_imports.js";
@@ -37,6 +37,13 @@ export let modelToVue = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
+  let hasTextContent = false;
+  let textContent = "";
+
+  // Property name generation
+  let props = {};
+  let propCount = 0;
+
   let result = "";
 
   code.forEach((str, index) => {
@@ -44,7 +51,7 @@ export let modelToVue = (tagName, code) => {
     switch (trimmed) {
       case "(":
         if (!currentClosed) {
-          result = result.concat(">\n");
+          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
           currentClosed = true;
         }
         let old = current;
@@ -59,11 +66,12 @@ export let modelToVue = (tagName, code) => {
         current = document.createElement(currentTag);
         result = result.concat("<" + currentTag);
         old.appendChild(current);
+        hasTextContent = false;
         currentClosed = false;
         break;
       case ")":
         if (!currentClosed) {
-          result = result.concat(">\n");
+          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
           currentClosed = true;
         }
         current = tree.pop();
@@ -76,24 +84,18 @@ export let modelToVue = (tagName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
-          current[nos] = tos;
-          if (nos === "style") {
-            /*
-            result = result.concat(
-              ` v-bind:${nos}="{${tos
-                .replace(/;/g, ",")
-                .replace(/-([a-z])/g, function(g) {
-                  return g[1].toUpperCase();
-                })}}"`
-            );*/
-            result = result.concat(` ${nos}="${tos}"`);
+        if (nos in current && nos !== "style") {
+          if (nos === "textContent") {
+            hasTextContent = true;
+            textContent = tos;
           } else {
-            result = result.concat(` v-bind:${nos}="${tos}"`);
+            let propName = "prop" + propCount;
+            propCount++;
+            props[propName] = tos;
+            result = result.concat(` :${nos}.prop={${propName}}`);
           }
         } else {
           result = result.concat(` ${nos}="${tos}"`);
-          current.setAttribute(nos, tos);
         }
         break;
       default:
@@ -107,16 +109,18 @@ export let modelToVue = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
-  return `  <template>
-            <div>
-            ${result}
-            </div>
-          </template>
-          <script>
-          ${importStrings}
-          export default {
-             name: '${pascalCaseName}'
-            }
-          </script>
-          `;
+  let propString =
+    propCount > 0 ? `,data: () => {return ${JSON.stringify(props)}}` : "";
+
+  return ` 
+  <template>
+  ${result}
+  </template>
+  <script>
+  ${importStrings}
+  export default {
+    name: '${pascalCaseName}'
+    ${propString}
+  }
+  </script>`;
 };

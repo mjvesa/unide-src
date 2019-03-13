@@ -10,8 +10,7 @@ import { exportToVoK } from "./export/vok";
 import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
-const initialDesign = "";
-`div
+const initialDesign = `div
   (
     style
     width: 100%; height: 100%;
