@@ -1,16 +1,17 @@
 // UniDe Universal Designer for components
-import { exportToAngular } from "./modeltoangular";
-import { exportToLitElement } from "./modeltolit";
-import { exportToFlow } from "./modeltoflow";
-import { exportToPreact } from "./modeltopreact";
-import { exportToReact } from "./modeltoreact";
-import { exportToSvelte } from "./model_to_svelte";
-import { exportToVanilla } from "./modeltovanilla";
-import { exportToVoK } from "./modeltovok";
-import { exportToVue } from "./modeltovue";
+import { exportToAngular } from "./export/angular";
+import { exportToLitElement } from "./export/lit";
+import { exportToFlow } from "./export/flow";
+import { exportToPreact } from "./export/preact";
+import { exportToReact } from "./export/react";
+import { exportToSvelte } from "./export/svelte";
+import { exportToVanilla } from "./export/vanilla";
+import { exportToVoK } from "./export/vok";
+import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
-const initialDesign = `div
+const initialDesign = "";
+`div
   (
     style
     width: 100%; height: 100%;
