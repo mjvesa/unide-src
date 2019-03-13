@@ -40,6 +40,13 @@ export let modelToSvelte = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
+  let hasTextContent = false;
+  let textContent = "";
+
+  // Property name generation
+  let props = {};
+  let propCount = 0;
+
   let result = "";
 
   code.forEach((str, index) => {
@@ -47,7 +54,7 @@ export let modelToSvelte = (tagName, code) => {
     switch (trimmed) {
       case "(":
         if (!currentClosed) {
-          result = result.concat(">\n");
+          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
           currentClosed = true;
         }
         let old = current;
@@ -62,11 +69,12 @@ export let modelToSvelte = (tagName, code) => {
         current = document.createElement(currentTag);
         result = result.concat("<" + currentTag);
         old.appendChild(current);
+        hasTextContent = false;
         currentClosed = false;
         break;
       case ")":
         if (!currentClosed) {
-          result = result.concat(">\n");
+          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
           currentClosed = true;
         }
         current = tree.pop();
@@ -80,7 +88,15 @@ export let modelToSvelte = (tagName, code) => {
           return;
         }
         if (nos in current) {
-          result = result.concat(` ${nos}="${tos}"`);
+          if (nos === "textContent") {
+            hasTextContent = true;
+            textContent = tos;
+          } else {
+            let propName = "prop" + propCount;
+            propCount++;
+            props[propName] = tos;
+            result = result.concat(` ${nos}={${propName}}`);
+          }
         } else {
           result = result.concat(` ${nos}="${tos}"`);
         }
@@ -96,12 +112,15 @@ export let modelToSvelte = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
+  let propString =
+    propCount > 0
+      ? `export default { data: () => {return ${JSON.stringify(props)};}}`
+      : "";
+
   return ` 
-  <template>
   ${result}
-  </template>
   <script>
   ${importStrings}
-  export default ${pascalCaseName};
+  ${propString}
   </script>`;
 };

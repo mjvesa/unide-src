@@ -312,8 +312,9 @@ const linoToDOM = makeLinoInterpreter(
       try {
         let json = JSON.parse(tos);
         current[nos]=json;
-      } catch (e){
+      } catch (e) {
         current[nos]=tos;
+        current.setAttribute(nos, tos);
       }
     } else {
       current.setAttribute(nos, tos);
