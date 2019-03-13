@@ -1,20 +1,8 @@
 /**
- *  Exporter from model to VanillaJS
+ *  Exporter from model to Svelte
  */
-import jsImports from "./js_imports.js";
 
-export let exportToVanilla = designs => {
-  let zip = new JSZip();
-  let keys = Object.keys(designs);
-  let litElements = [];
-  for (let i in keys) {
-    let key = keys[i];
-    zip.file(key + ".js", modelToLitVanilla(key, designs[key]));
-  }
-  zip.generateAsync({ type: "blob" }).then(content => {
-    saveAs(content, "js-designs.zip");
-  });
-};
+import jsImports from "./js_imports.js";
 
 let kebabToPascalCase = str => {
   let parts = str.split("-");
@@ -25,7 +13,23 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let modelToVanilla = (tagName, code) => {
+export let exportToSvelte = designs => {
+  let zip = new JSZip();
+  let keys = Object.keys(designs);
+  let litElements = [];
+  for (let i in keys) {
+    let key = keys[i];
+    zip.file(
+      kebabToPascalCase(key) + ".svelte",
+      modelToSvelte(key, designs[key])
+    );
+  }
+  zip.generateAsync({ type: "blob" }).then(content => {
+    saveAs(content, "svelte-designs.zip");
+  });
+};
+
+export let modelToSvelte = (tagName, code) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -36,20 +40,16 @@ export let modelToVanilla = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
-  let varCount = 0;
-  let currentVar = "this";
-  let varStack = [];
+  let result = "";
 
-  let elementStack = [];
-  let currentElement = "this";
-
-  let result = `class ${pascalCaseName} extends HTMLElement {
-       constructor() {
-        super();\n`;
   code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
       case "(":
+        if (!currentClosed) {
+          result = result.concat(">\n");
+          currentClosed = true;
+        }
         let old = current;
         tree.push(current);
 
@@ -60,16 +60,17 @@ export let modelToVanilla = (tagName, code) => {
         }
 
         current = document.createElement(currentTag);
-        varStack.push(currentVar);
-        newVar = "el" + varCount;
-        varCount++;
-        result = result.concat(`${newVar} = document.createElement(${currentTag});
-          ${currentVar}.appendChild(${newVar});`);
+        result = result.concat("<" + currentTag);
         old.appendChild(current);
+        currentClosed = false;
         break;
       case ")":
-        currentVar = varStack.pop();
+        if (!currentClosed) {
+          result = result.concat(">\n");
+          currentClosed = true;
+        }
         current = tree.pop();
+        result = result.concat(`</${currentTag}>\n`);
         currentTag = tagTree.pop();
         break;
       case "=":
@@ -79,11 +80,9 @@ export let modelToVanilla = (tagName, code) => {
           return;
         }
         if (nos in current) {
-          result = result.concat(` ${currentVar}[${nos}]=\$\{"${tos}"\}`);
+          result = result.concat(` ${nos}="${tos}"`);
         } else {
-          result = result.concat(
-            `${currentVar}.setAttribute(${nos},"${tos}");`
-          );
+          result = result.concat(` ${nos}="${tos}"`);
         }
         break;
       default:
@@ -97,10 +96,12 @@ export let modelToVanilla = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
-  return `${importStrings}
-          ${result}\`
-      }
-    }
-    customElements.define(${tagName}, ${pascalCaseName});
-  `;
+  return ` 
+  <template>
+  ${result}
+  </template>
+  <script>
+  ${importStrings}
+  export default ${pascalCaseName};
+  </script>`;
 };

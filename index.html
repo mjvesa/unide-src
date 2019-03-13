@@ -31,6 +31,17 @@
     overflow: hidden;
     background-color: #888;
   }
+
+ #view-settings {
+    display: block;
+    height: 3rem;
+    border-bottom: solid black 1px;
+ }
+
+ #view-settings > span {
+   display: block;
+ }
+
   #palette {
    /* width: 100%; */
     height: 100vh;
@@ -57,11 +68,13 @@
     color: white;
   }
   #marker {
+    display: none;
     position: absolute;
     border: 1px solid red;
     z-index: 10000;
   }
   #element-preview {
+    display: none;
     position: absolute;
     background-color: #aad;
     border: 1px solid black;
@@ -114,7 +127,13 @@
         <button id="export-design">Export</button>
       </span>
       <div id="container">
-        <div id="palette">&nbsp;</div>
+        <div>
+          <div id="view-settings">
+              <span><input type="checkbox"></input> This is a view</span>
+              <span><input type="text"></input> View name</span>
+            </div>
+          <div id="palette">&nbsp;</div>
+        </div>
         <div id="paper">paper</div>
         <div>
           <div id="outline">outline</div>
