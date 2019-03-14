@@ -36,6 +36,10 @@ export let modelToAngular = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
+  // Property name generation
+  let props = {};
+  let propCount = 0;
+
   let result = "";
 
   code.forEach((str, index) => {
@@ -75,13 +79,16 @@ export let modelToAngular = (tagName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
-          current[nos] = tos;
-          result = result.concat(` ${nos}="${tos}"`);
+
+        if (nos in current && nos !== "style") {
+          let propName = "prop" + propCount;
+          propCount++;
+          props[propName] = tos;
+          result = result.concat(` ${nos}="{{data.${propName}}}"`);
         } else {
-          result = result.concat(` [${nos}]="${tos}"`);
-          current.setAttribute(nos, tos);
+          result = result.concat(` ${nos}="${tos}"`);
         }
+
         break;
       default:
         stack.push(trimmed);
@@ -94,6 +101,8 @@ export let modelToAngular = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
+  let propString = propCount > 0 ? `data =  ${JSON.stringify(props)}` : "";
+
   return `import { Component } from '@angular/core';
           ${importStrings}
           @Component({
@@ -101,6 +110,6 @@ export let modelToAngular = (tagName, code) => {
             template: \` ${result}\`
           })
           export class ${pascalCaseName} {
-            title = '${tagName}';
+            ${propString}
           };`;
 };
