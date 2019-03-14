@@ -449,6 +449,19 @@ const loadSelectedDesign = event => {
   loadDesign(document.getElementById("choose-design").value);
 };
 
+const importRawDesign = event => {
+  const upload = document.getElementById("import-file-input");
+  const file = upload.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.readAsText(file, "UTF-8");
+    reader.onload = function(evt) {
+      localStorage.setItem("designs", evt.target.result);
+      populateDesignSelector();
+    };
+  }
+};
+
 const exportDesign = () => {
   let format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
@@ -492,6 +505,7 @@ const installUIEventHandlers = () => {
   document.getElementById("save-design").onclick = saveDesign;
   document.getElementById("choose-design").onchange = loadSelectedDesign;
   document.getElementById("export-design").onclick = exportDesign;
+  document.getElementById("import-file").onclick = importRawDesign;
 };
 
 const initializeDesign = () => {
