@@ -5,13 +5,20 @@ Univesal Designer for UI templates.
 The design of this tool follows the suckless philosophy. The user is assumed
 to be capable of modifying the source to configure the tool.
 
-The grand idea
---------------
-UniDe is an universal UI designer that is targeted as a simply prototyping tool to 
+The current lofty goal
+----------------------
+UniDe is an universal UI designer that is targeted as a prototyping tool to 
 lower the bar for using Vaadin Components.
 
-The user can produce templates quickly, add navigation and finally export the
+The user should be able to produce UIs, add basic navigation and finally export the
 result to the platform of choice. Exportable platforms should include all
-platforms supported by Vaadin Components.
+platforms supported by Vaadin Components and maybe some more exotic ones.
 
+
+Exporting
+---------
+Export will come in two tiers: First tier export will contain a full project
+ready for importing into an IDE. Second tier only exports the views as
+components of the target platform and supplies instructions on how to
+include the views in the project. 
 
