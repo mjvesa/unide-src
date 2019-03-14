@@ -72,10 +72,10 @@ const showCurrentDesign = () => {
   checkModel(currentDesign);
   let paper = getPaperElement();
   paper.innerHTML = "";
-  linoToDOM(currentDesign, paper);
+  modelToDOM(currentDesign, paper);
   let outline = getOutlineElement();
   outline.innerHTML = "";
-  linoToOutline(currentDesign, outline);
+  modelToOutline(currentDesign, outline);
 };
 
 const startDrag = (event, snippet) => {
@@ -103,6 +103,15 @@ const startDragFromModel = (elementId, event) => {
   event.stopPropagation();
 };
 
+/**
+ * Determines where on the target the current coordinates lie. Either
+ * they are before the element, on the element or after the
+ * element.
+ *
+ * @param {*} el
+ * @param {*} clientX
+ * @param {*} clientY
+ */
 const getPositionOnTarget = (el, clientX, clientY) => {
   let bcr = el.getBoundingClientRect();
   let radius = Math.min(bcr.right - bcr.left, bcr.bottom - bcr.top) / 2;
@@ -188,6 +197,12 @@ let dropElement = e => {
   e.preventDefault();
 };
 
+/**
+ * Selects the clicked element and displays its attributes in the
+ * attribute panel.
+ *
+ * @param {*} e
+ */
 let selectElement = e => {
   let target = document.elementFromPoint(e.clientX, e.clientY);
   let designId = target.getAttribute("data-design-id");
@@ -215,7 +230,11 @@ let selectElement = e => {
   }
 };
 
-const saveAttributes = () => {
+/**
+ * Updates the attributes of the selected element by removing
+ * the previous ones and replacing them with new attributes.
+ */
+const updateAttributes = () => {
   let attributeString = document.getElementById("attributes").value;
   let attributesAsStrings = attributeString.split("\n");
   let attributes = [];
@@ -263,7 +282,17 @@ const navigateTo = event => {
   }
 };
 
-const makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
+/**
+ * Creates an interpreter for the Attribute Tree Intermediate Representation
+ * that is the UniDe model. The provided functions (in string form) each
+ * handle one of the three words in ATIR: ()=
+ *
+ * @param {*} lparenfnStr
+ * @param {*} rparenfnStr
+ * @param {*} eqfnStr
+ * @param {*} valuefnStr
+ */
+const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   let stack = [];
   let tree = [];
   let current;
@@ -293,14 +322,14 @@ const makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   };
 };
 
-const linoToDOM = makeLinoInterpreter(
+const modelToDOM = makeATIRInterpreter(
   `(index, inert) => {
     let old = current;
     tree.push(current);
     let tag = stack.pop();
     if (tag in storedDesigns) {
       current = document.createElement('div');
-      linoToDOM(storedDesigns[tag], current,true);
+      modelToDOM(storedDesigns[tag], current,true);
     } else {
       current = document.createElement(tag);
     }
@@ -333,7 +362,7 @@ const linoToDOM = makeLinoInterpreter(
   "str => {stack.push(str)}"
 );
 
-const linoToOutline = makeLinoInterpreter(
+const modelToOutline = makeATIRInterpreter(
   `(index, inert) => {
       let old = current;
       tree.push(current);
@@ -349,12 +378,19 @@ const linoToOutline = makeLinoInterpreter(
   "str => {stack.push(str)}"
 );
 
+/**
+ * Creates a section in the palette. Features a title of
+ * the section and contents that appears on hover.
+ * @param {string} name
+ * @param {*} tags
+ * @param {*} palette
+ */
 const createPaletteSection = (name, tags, palette) => {
   let outer = document.createElement("div");
   outer.className = "palette-section";
   outer.innerHTML = name;
   outer.onmouseover = event => {
-    outer.style.height = 5 + tags.length + "rem";
+    outer.style.height = 8 + tags.length + "rem";
   };
   outer.onmouseout = event => {
     outer.style.height = null;
@@ -377,7 +413,7 @@ const createPaletteSection = (name, tags, palette) => {
         preview.style.top = event.clientY + "px";
         preview.style.left = event.clientX + 200 + "px";
         preview.innerHTML = "";
-        linoToDOM(snippet, preview);
+        modelToDOM(snippet, preview);
         preview.style.display = "block";
       };
       el.onmouseout = event => {
@@ -390,6 +426,10 @@ const createPaletteSection = (name, tags, palette) => {
   }
 };
 
+/**
+ * Collects designs stored in local storage for inclusion
+ * in the palette.
+ */
 const getStoredDesignsForPalette = () => {
   let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
   let parsedDesigns = [];
@@ -400,6 +440,12 @@ const getStoredDesignsForPalette = () => {
   });
   return parsedDesigns;
 };
+
+/**
+ * Fills the palette from a curated set of elements and snippets.
+ * Also adds a section containing existing designs to be used
+ * as components or expanded into the current design.
+ */
 const populatePalette = () => {
   let palette = document.getElementById("palette");
   palette.innerHTML = "";
@@ -414,7 +460,11 @@ const populatePalette = () => {
   }
 };
 
-let populateDesignSelector = () => {
+/**
+ * Populates the design selector with the designs found
+ * in local storage.
+ */
+const populateDesignSelector = () => {
   let selector = document.getElementById("choose-design");
   selector.innerHTML = "";
   let keys = Object.keys(storedDesigns);
@@ -429,6 +479,11 @@ let populateDesignSelector = () => {
   }
 };
 
+/**
+ * Saves the current design into local storage.
+ *
+ * @param {*} event
+ */
 const saveDesign = event => {
   let designName = document.getElementById("design-name").value;
   storedDesigns[designName] = currentDesign;
@@ -436,6 +491,12 @@ const saveDesign = event => {
   populateDesignSelector();
 };
 
+/**
+ * Pulls the specified design from local storage and uses it as the
+ * current design.
+ *
+ * @param {*} designName
+ */
 const loadDesign = designName => {
   document.getElementById("design-name").value = designName;
   let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
@@ -449,7 +510,11 @@ const loadSelectedDesign = event => {
   loadDesign(document.getElementById("choose-design").value);
 };
 
-const importRawDesign = event => {
+/**
+ * Imports a raw model, that is a plain JSON representation of what is in local storage.
+ * @param {*} event
+ */
+const importRawModel = event => {
   const upload = document.getElementById("import-file-input");
   const file = upload.files[0];
   if (file) {
@@ -462,6 +527,10 @@ const importRawDesign = event => {
   }
 };
 
+/**
+ * Calls the appropriate function for exporting the designs currently
+ * in local storage based on user selection.
+ */
 const exportDesign = () => {
   let format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
@@ -489,6 +558,9 @@ const exportDesign = () => {
   }
 };
 
+/**
+ * Installs handlers for mouse events on various parts of the UI
+ */
 const installUIEventHandlers = () => {
   let outline = getOutlineElement();
   outline.ondragover = placeMarker;
@@ -500,12 +572,12 @@ const installUIEventHandlers = () => {
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
   let attributes = document.getElementById("attributes");
-  attributes.onblur = saveAttributes;
+  attributes.onblur = updateAttributes;
 
   document.getElementById("save-design").onclick = saveDesign;
   document.getElementById("choose-design").onchange = loadSelectedDesign;
   document.getElementById("export-design").onclick = exportDesign;
-  document.getElementById("import-file").onclick = importRawDesign;
+  document.getElementById("import-file").onclick = importRawModel;
 };
 
 const initializeDesign = () => {

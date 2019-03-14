@@ -1,3 +1,5 @@
+import "./node_modules/@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
+import "./node_modules/@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
 import "./node_modules/@vaadin/vaadin-notification/theme/lumo/vaadin-notification.js";
 import "./node_modules/@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox.js";
 import "./node_modules/@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox-group.js";
@@ -25,23 +27,9 @@ import "./node_modules/@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-horizonta
 import "./node_modules/@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-vertical-layout.js";
 import "./node_modules/@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-layout.js";
 import "./node_modules/@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-item.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sort-column.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-selection-column.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column.js";
 import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid.js";
-import "./node_modules/@vaadin/vaadin-grid/src/vaadin-grid-scroller.js";
-import "./node_modules/@vaadin/vaadin-grid/src/vaadin-grid-templatizer.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-column.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column-group.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-toggle.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter-column.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sorter.js";
-import "./node_modules/@vaadin/vaadin-grid/src/vaadin-grid-outer-scroller.js";
 import "./node_modules/@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js";
-import "./node_modules/@vaadin/vaadin-dropdown-menu/src/vaadin-dropdown-menu-overlay.js";
-import "./node_modules/@vaadin/vaadin-dropdown-menu/theme/lumo/vaadin-dropdown-menu.js";
-import "./node_modules/@vaadin/vaadin-dropdown-menu/src/vaadin-dropdown-menu-text-field.js";
+import "./node_modules/@vaadin/vaadin-select/src/vaadin-select.js";
 import "./node_modules/@vaadin/vaadin-upload/src/vaadin-upload-file.js";
 import "./node_modules/@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";
 import "./node_modules/@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
@@ -113,28 +101,24 @@ export let paletteContent = [
   [
     "<h2>Native HTML</h2>",
     [
+      ["a", ["a", "(", ")"]],
+      ["article", ["article", "(", ")"]],
+      ["aside", ["aside", "(", ")"]],
       ["div", ["div", "(", ")"]],
+      ["h1", ["h1", "(", ")"]],
+      ["h2", ["h2", "(", ")"]],
+      ["h3", ["h3", "(", ")"]],
+      ["h4", ["h4", "(", ")"]],
+      ["h5", ["h5", "(", ")"]],
+      ["h6", ["h6", "(", ")"]],
+      ["hr", ["hr", "(", ")"]],
+      ["header", ["header", "(", ")"]],
+      ["image", ["image", "(", ")"]],
+      ["input", ["input", "(", ")"]],
+      ["label", ["label", "(", ")"]],
+      ["li", ["li", "(", ")"]],
+
       ["span", ["span", "(", ")"]],
-      [
-        "ul",
-        [
-          "ul",
-          "(",
-          "li",
-          "(",
-          "textContent",
-          "item1",
-          "=",
-          ")",
-          "li",
-          "(",
-          "textContent",
-          "item2",
-          "=",
-          ")",
-          ")"
-        ]
-      ],
       [
         "ol",
         [
@@ -154,12 +138,33 @@ export let paletteContent = [
           ")",
           ")"
         ]
+      ],
+      [
+        "ul",
+        [
+          "ul",
+          "(",
+          "li",
+          "(",
+          "textContent",
+          "item1",
+          "=",
+          ")",
+          "li",
+          "(",
+          "textContent",
+          "item2",
+          "=",
+          ")",
+          ")"
+        ]
       ]
     ]
   ],
   [
-    "<h2>Data entry</h2>",
+    "<h2>Buttons</h2>",
     [
+      ["button", ["vaadin-button", "(", ")"]],
       ["checkbox", ["vaadin-checkbox", "(", ")"]],
       [
         "checkbox-group",
@@ -175,7 +180,6 @@ export let paletteContent = [
           ")"
         ]
       ],
-      ["button", ["vaadin-button", "(", ")"]],
       ["radio-button", ["vaadin-radio-button", "(", ")"]],
       [
         "radio-group",
@@ -189,35 +193,42 @@ export let paletteContent = [
           "(",
           ")",
           ")"
-        ]
-      ],
-      ["text-field", ["vaadin-text-field", "(", ")"]],
-      ["text-area", ["vaadin-text-area", "(", ")"]],
-      ["password-field", ["vaadin-password-field", "(", ")"]],
-      ["date-picker", ["vaadin-date-picker", "(", ")"]],
+        ],
+        ["tabs", ["vaadin-tabs", "(", ")"]],
+        ["tab", ["vaadin-tab", "(", ")"]]
+      ]
+    ]
+  ],
+
+  [
+    "<h2>Fields</h2>",
+    [
       ["combo-box", ["vaadin-combo-box", "(", ")"]],
-      ["progress-bar", ["vaadin-progress-bar", "(", ")"]],
       ["context-menu", ["vaadin-context-menu", "(", ")"]],
       ["item", ["vaadin-item", "(", ")"]],
-      ["notification", ["vaadin-notification", "(", ")"]],
-      ["tabs", ["vaadin-tabs", "(", ")"]],
-      ["tab", ["vaadin-tab", "(", ")"]]
+      ["date-picker", ["vaadin-date-picker", "(", ")"]],
+      ["grid", ["vaadin-grid", "(", ")"]],
+      ["list-box", ["vaadin-list-box", "(", ")"]],
+      ["text-field", ["vaadin-text-field", "(", ")"]],
+      ["text-area", ["vaadin-text-area", "(", ")"]],
+      ["password-field", ["vaadin-password-field", "(", ")"]]
     ]
   ],
   [
     "<h2>Layout</h2>",
     [
-      ["horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
-      ["vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
+      ["accordion", ["vaadin-accordion", "(", ")"]],
+      ["app-layout", ["vaadin-app-layout", "(", ")"]],
       ["form-layout", ["vaadin-form-layout", "(", ")"]],
       ["form-item", ["vaadin-form-item", "(", ")"]],
+      ["horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
+      ["vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
       ["split-layout", ["vaadin-split-layout", "(", ")"]]
     ]
   ],
   [
     "<h2>Grid</h2>",
     [
-      ["grid", ["vaadin-grid", "(", ")"]],
       ["grid-sort-column", ["vaadin-grid-sort-column", "(", ")"]],
       ["grid-selection-column", ["vaadin-grid-selection-column", "(", ")"]],
       ["grid-column", ["vaadin-grid-column", "(", ")"]],
@@ -229,14 +240,15 @@ export let paletteContent = [
       ["grid-filter-column", ["vaadin-grid-filter-column", "(", ")"]],
       ["grid-sorter", ["vaadin-grid-sorter", "(", ")"]],
       ["grid-outer-scroller", ["vaadin-grid-outer-scroller", "(", ")"]],
-      ["grid-filter", ["vaadin-grid-filter", "(", ")"]],
-      ["list-box", ["vaadin-list-box", "(", ")"]],
-      ["dialog", ["vaadin-dialog", "(", ")"]]
+      ["grid-filter", ["vaadin-grid-filter", "(", ")"]]
     ]
   ],
   [
     "<h2>Misc</h2>",
     [
+      ["dialog", ["vaadin-dialog", "(", ")"]],
+      ["notification", ["vaadin-notification", "(", ")"]],
+      ["progress-bar", ["vaadin-progress-bar", "(", ")"]],
       ["upload-file", ["vaadin-upload-file", "(", ")"]],
       ["upload", ["vaadin-upload", "(", ")"]]
     ]
