@@ -20,7 +20,7 @@
   }
   #container {
     display: grid;
-    grid-template-columns: 15vw auto 15vw;
+    grid-template-columns: auto 15vw 15vw;
     width: 100%;
     height: calc(100% - 1rem);
   }
@@ -32,21 +32,12 @@
     background-color: #888;
   }
 
- #view-settings {
-    display: block;
-    height: 3rem;
-    border-bottom: solid black 1px;
- }
-
- #view-settings > span {
-   display: block;
- }
-
   #palette {
    /* width: 100%; */
     height: 100vh;
     overflow-y: auto;
     padding: 1em;
+    border-right: 1px solid black;
   }
   #outline {
     width: 100%;
@@ -117,7 +108,7 @@
           <option>Flow</option>
           <option>LitElement</option>
           <option>Preact</option>
-          <option>Raw model</option>
+          <option>Raw</option>
           <option>React</option>
           <option>Svelte</option>
           <option>VanillaJS</option>
@@ -127,15 +118,11 @@
         <button id="export-design">Export</button>
       </span>
       <div id="container">
-        <div>
-          <div id="view-settings">
-              <span><input type="checkbox"></input> This is a view</span>
-              <span><input type="text"></input> View name</span>
-            </div>
-          <div id="palette">&nbsp;</div>
-        </div>
         <div id="paper">paper</div>
         <div>
+            <div id="palette">&nbsp;</div>
+          </div>
+          <div>
           <div id="outline">outline</div>
           <textarea id="attributes">attributes</textarea>
           </div>

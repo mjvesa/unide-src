@@ -4,6 +4,7 @@ import { exportToLitElement } from "./export/lit";
 import { exportToFlow } from "./export/flow";
 import { exportToPreact } from "./export/preact";
 import { exportToReact } from "./export/react";
+import { exportToRaw } from "./export/raw";
 import { exportToSvelte } from "./export/svelte";
 import { exportToVanilla } from "./export/vanilla";
 import { exportToVoK } from "./export/vok";
@@ -255,6 +256,13 @@ const saveAttributes = () => {
   showCurrentDesign();
 };
 
+const navigateTo = event => {
+  let targetRoute = event.target.getAttribute("targetroute");
+  if (targetRoute) {
+    loadDesign(targetRoute);
+  }
+};
+
 const makeLinoInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   let stack = [];
   let tree = [];
@@ -299,6 +307,7 @@ const linoToDOM = makeLinoInterpreter(
     if (!inert) {
       current.setAttribute('data-design-id', index);
       current.ondragstart = (event) => {startDragFromModel(index, event)};
+      current.ondblclick = (event) => {navigateTo(event)}
       current.draggable = true;
     }
     old.appendChild(current);
@@ -382,7 +391,6 @@ const createPaletteSection = (name, tags, palette) => {
 };
 
 const getStoredDesignsForPalette = () => {
-  // TODO gather designs from local storage and create a section for them
   let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
   let parsedDesigns = [];
   let keys = Object.keys(designs);
@@ -428,14 +436,17 @@ const saveDesign = event => {
   populateDesignSelector();
 };
 
-const loadDesign = event => {
-  let designName = document.getElementById("choose-design").value;
+const loadDesign = designName => {
   document.getElementById("design-name").value = designName;
   let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
   currentDesign = designs[designName];
   designStack = [];
   redoStack = [];
   showCurrentDesign();
+};
+
+const loadSelectedDesign = event => {
+  loadDesign(document.getElementById("choose-design").value);
 };
 
 const exportDesign = () => {
@@ -448,6 +459,8 @@ const exportDesign = () => {
     exportToFlow(storedDesigns);
   } else if (format === "Preact") {
     exportToPreact(storedDesigns);
+  } else if (format === "Raw") {
+    exportToRaw(storedDesigns);
   } else if (format === "React") {
     exportToReact(storedDesigns);
   } else if (format === "Svelte") {
@@ -477,7 +490,7 @@ const installUIEventHandlers = () => {
   attributes.onblur = saveAttributes;
 
   document.getElementById("save-design").onclick = saveDesign;
-  document.getElementById("choose-design").onchange = loadDesign;
+  document.getElementById("choose-design").onchange = loadSelectedDesign;
   document.getElementById("export-design").onclick = exportDesign;
 };
 
