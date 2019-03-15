@@ -11,6 +11,7 @@ import { exportToVoK } from "./export/vok";
 import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
+import { demoDesigns } from "./demo_designs";
 const initialDesign = `div
   (
     style
@@ -351,6 +352,7 @@ const modelToDOM = makeATIRInterpreter(
         let json = JSON.parse(tos);
         current[nos]=json;
       } catch (e) {
+        console.log('Could not parse json ' + e);
         current[nos]=tos;
         current.setAttribute(nos, tos);
       }
@@ -624,9 +626,16 @@ const getStoredDesigns = () => {
   storedDesigns = JSON.parse(designsStr);
 };
 
+const setDemoDesigns = () => {
+  if (!localStorage.getItem("designs")) {
+    localStorage.setItem("designs", JSON.stringify(demoDesigns));
+  }
+};
+
 const initDesigner = () => {
   installUIEventHandlers();
   installKeyboardHandlers();
+  setDemoDesigns();
   getStoredDesigns();
   populatePalette();
   populateDesignSelector();

@@ -1,40 +1,40 @@
-import "./node_modules/@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
-import "./node_modules/@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
-import "./node_modules/@vaadin/vaadin-notification/theme/lumo/vaadin-notification.js";
-import "./node_modules/@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox.js";
-import "./node_modules/@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox-group.js";
-import "./node_modules/@vaadin/vaadin-button/theme/lumo/vaadin-button.js";
-import "./node_modules/@vaadin/vaadin-overlay/theme/lumo/vaadin-overlay.js";
-import "./node_modules/@vaadin/vaadin-date-picker/theme/lumo/vaadin-date-picker.js";
-import "./node_modules/@vaadin/vaadin-split-layout/theme/lumo/vaadin-split-layout.js";
-import "./node_modules/@vaadin/vaadin-progress-bar/theme/lumo/vaadin-progress-bar.js";
-import "./node_modules/@vaadin/vaadin-combo-box/src/vaadin-combo-box-item.js";
-import "./node_modules/@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box-light.js";
-import "./node_modules/@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown.js";
-import "./node_modules/@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown-wrapper.js";
-import "./node_modules/@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box.js";
-import "./node_modules/@vaadin/vaadin-text-field/theme/lumo/vaadin-text-field.js";
-import "./node_modules/@vaadin/vaadin-text-field/theme/lumo/vaadin-password-field.js";
-import "./node_modules/@vaadin/vaadin-text-field/theme/lumo/vaadin-text-area.js";
-import "./node_modules/@vaadin/vaadin-context-menu/theme/lumo/vaadin-context-menu.js";
-import "./node_modules/@vaadin/vaadin-context-menu/src/vaadin-device-detector.js";
-import "./node_modules/@vaadin/vaadin-context-menu/src/vaadin-context-menu-overlay.js";
-import "./node_modules/@vaadin/vaadin-tabs/theme/lumo/vaadin-tabs.js";
-import "./node_modules/@vaadin/vaadin-tabs/theme/lumo/vaadin-tab.js";
-import "./node_modules/@vaadin/vaadin-item/theme/lumo/vaadin-item.js";
-import "./node_modules/@vaadin/vaadin-material-styles/version.js";
-import "./node_modules/@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-horizontal-layout.js";
-import "./node_modules/@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-vertical-layout.js";
-import "./node_modules/@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-layout.js";
-import "./node_modules/@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-item.js";
-import "./node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid.js";
-import "./node_modules/@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js";
-import "./node_modules/@vaadin/vaadin-select/src/vaadin-select.js";
-import "./node_modules/@vaadin/vaadin-upload/src/vaadin-upload-file.js";
-import "./node_modules/@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";
-import "./node_modules/@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
-import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
-import "./node_modules/@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
+import "@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
+import "@vaadin/vaadin-accordion/theme/lumo/vaadin-accordion.js";
+import "@vaadin/vaadin-notification/theme/lumo/vaadin-notification.js";
+import "@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox.js";
+import "@vaadin/vaadin-checkbox/theme/lumo/vaadin-checkbox-group.js";
+import "@vaadin/vaadin-button/theme/lumo/vaadin-button.js";
+import "@vaadin/vaadin-overlay/theme/lumo/vaadin-overlay.js";
+import "@vaadin/vaadin-date-picker/theme/lumo/vaadin-date-picker.js";
+import "@vaadin/vaadin-split-layout/theme/lumo/vaadin-split-layout.js";
+import "@vaadin/vaadin-progress-bar/theme/lumo/vaadin-progress-bar.js";
+import "@vaadin/vaadin-combo-box/src/vaadin-combo-box-item.js";
+import "@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box-light.js";
+import "@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown.js";
+import "@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown-wrapper.js";
+import "@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box.js";
+import "@vaadin/vaadin-text-field/theme/lumo/vaadin-text-field.js";
+import "@vaadin/vaadin-text-field/theme/lumo/vaadin-password-field.js";
+import "@vaadin/vaadin-text-field/theme/lumo/vaadin-text-area.js";
+import "@vaadin/vaadin-context-menu/theme/lumo/vaadin-context-menu.js";
+import "@vaadin/vaadin-context-menu/src/vaadin-device-detector.js";
+import "@vaadin/vaadin-context-menu/src/vaadin-context-menu-overlay.js";
+import "@vaadin/vaadin-tabs/theme/lumo/vaadin-tabs.js";
+import "@vaadin/vaadin-tabs/theme/lumo/vaadin-tab.js";
+import "@vaadin/vaadin-item/theme/lumo/vaadin-item.js";
+import "@vaadin/vaadin-material-styles/version.js";
+import "@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-horizontal-layout.js";
+import "@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-vertical-layout.js";
+import "@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-layout.js";
+import "@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-item.js";
+import "@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js";
+import "@vaadin/vaadin-select/src/vaadin-select.js";
+import "@vaadin/vaadin-upload/src/vaadin-upload-file.js";
+import "@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";
+import "@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
+import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
+import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
+import "./unide-grid.js";
 
 export let paletteContent = [
   [
@@ -207,7 +207,7 @@ export let paletteContent = [
       ["context-menu", ["vaadin-context-menu", "(", ")"]],
       ["item", ["vaadin-item", "(", ")"]],
       ["date-picker", ["vaadin-date-picker", "(", ")"]],
-      ["grid", ["vaadin-grid", "(", ")"]],
+      ["grid", ["unide-grid", "(", ")"]],
       ["list-box", ["vaadin-list-box", "(", ")"]],
       ["text-field", ["vaadin-text-field", "(", ")"]],
       ["text-area", ["vaadin-text-area", "(", ")"]],
@@ -224,23 +224,6 @@ export let paletteContent = [
       ["horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
       ["vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
       ["split-layout", ["vaadin-split-layout", "(", ")"]]
-    ]
-  ],
-  [
-    "<h2>Grid</h2>",
-    [
-      ["grid-sort-column", ["vaadin-grid-sort-column", "(", ")"]],
-      ["grid-selection-column", ["vaadin-grid-selection-column", "(", ")"]],
-      ["grid-column", ["vaadin-grid-column", "(", ")"]],
-      ["grid-scroller", ["vaadin-grid-scroller", "(", ")"]],
-      ["grid-templatizer", ["vaadin-grid-templatizer", "(", ")"]],
-      ["grid-tree-column", ["vaadin-grid-tree-column", "(", ")"]],
-      ["grid-column-group", ["vaadin-grid-column-group", "(", ")"]],
-      ["grid-tree-toggle", ["vaadin-grid-tree-toggle", "(", ")"]],
-      ["grid-filter-column", ["vaadin-grid-filter-column", "(", ")"]],
-      ["grid-sorter", ["vaadin-grid-sorter", "(", ")"]],
-      ["grid-outer-scroller", ["vaadin-grid-outer-scroller", "(", ")"]],
-      ["grid-filter", ["vaadin-grid-filter", "(", ")"]]
     ]
   ],
   [
