@@ -5,6 +5,7 @@ class UnideGridElement extends HTMLElement {
     super();
     let shadow = this.attachShadow({ mode: "open" });
     this.grid = document.createElement("vaadin-grid");
+    this.grid.style.height = "100%";
     shadow.appendChild(this.grid);
     console.log("UNIDEEE");
   }
