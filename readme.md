@@ -5,6 +5,9 @@ Univesal Designer for UI templates.
 The design of this tool follows the suckless philosophy. The user is assumed
 to be capable of modifying the source to configure the tool.
 
+To run the project, clone the repository, `npm install` the damned thing and
+finally recite this ancient spell: `polymer serve --npm`
+
 The current lofty goal
 ----------------------
 UniDe is an universal UI designer that is targeted as a prototyping tool to 
