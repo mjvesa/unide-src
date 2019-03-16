@@ -36,6 +36,8 @@ const POSITION_AFTER_ELEMENT = 1;
 let designStack = [];
 let redoStack = [];
 
+let textEditor;
+
 // Finds the first parenthesis starting from index which is not matched.
 // That paren marks the end of the component
 const findDanglingParen = (arr, index) => {
@@ -73,6 +75,9 @@ const showCurrentDesign = () => {
   checkModel(currentDesign);
   let paper = getPaperElement();
   paper.innerHTML = "";
+  let style = document.createElement("style");
+  style.textContent = textEditor.getValue();
+  paper.appendChild(style);
   modelToDOM(currentDesign, paper);
   let outline = getOutlineElement();
   outline.innerHTML = "";
@@ -580,6 +585,13 @@ const installUIEventHandlers = () => {
   document.getElementById("choose-design").onchange = loadSelectedDesign;
   document.getElementById("export-design").onclick = exportDesign;
   document.getElementById("import-file").onclick = importRawModel;
+
+  textEditor.on("change", event => {
+    let el = paper.querySelector("style");
+    if (el) {
+      el.textContent = textEditor.getValue();
+    }
+  });
 };
 
 const initializeDesign = () => {
@@ -632,14 +644,23 @@ const setDemoDesigns = () => {
   }
 };
 
+const setupTextEditor = () => {
+  textEditor = CodeMirror(document.getElementById("text-editor"), {
+    mode: "text/css",
+    theme: "tomorrow-night-eighties",
+    extraKeys: { "Ctrl-Space": "autocomplete" }
+  });
+};
+
 const initDesigner = () => {
-  installUIEventHandlers();
-  installKeyboardHandlers();
   setDemoDesigns();
   getStoredDesigns();
+  setupTextEditor();
   populatePalette();
   populateDesignSelector();
   initializeDesign();
+  installUIEventHandlers();
+  installKeyboardHandlers();
   showCurrentDesign();
 };
 
