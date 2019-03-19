@@ -36,9 +36,7 @@ export let modelToLitElement = (tagName, code) => {
   let currentTag = "";
   let currentClosed = true;
 
-  let result = `import {LitElement, html} from 'https://unpkg.com/@polymer/lit-element@latest/lit-element.js?module';
-     class ${pascalCaseName} extends LitElement {
-       _render() {\``;
+  let result = "";
   code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
@@ -101,10 +99,14 @@ export let modelToLitElement = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
-  return `${importStrings}
-          ${result}\`
+  return prettier.format(
+    `import { LitElement, html } from 'lit-element';
+    ${importStrings}
+    class ${pascalCaseName} extends LitElement {
+     _render() {
+        ${result}
       }
     }
-    customElements.define(${tagName}, ${pascalCaseName});
-  `;
+    customElements.define(${tagName}, ${pascalCaseName});`
+  );
 };

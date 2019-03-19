@@ -9,8 +9,11 @@ export let exportToVanilla = designs => {
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".js", modelToLitVanilla(key, designs[key]));
+    zip.file(key + ".js", modelToVanilla(key, designs[key]));
   }
+  zip.file("package.json", packageJson);
+  zip.file("index.html", getIndexHTML(keys));
+
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "js-designs.zip");
   });
@@ -43,9 +46,7 @@ export let modelToVanilla = (tagName, code) => {
   let elementStack = [];
   let currentElement = "this";
 
-  let result = `class ${pascalCaseName} extends HTMLElement {
-       constructor() {
-        super();\n`;
+  let result = "";
   code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
@@ -61,11 +62,12 @@ export let modelToVanilla = (tagName, code) => {
 
         current = document.createElement(currentTag);
         varStack.push(currentVar);
-        newVar = "el" + varCount;
+        let newVar = "el" + varCount;
         varCount++;
-        result = result.concat(`${newVar} = document.createElement(${currentTag});
-          ${currentVar}.appendChild(${newVar});`);
+        result = result.concat(`const ${newVar} = document.createElement("${currentTag}");
+          ${currentVar}.appendChild(${newVar});\n`);
         old.appendChild(current);
+        currentVar = newVar;
         break;
       case ")":
         currentVar = varStack.pop();
@@ -78,11 +80,21 @@ export let modelToVanilla = (tagName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
-          result = result.concat(` ${currentVar}[${nos}]=\$\{"${tos}"\}`);
+
+        if (nos == "targetRoute") {
+          result = result.concat(
+            ` ${currentVar}.onclick = event => {window.UniDe.route("${tos}")};\n`
+          );
+        } else if (nos in current) {
+          try {
+            let json = JSON.parse(tos);
+            result = result.concat(` ${currentVar}["${nos}"]=${tos};\n`);
+          } catch (e) {
+            result = result.concat(` ${currentVar}["${nos}"]="${tos}";\n`);
+          }
         } else {
           result = result.concat(
-            `${currentVar}.setAttribute(${nos},"${tos}");`
+            `${currentVar}.setAttribute("${nos}","${tos}");\n`
           );
         }
         break;
@@ -97,10 +109,68 @@ export let modelToVanilla = (tagName, code) => {
     importStrings = importStrings.concat(`${jsImports[tag]}\n`);
   });
 
-  return `${importStrings}
-          ${result}\`
+  return prettier.format(
+    `${importStrings}
+   class ${pascalCaseName} extends HTMLElement {
+    constructor() {
+      super();
+        ${result}
       }
     }
-    customElements.define(${tagName}, ${pascalCaseName});
-  `;
+    customElements.define("${tagName}", ${pascalCaseName});
+  `,
+    { parser: "babylon", plugins: prettierPlugins }
+  );
 };
+
+const getIndexHTML = views => {
+  let imports = "";
+
+  views.forEach(viewName => {
+    imports = imports.concat(`import './${viewName}';`);
+  });
+
+  return `<html>
+<head>
+    <title>UniDe VanillaJS</title>
+    <script src='./node_modules/universal-router/universal-router.js'></script>
+</head>
+<body>
+<div id="content"></div>
+
+<script type="module">
+${imports}
+
+const routes = [];
+${JSON.stringify(views)}.forEach( viewName => {
+  routes.push({path: '/' + viewName, action: () => \`<\${viewName}></\${viewName}>\`});
+});
+const router = new window.UniversalRouter(routes)
+window.UniDe = {};
+window.UniDe.route = (viewName) => {
+    router.resolve('/'+viewName).then(html => {
+        document.getElementById('content').innerHTML = html;
+    });
+};
+window.UniDe.route('login-view');
+</script>
+</body>
+</html>`;
+};
+const packageJson = `{
+  "name": "vanilla",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "universal-router": "^8.1.0",
+    "@vaadin/vaadin-core": "^13.0.1",
+    "@vaadin/vaadin-grid": "^5.3.3",
+    "@vaadin/vaadin-tabs": "^2.1.2"
+  }
+}`;

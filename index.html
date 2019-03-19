@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="./node_modules/codemirror/lib/codemirror.css">
   <link rel="stylesheet" href="./node_modules/codemirror/theme/tomorrow-night-eighties.css">
   <script src="./node_modules/prettier/standalone.js"></script>
+  <script src="./node_modules/prettier/parser-babylon.js"></script>
   <script src="./node_modules/jszip/dist/jszip.js"></script>
   <script src="./node_modules/file-saver/dist/FileSaver.js"></script>
   <script src="./node_modules/codemirror/lib/codemirror.js"></script>
@@ -124,17 +125,19 @@
         <span>
           Export:
           <select id="choose-export-format">
-            <option>Choose export format</option>
-            <option>Angular</option>
+            <option disabled>Choose export format</option>
             <option>Flow</option>
             <option>LitElement</option>
+            <option>VanillaJS</option>
+            <option disabled>--------</option>            
+            <option>Angular</option>
             <option>Preact</option>
-            <option>Raw</option>
             <option>React</option>
             <option>Svelte</option>
-            <option>VanillaJS</option>
-            <option>Vaadin on Kotlin</option>
+            <option disabled>Vaadin on Kotlin</option>
             <option>Vue</option>
+            <option disabled>--------</option>            
+            <option>Raw</option>
           </select>
           <button id="export-design">Export</button>
         </span>

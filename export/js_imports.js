@@ -50,42 +50,16 @@ let jsImports = {
   "vaadin-context-menu-overlay":
     'import "@vaadin/vaadin-context-menu/src/vaadin-context-menu-overlay.js";',
   "vaadin-tabs": 'import "@vaadin/vaadin-tabs/theme/lumo/vaadin-tabs.js";',
-  "vaadin-tab.js": 'import "@vaadin/vaadin-tabs/theme/lumo/vaadin-tab.js";',
-  "vaadin-item.js:": 'import "@vaadin/vaadin-item/theme/lumo/vaadin-item.js";',
-  "version.js:": 'import "@vaadin/vaadin-material-styles/version.js";',
-  "vaadin-horizontal-layout.js":
+  "vaadin-tab": 'import "@vaadin/vaadin-tabs/theme/lumo/vaadin-tab.js";',
+  "vaadin-item:": 'import "@vaadin/vaadin-item/theme/lumo/vaadin-item.js";',
+  "vaadin-horizontal-layout":
     'import "@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-horizontal-layout.js";',
-  "vaadin-vertical-layout.js":
+  "vaadin-vertical-layout":
     'import "@vaadin/vaadin-ordered-layout/theme/lumo/vaadin-vertical-layout.js";',
-  "vaadin-form-layout.js":
+  "vaadin-form-layout":
     'import "@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-layout.js";',
-  "vaadin-form-item.js":
+  "vaadin-form-item":
     'import "@vaadin/vaadin-form-layout/theme/lumo/vaadin-form-item.js";',
-  "vaadin-grid-filter":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter.js";',
-  "vaadin-grid-sort-column.js":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sort-column.js";',
-  "vaadin-grid-selection-column":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-selection-column.js";',
-  "vaadin-grid-column":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column.js";',
-  "vaadin-grid": 'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid.js";',
-  "vaadin-grid-scroller":
-    'import "@vaadin/vaadin-grid/src/vaadin-grid-scroller.js";',
-  "vaadin-grid-templatizer":
-    'import "@vaadin/vaadin-grid/src/vaadin-grid-templatizer.js";',
-  "vaadin-grid-tree-column":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-column.js";',
-  "vaadin-grid-column-group":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column-group.js";',
-  "vaadin-grid-tree-toggle":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-toggle.js";',
-  "vaadin-grid-filter-column":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter-column.js";',
-  "vaadin-grid-sorter":
-    'import "@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sorter.js";',
-  "vaadin-grid-outer-scroller":
-    'import "@vaadin/vaadin-grid/src/vaadin-grid-outer-scroller.js";',
   "vaadin-list-box":
     'import "@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js";',
   "vaadin-dropdown-menu-overlay":
@@ -96,14 +70,15 @@ let jsImports = {
     'import "@vaadin/vaadin-dropdown-menu/src/vaadin-dropdown-menu-text-field.js";',
   "vaadin-upload-file":
     'import "@vaadin/vaadin-upload/src/vaadin-upload-file.js";',
-  "vaadin-upload.js":
+  "vaadin-upload":
     'import "@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";',
   "vaadin-dialog":
     'import "@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";',
   "vaadin-radio-group":
     'import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";',
   "vaadin-radio-button":
-    'import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";'
+    'import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";',
+  "unide-grid": 'import "./unide-grid.js"'
 };
 
 export default jsImports;
