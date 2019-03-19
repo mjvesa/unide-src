@@ -17,7 +17,6 @@ The user should be able to produce UIs, add basic navigation and finally export 
 result to the platform of choice. Exportable platforms should include all
 platforms supported by Vaadin Components and maybe some more exotic ones.
 
-
 Exporting
 ---------
 Export will come in two tiers: First tier export will contain a full project
@@ -25,3 +24,4 @@ ready for importing into an IDE. Second tier only exports the views as
 components of the target platform and supplies instructions on how to
 include the views in the project. 
 
+Current tier one platforms: Flow, LitElement and Vanilla JS

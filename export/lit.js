@@ -2,6 +2,7 @@
  *  Exporter from model to LitElement
  */
 import jsImports from "./js_imports.js";
+import { getIndexHTML } from "./vanilla_index_html";
 
 export let exportToLitElement = designs => {
   let zip = new JSZip();
@@ -11,6 +12,10 @@ export let exportToLitElement = designs => {
     let key = keys[i];
     zip.file(key + ".js", modelToLitElement(key, designs[key]));
   }
+
+  zip.file("package.json", packageJson);
+  zip.file("index.html", getIndexHTML(keys));
+
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "lit-element-designs.zip");
   });
@@ -74,11 +79,18 @@ export let modelToLitElement = (tagName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
+
+        if (nos == "targetRoute") {
+          result = result.concat(
+            `  @click = \${event => {
+              window.UniDe.route("${tos}");
+            }}\n`
+          );
+        } else if (nos in current) {
           try {
             let json = JSON.parse(tos);
             current[nos] = json;
-            result = result.concat(` .${nos}=\$\{"{JSON.parse(tos)}"\}`);
+            result = result.concat(` .${nos}=\${${tos}}`);
           } catch (e) {
             current[nos] = tos;
             result = result.concat(` .${nos}=\$\{"${tos}"\}`);
@@ -103,10 +115,30 @@ export let modelToLitElement = (tagName, code) => {
     `import { LitElement, html } from 'lit-element';
     ${importStrings}
     class ${pascalCaseName} extends LitElement {
-     _render() {
-        ${result}
+      render() {
+        return html\`${result}\`;
       }
     }
-    customElements.define(${tagName}, ${pascalCaseName});`
+    customElements.define("${tagName}", ${pascalCaseName});`,
+    { parser: "babel", plugins: prettierPlugins }
   );
 };
+
+const packageJson = `{
+  "name": "vanilla",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "universal-router": "^8.1.0",
+    "@vaadin/vaadin-core": "^13.0.1",
+    "@vaadin/vaadin-grid": "^5.3.3",
+    "@vaadin/vaadin-tabs": "^2.1.2",
+    "lit-element": "^2.0.1"
+  }
+}`;
