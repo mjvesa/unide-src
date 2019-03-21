@@ -1,5 +1,5 @@
 /**
- *  Exporter from model to LitElement
+ *  Exporter from model to Flow. Exports full project buildable with maven.
  */
 import flowImports from "./flow_imports.js";
 
@@ -20,10 +20,13 @@ export let exportToFlow = designs => {
     let key = keys[i];
     let pascalCaseName = kebabToPascalCase(key);
     zip.file(
-      pascalCaseName + ".java",
+      "src/main/java/unide/app/" + pascalCaseName + ".java",
       modelToFlow(pascalCaseName, designs[key])
     );
   }
+  zip.file("pom.xml", pomXML);
+  zip.file("src/main/webapp/frontend/css/shared-styles.html", sharedStyles);
+
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "flow-designs.zip");
   });
@@ -43,15 +46,7 @@ export let modelToFlow = (pascalCaseName, code) => {
 
   importedTags.add("div");
 
-  let result = `import com.vaadin.flow.router.PageTitle;
-  import com.vaadin.flow.router.Route;
-  import com.vaadin.samples.MainLayout;
-  
-  @Route(value = "${pascalCaseName}", layout = MainLayout.class)
-  @PageTitle("${pascalCaseName}")
-  public class ${pascalCaseName} extends Div {
-    public static final String VIEW_NAME = "${pascalCaseName}";
-    public ${pascalCaseName}() {`;
+  let result = "";
   code.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
@@ -89,22 +84,31 @@ export let modelToFlow = (pascalCaseName, code) => {
         if (!nos || !tos) {
           return;
         }
-        if (nos in current) {
+
+        if (nos === "targetRoute") {
+          result = result.concat(
+            `${currentVar}.getElement().addEventListener("click", e-> {
+              ${currentVar}.getUI().ifPresent(ui -> ui.navigate("${kebabToPascalCase(
+              tos
+            )}"));
+       });`
+          );
+        } else if (nos in current) {
           try {
             let json = JSON.parse(tos);
-            current[nos] = json;
             if (nos === "textContent") {
               result = result.concat(
                 `${currentVar}.getElement().setText("${tos}");\n`
               );
             } else {
               result = result.concat(
-                `${currentVar}.getElement().setProperty("${nos}","${tos}");\n`
+                `${currentVar}.getElement().setProperty("${nos}","${tos.replace(
+                  /\"/g,
+                  "'"
+                )}");\n`
               );
             }
-            //            result = result.concat(` .${nos}=\$\{"{JSON.parse(tos)}"\}`);
           } catch (e) {
-            current[nos] = tos;
             if (nos === "textContent") {
               result = result.concat(
                 `${currentVar}.getElement().setText("${tos}");\n`
@@ -132,9 +136,148 @@ export let modelToFlow = (pascalCaseName, code) => {
     importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
   });
 
-  return `${importStrings}
+  return `package unide.app;
+  ${importStrings}
+  import com.vaadin.flow.component.dependency.HtmlImport;
+  import com.vaadin.flow.router.PageTitle;
+  import com.vaadin.flow.router.Route;
+  @Route("${pascalCaseName}")
+  @HtmlImport("css/shared-styles.html")
+  public class ${pascalCaseName} extends Div {
+    public ${pascalCaseName}() {
           ${result}
       }
     }
   `;
 };
+
+let pomXML = `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>unide.app</groupId>
+    <artifactId>app</artifactId>
+    <name>Project base for Vaadin Flow</name>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>war</packaging>
+
+    <properties>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <failOnMissingWebXml>false</failOnMissingWebXml>
+        
+        <vaadin.version>13.0.1</vaadin.version>
+    </properties>
+
+    <repositories>
+        <!-- Repository used by many Vaadin add-ons -->
+        <repository>
+                         <id>Vaadin Directory</id>
+            <url>http://maven.vaadin.com/vaadin-addons</url>
+        </repository>
+    </repositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-bom</artifactId>
+                <type>pom</type>
+                <scope>import</scope>
+                <version>\${vaadin.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-core</artifactId>
+        </dependency>
+
+        <!-- Added to provide logging output as Flow uses -->
+        <!-- the unbound SLF4J no-operation (NOP) logger implementation -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>3.1.0</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Jetty plugin for easy testing without a server -->
+            <plugin>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-maven-plugin</artifactId>
+                <version>9.4.11.v20180605</version>
+                <configuration>
+                    <scanIntervalSeconds>1</scanIntervalSeconds>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!-- Production mode can be activated with either property or profile -->
+            <id>production-mode</id>
+            <activation>
+                <property>
+                    <name>vaadin.productionMode</name>
+                </property>
+            </activation>
+            <properties>
+                <vaadin.productionMode>true</vaadin.productionMode>
+            </properties>
+
+            <dependencies>
+                <dependency>
+                    <groupId>com.vaadin</groupId>
+                    <artifactId>flow-server-production-mode</artifactId>
+                </dependency>
+            </dependencies>
+
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.vaadin</groupId>
+                        <artifactId>vaadin-maven-plugin</artifactId>
+                        <version>\${vaadin.version}</version>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>copy-production-files</goal>
+                                    <goal>package-for-production</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
+`;
+
+const sharedStyles = `<!-- The shared-styles.html is used instead of shared-styles.css so that
+-- the styles are also used for browsers that do not support CSS Custom Properties
+-- (mainly to support IE11)
+-- for more information see: https://cdn.vaadin.com/vaadin-lumo-styles/1.3.1/demo/compatibility.html
+-->
+<!-- Remember to import custom-style, which is included in the Polymer package -->
+<link rel="import"
+    href="../bower_components/polymer/lib/elements/custom-style.html">
+
+<custom-style>
+  <style>
+      /* The CSS magic goes here */
+  </style>
+</custom-style>
+`;
