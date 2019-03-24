@@ -158,69 +158,9 @@ let flowImports = {
     import:
       "import import com.vaadin.flow.component.formlayout.FormLayout.FormItem;"
   },
-  "vaadin-grid-filter": {
-    name: "VaadinGridFilter",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter.js;"
-  },
-  "vaadin-grid-sort-column": {
-    name: "VaadinGridSortColumn",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sort-column.js;"
-  },
-  "vaadin-grid-selection-column": {
-    name: "VaadinGridSelectionColumn",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-selection-column.js;"
-  },
-  "vaadin-grid-column": {
-    name: "VaadinGridColumn",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column.js;"
-  },
-  "vaadin-grid": {
+  "unide-grid": {
     name: "Grid",
     import: "import com.vaadin.flow.component.grid.Grid;"
-  },
-  "vaadin-grid-scroller": {
-    name: "VaadinGridScroller",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/src/vaadin-grid-scroller.js;"
-  },
-  "vaadin-grid-templatizer": {
-    name: "VaadinGridTemplatizer",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/src/vaadin-grid-templatizer.js;"
-  },
-  "vaadin-grid-tree-column": {
-    name: "VaadinGridTreeColumn",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-column.js;"
-  },
-  "vaadin-grid-column-group": {
-    name: "VaadinGridColumnGroup",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-column-group.js;"
-  },
-  "vaadin-grid-tree-toggle": {
-    name: "VaadinGridTreeToggle",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-tree-toggle.js;"
-  },
-  "vaadin-grid-filter-column": {
-    name: "VaadinGridFilterColumn",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-filter-column.js;"
-  },
-  "vaadin-grid-sorter": {
-    name: "VaadinGridSorter",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/theme/lumo/vaadin-grid-sorter.js;"
-  },
-  "vaadin-grid-outer-scroller": {
-    name: "VaadinGridOuterScroller",
-    import:
-      "import /node_modules/@vaadin/vaadin-grid/src/vaadin-grid-outer-scroller.js;"
   },
   "vaadin-list-box": {
     name: "VaadinListBox",

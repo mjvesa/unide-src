@@ -34,6 +34,7 @@ export let exportToFlow = designs => {
 
 export let modelToFlow = (pascalCaseName, code) => {
   let importedTags = new Set();
+  let internalClasses = "";
   let stack = [];
   let tree = [];
   let tagTree = [];
@@ -65,8 +66,13 @@ export let modelToFlow = (pascalCaseName, code) => {
         let newVar = "el" + variableCount;
         variableCount++;
 
-        result += `${elementClass} ${newVar} = new ${elementClass}();
-        ${currentVar}.add(${newVar});\n`;
+        if (currentTag === "unide-grid") {
+          result += `${elementClass}<${pascalCaseName}GridType> ${newVar} = new ${elementClass}<>();
+          ${currentVar}.add(${newVar});\n`;
+        } else {
+          result += `${elementClass} ${newVar} = new ${elementClass}();
+          ${currentVar}.add(${newVar});\n`;
+        }
         variableStack.push(currentVar);
         currentVar = newVar;
 
@@ -83,6 +89,55 @@ export let modelToFlow = (pascalCaseName, code) => {
         let nos = stack.pop();
         if (!nos || !tos) {
           return;
+        }
+
+        if (currentTag === "unide-grid") {
+          if (nos === "items") {
+            let obj = JSON.parse(tos);
+            let gridItems = ` ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();
+                              ${pascalCaseName}GridType item;\n`;
+            obj.forEach(values => {
+              let item = `item = new ${pascalCaseName}GridType();\n`;
+              Object.keys(values).forEach(key => {
+                item = item.concat(`item.set${key}("${values[key]}");`);
+              });
+              item = item.concat(`items.add(item);`);
+              gridItems = gridItems.concat(item);
+            });
+            result = result
+              .concat(gridItems)
+              .concat(`${currentVar}.setItems(items);\n`);
+            return;
+          } else if (nos === "columnCaptions") {
+            let obj = JSON.parse(tos);
+            let methods = "";
+            let fields = "";
+            let creation = "";
+            obj.forEach(pair => {
+              creation = creation.concat(
+                `${currentVar}.addColumn(${pascalCaseName}GridType::get${
+                  pair.path
+                }).setHeader("${pair.name}");\n`
+              );
+              fields = fields.concat(`private String ${pair.path};\n`);
+              methods = methods.concat(`public String get${pair.path}() {
+                  return this.${pair.path};
+              }
+              public void set${pair.path}(String value) {
+                this.${pair.path}=value;
+              }
+                `);
+            });
+
+            internalClasses =
+              internalClasses +
+              `public static class ${pascalCaseName}GridType {
+              ${fields}
+              ${methods}
+            }`;
+            result = result.concat(creation);
+            return;
+          }
         }
 
         if (nos === "targetRoute") {
@@ -138,12 +193,14 @@ export let modelToFlow = (pascalCaseName, code) => {
 
   return `package unide.app;
   ${importStrings}
+  import java.util.ArrayList;
   import com.vaadin.flow.component.dependency.HtmlImport;
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
   @Route("${pascalCaseName}")
   @HtmlImport("css/shared-styles.html")
   public class ${pascalCaseName} extends Div {
+    ${internalClasses}
     public ${pascalCaseName}() {
           ${result}
       }
