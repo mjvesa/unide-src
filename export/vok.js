@@ -1,15 +1,17 @@
 /**
- *  Exporter from model to LitElement
+ *  Exporter from model to Vaadin on Kotlin
+ *
  */
 import flowImports from "./flow_imports.js";
 
-export let exportToVoK = designs => {
+export let exportToVoK = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".kt", modelToFlow(key, designs[key]));
+    zip.file(key + ".kt", modelToFlow(key, designs[key].tree));
   }
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "vaadin-on-kotlin-designs.zip");

@@ -13,15 +13,16 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let exportToSvelte = designs => {
+export let exportToSvelte = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
     zip.file(
       kebabToPascalCase(key) + ".svelte",
-      modelToSvelte(key, designs[key])
+      modelToSvelte(key, designs[key].tree)
     );
   }
   zip.generateAsync({ type: "blob" }).then(content => {

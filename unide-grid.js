@@ -7,7 +7,6 @@ class UnideGridElement extends HTMLElement {
     this.grid = document.createElement("vaadin-grid");
     this.grid.style.height = "100%";
     shadow.appendChild(this.grid);
-    console.log("UNIDEEE");
   }
   set columnCaptions(captions) {
     this.grid.innerHTML = "";

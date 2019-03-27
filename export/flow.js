@@ -12,8 +12,9 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let exportToFlow = designs => {
+export let exportToFlow = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
@@ -21,7 +22,7 @@ export let exportToFlow = designs => {
     let pascalCaseName = kebabToPascalCase(key);
     zip.file(
       "src/main/java/unide/app/" + pascalCaseName + ".java",
-      modelToFlow(pascalCaseName, designs[key])
+      modelToFlow(pascalCaseName, designs[key].tree)
     );
   }
   zip.file("pom.xml", pomXML);

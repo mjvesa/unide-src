@@ -13,13 +13,17 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let exportToReact = designs => {
+export let exportToReact = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(kebabToPascalCase(key) + ".js", modelToReact(key, designs[key]));
+    zip.file(
+      kebabToPascalCase(key) + ".js",
+      modelToReact(key, designs[key].tree)
+    );
   }
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "react-designs.zip");

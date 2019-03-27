@@ -3,13 +3,14 @@
  */
 import jsImports from "./js_imports.js";
 
-export let exportToAngular = designs => {
+export let exportToAngular = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".component.ts", modelToAngular(key, designs[key]));
+    zip.file(key + ".component.ts", modelToAngular(key, designs[key].tree));
   }
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "angular-designs.zip");

@@ -13,13 +13,17 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let exportToVue = designs => {
+export let exportToVue = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(kebabToPascalCase(key) + ".vue", modelToVue(key, designs[key]));
+    zip.file(
+      kebabToPascalCase(key) + ".vue",
+      modelToVue(key, designs[key].tree)
+    );
   }
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "vue-designs.zip");

@@ -4,13 +4,14 @@
 import jsImports from "./js_imports.js";
 import { getIndexHTML } from "./vanilla_index_html";
 
-export let exportToLitElement = designs => {
+export let exportToLitElement = project => {
   let zip = new JSZip();
+  let designs = project.designs;
   let keys = Object.keys(designs);
   let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".js", modelToLitElement(key, designs[key]));
+    zip.file(key + ".js", modelToLitElement(key, designs[key].tree));
   }
 
   zip.file("package.json", packageJson);
