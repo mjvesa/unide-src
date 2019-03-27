@@ -72,16 +72,16 @@ const getOutlineElement = () => {
 };
 
 const showCurrentDesign = () => {
-  checkModel(currentDesign);
+  checkModel(currentDesign.tree);
   let paper = getPaperElement();
   paper.innerHTML = "";
   let style = document.createElement("style");
-  style.textContent = textEditor.getValue();
+  style.textContent = currentDesign.css; //textEditor.getValue();
   paper.appendChild(style);
-  modelToDOM(currentDesign, paper);
+  modelToDOM(currentDesign.tree, paper);
   let outline = getOutlineElement();
   outline.innerHTML = "";
-  modelToOutline(currentDesign, outline);
+  modelToOutline(currentDesign.tree, outline);
 };
 
 const startDrag = (event, snippet) => {
@@ -474,7 +474,7 @@ const populatePalette = () => {
 const populateDesignSelector = () => {
   let selector = document.getElementById("choose-design");
   selector.innerHTML = "";
-  let keys = Object.keys(storedDesigns);
+  let keys = Object.keys(storedDesigns.designs);
   let placeholder = document.createElement("option");
   placeholder.textContent = "Select a design";
   selector.add(placeholder);
@@ -506,8 +506,8 @@ const saveDesign = event => {
  */
 const loadDesign = designName => {
   document.getElementById("design-name").value = designName;
-  let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
-  currentDesign = designs[designName];
+  //  let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
+  currentDesign = storedDesigns.designs[designName];
   designStack = [];
   redoStack = [];
   showCurrentDesign();
@@ -589,13 +589,15 @@ const installUIEventHandlers = () => {
   textEditor.on("change", event => {
     let el = paper.querySelector("style");
     if (el) {
-      el.textContent = textEditor.getValue();
+      let css = textEditor.getValue();
+      el.textContent = css;
+      currentDesign.css = css;
     }
   });
 };
 
 const initializeDesign = () => {
-  currentDesign = initialDesign.split("\n");
+  currentDesign = { css: "", tree: initialDesign.split("\n") };
   designStack.push(currentDesign);
 };
 
