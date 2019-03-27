@@ -17,7 +17,6 @@ export let exportToReact = project => {
   let zip = new JSZip();
   let designs = project.designs;
   let keys = Object.keys(designs);
-  let litElements = [];
   for (let i in keys) {
     let key = keys[i];
     zip.file(

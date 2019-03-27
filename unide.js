@@ -24,7 +24,6 @@ let selectedElement;
 let storedDesigns = {};
 
 // DnD Stuff
-const markerEl = document.createElement("div");
 let previousBegin, previousEnd;
 
 // Positions for DnD
@@ -95,6 +94,7 @@ const showNewDesign = newDesign => {
   showCurrentDesign();
 };
 
+// eslint-disable-next-line
 const startDragFromModel = (elementId, event) => {
   let newDesign = currentDesign.slice();
   previousBegin = elementId - 1;
@@ -281,6 +281,7 @@ const updateAttributes = () => {
   showCurrentDesign();
 };
 
+// eslint-disable-next-line
 const navigateTo = event => {
   let targetRoute = event.target.getAttribute("targetroute");
   if (targetRoute) {
@@ -299,7 +300,9 @@ const navigateTo = event => {
  * @param {*} valuefnStr
  */
 const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
+  // eslint-disable-next-line
   let stack = [];
+  // eslint-disable-next-line
   let tree = [];
   let current;
   let lparenfn = eval(lparenfnStr);
@@ -396,10 +399,10 @@ const createPaletteSection = (name, tags, palette) => {
   let outer = document.createElement("div");
   outer.className = "palette-section";
   outer.innerHTML = name;
-  outer.onmouseover = event => {
+  outer.onmouseover = () => {
     outer.style.height = 8 + tags.length + "rem";
   };
-  outer.onmouseout = event => {
+  outer.onmouseout = () => {
     outer.style.height = null;
   };
   palette.appendChild(outer);
@@ -423,7 +426,7 @@ const createPaletteSection = (name, tags, palette) => {
         modelToDOM(snippet, preview);
         preview.style.display = "block";
       };
-      el.onmouseout = event => {
+      el.onmouseout = () => {
         const preview = document.getElementById("element-preview");
         preview.style.display = "none";
       };
@@ -491,7 +494,7 @@ const populateDesignSelector = () => {
  *
  * @param {*} event
  */
-const saveDesign = event => {
+const saveDesign = () => {
   let designName = document.getElementById("design-name").value;
   storedDesigns[designName] = currentDesign;
   localStorage.setItem("designs", JSON.stringify(storedDesigns));
@@ -513,7 +516,7 @@ const loadDesign = designName => {
   showCurrentDesign();
 };
 
-const loadSelectedDesign = event => {
+const loadSelectedDesign = () => {
   loadDesign(document.getElementById("choose-design").value);
 };
 
@@ -521,7 +524,7 @@ const loadSelectedDesign = event => {
  * Imports a raw model, that is a plain JSON representation of what is in local storage.
  * @param {*} event
  */
-const importRawModel = event => {
+const importRawModel = () => {
   const upload = document.getElementById("import-file-input");
   const file = upload.files[0];
   if (file) {
@@ -586,7 +589,7 @@ const installUIEventHandlers = () => {
   document.getElementById("export-design").onclick = exportDesign;
   document.getElementById("import-file").onclick = importRawModel;
 
-  textEditor.on("change", event => {
+  textEditor.on("change", () => {
     let el = paper.querySelector("style");
     if (el) {
       let css = textEditor.getValue();
@@ -647,6 +650,7 @@ const setDemoDesigns = () => {
 };
 
 const setupTextEditor = () => {
+  // eslint-disable-next-line no-undef
   textEditor = CodeMirror(document.getElementById("text-editor"), {
     mode: "text/css",
     theme: "tomorrow-night-eighties",

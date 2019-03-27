@@ -18,5 +18,7 @@
     "jszip": "^3.1.5",
     "prettier": "^1.16.4"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "eslint": "^5.15.3"
+  }
 }
