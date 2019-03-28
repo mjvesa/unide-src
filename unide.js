@@ -73,11 +73,11 @@ const getOutlineElement = () => {
 const showCurrentDesign = () => {
   checkModel(currentDesign.tree);
   let paper = getPaperElement();
-  paper.innerHTML = "";
+  paper.shadowRoot.innerHTML = "";
   let style = document.createElement("style");
   style.textContent = currentDesign.css; //textEditor.getValue();
-  paper.appendChild(style);
-  modelToDOM(currentDesign.tree, paper);
+  paper.shadowRoot.appendChild(style);
+  modelToDOM(currentDesign.tree, paper.shadowRoot);
   let outline = getOutlineElement();
   outline.innerHTML = "";
   modelToOutline(currentDesign.tree, outline);
@@ -96,10 +96,10 @@ const showNewDesign = newDesign => {
 
 // eslint-disable-next-line
 const startDragFromModel = (elementId, event) => {
-  let newDesign = currentDesign.slice();
+  let newDesign = { tree: currentDesign.tree.slice(), css: currentDesign.css };
   previousBegin = elementId - 1;
-  previousEnd = findDanglingParen(currentDesign, elementId + 1);
-  let elementTree = newDesign.splice(
+  previousEnd = findDanglingParen(currentDesign.tree, elementId + 1);
+  let elementTree = newDesign.tree.splice(
     previousBegin,
     previousEnd - elementId + 2
   );
@@ -136,10 +136,16 @@ const getPositionOnTarget = (el, clientX, clientY) => {
   }
 };
 
+const getElementAt = (x, y) => {
+  let el = getPaperElement().shadowRoot.elementFromPoint(x, y);
+  el = el ? el : document.elementFromPoint(x, y);
+  return el;
+};
+
 const placeMarker = e => {
   let marker = document.getElementById("marker");
   marker.style.display = "none";
-  let target = document.elementFromPoint(e.clientX, e.clientY);
+  let target = getElementAt(e.clientX, e.clientY);
   let designId = target ? target.getAttribute("data-design-id") : null;
   if (target && designId) {
     let bcr = target.getBoundingClientRect();
@@ -171,32 +177,47 @@ const placeMarker = e => {
   }
 };
 
+let insertSnippet = (index, position, snippet, tree) => {
+  let spliceIndex;
+  switch (position) {
+    case POSITION_CHILD_OF_ELEMENT:
+      spliceIndex = findDanglingParen(currentDesign.tree, index + 1);
+      break;
+    case POSITION_BEFORE_ELEMENT:
+      spliceIndex = index - 1;
+      break;
+    case POSITION_AFTER_ELEMENT:
+      spliceIndex = findDanglingParen(currentDesign.tree, index + 1) + 1;
+      break;
+  }
+
+  let left = tree.slice(0, spliceIndex);
+  let right = tree.slice(spliceIndex);
+  return left.concat(snippet).concat(right);
+};
+
 let dropElement = e => {
   // Hide marker
   let marker = document.getElementById("marker");
   marker.style.display = "none";
-  let target = document.elementFromPoint(e.clientX, e.clientY);
+  // Find position of target and adjust
+  let target = getElementAt(e.clientX, e.clientY);
   let index = Number(target.getAttribute("data-design-id"));
   if (index >= previousBegin && index <= previousEnd) {
     // Do not allow dropping on itself
+    debugger;
     return;
   }
   if (index > previousEnd) {
     // Adjust for removed content
     index -= previousEnd - previousBegin;
   }
+  let snippet = JSON.parse(e.dataTransfer.getData("text"));
   let position = getPositionOnTarget(target, e.clientX, e.clientY);
-  let spliceIndex = findDanglingParen(currentDesign, index + 1);
-  if (position === POSITION_AFTER_ELEMENT) {
-    spliceIndex = findDanglingParen(currentDesign, index + 1) + 1;
-  } else if (position === POSITION_BEFORE_ELEMENT) {
-    spliceIndex = index - 1;
-  }
-
-  let elementTree = JSON.parse(e.dataTransfer.getData("text"));
-  let left = currentDesign.slice(0, spliceIndex);
-  let right = currentDesign.slice(spliceIndex, currentDesign.length);
-  let newDesign = left.concat(elementTree).concat(right);
+  let newDesign = {
+    tree: insertSnippet(index, position, snippet, currentDesign.tree),
+    css: currentDesign.css
+  };
   designStack.push(currentDesign);
   currentDesign = newDesign;
   showCurrentDesign();
@@ -218,8 +239,8 @@ let selectElement = e => {
     let stack = [];
     let props = "";
     let ip = Number(designId) + 1;
-    let value = currentDesign[ip].trim();
-    while (value !== "(" && value !== ")" && ip < currentDesign.length) {
+    let value = currentDesign.tree[ip].trim();
+    while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
       if (value === "=") {
         let tos = stack.pop();
         let nos = stack.pop();
@@ -228,7 +249,7 @@ let selectElement = e => {
         stack.push(value);
       }
       ip++;
-      value = currentDesign[ip].trim();
+      value = currentDesign.tree[ip].trim();
     }
     document.getElementById("attributes").value = props;
     e.preventDefault();
@@ -261,7 +282,7 @@ const updateAttributes = () => {
   // Find range of previous attributes
   let index = selectedElement + 1;
   do {
-    let a = currentDesign[index].trim();
+    let a = currentDesign.tree[index].trim();
     if (a === "(") {
       index--;
       break;
@@ -270,12 +291,15 @@ const updateAttributes = () => {
       break;
     }
     index++;
-  } while (index < currentDesign.length);
+  } while (index < currentDesign.tree.length);
 
   // Stick the attributes where the old ones were
-  let first = currentDesign.slice(0, selectedElement + 1);
-  let rest = currentDesign.slice(index, currentDesign.length);
-  let newDesign = first.concat(attributes).concat(rest);
+  let first = currentDesign.tree.slice(0, selectedElement + 1);
+  let rest = currentDesign.tree.slice(index, currentDesign.tree.length);
+  let newDesign = {
+    tree: first.concat(attributes).concat(rest),
+    css: currentDesign.css
+  };
   designStack.push(currentDesign);
   currentDesign = newDesign;
   showCurrentDesign();
@@ -331,46 +355,65 @@ const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   };
 };
 
-const modelToDOM = makeATIRInterpreter(
-  `(index, inert) => {
-    let old = current;
-    tree.push(current);
-    let tag = stack.pop();
-    if (tag in storedDesigns) {
-      current = document.createElement('div');
-      modelToDOM(storedDesigns[tag], current,true);
-    } else {
-      current = document.createElement(tag);
-    }
-    if (!inert) {
-      current.setAttribute('data-design-id', index);
-      current.ondragstart = (event) => {startDragFromModel(index, event)};
-      current.ondblclick = (event) => {navigateTo(event)}
-      current.draggable = true;
-    }
-    old.appendChild(current);
-  }`,
-  "() => {current = tree.pop()}",
-  `
-  () => {
-    let tos=stack.pop();
-    let nos=stack.pop();
-    if (nos in current) {
-      try {
-        let json = JSON.parse(tos);
-        current[nos]=json;
-      } catch (e) {
-        console.log('Could not parse json ' + e);
-        current[nos]=tos;
-        current.setAttribute(nos, tos);
+const modelToDOM = (code, target, inert = false) => {
+  let stack = [];
+  let tree = [];
+  let current = target;
+  // current = target;
+  code.forEach((str, index) => {
+    let trimmed = str.trim();
+    switch (trimmed) {
+      case "(": {
+        let old = current;
+        tree.push(current);
+        let tag = stack.pop();
+        if (tag in storedDesigns) {
+          current = document.createElement("div");
+          modelToDOM(storedDesigns[tag], current, true);
+        } else {
+          current = document.createElement(tag);
+        }
+        if (!inert) {
+          current.setAttribute("data-design-id", index);
+          current.ondragstart = event => {
+            startDragFromModel(index, event);
+          };
+          current.ondblclick = event => {
+            navigateTo(event);
+          };
+          current.draggable = true;
+        }
+        old.appendChild(current);
+        break;
       }
-    } else {
-      current.setAttribute(nos, tos);
+      case ")": {
+        current = tree.pop();
+        break;
+      }
+      case "=": {
+        let tos = stack.pop();
+        let nos = stack.pop();
+        if (nos in current) {
+          try {
+            let json = JSON.parse(tos);
+            current[nos] = json;
+          } catch (e) {
+            current[nos] = tos;
+            current.setAttribute(nos, tos);
+          }
+        } else {
+          current.setAttribute(nos, tos);
+        }
+
+        break;
+      }
+      default: {
+        stack.push(trimmed);
+      }
     }
-  }
-  `,
-  "str => {stack.push(str)}"
-);
+  });
+  return current;
+};
 
 const modelToOutline = makeATIRInterpreter(
   `(index, inert) => {
@@ -590,7 +633,7 @@ const installUIEventHandlers = () => {
   document.getElementById("import-file").onclick = importRawModel;
 
   textEditor.on("change", () => {
-    let el = paper.querySelector("style");
+    let el = paper.shadowRoot.querySelector("style");
     if (el) {
       let css = textEditor.getValue();
       el.textContent = css;
@@ -600,6 +643,7 @@ const installUIEventHandlers = () => {
 };
 
 const initializeDesign = () => {
+  getPaperElement().attachShadow({ mode: "open" });
   currentDesign = { css: "", tree: initialDesign.split("\n") };
   designStack.push(currentDesign);
 };
@@ -626,10 +670,15 @@ const installKeyboardHandlers = () => {
     }
 
     if (event.key === "Delete") {
-      let newDesign = currentDesign.slice();
-      newDesign.splice(
+      let newDesign = {
+        tree: currentDesign.tree.slice(),
+        css: currentDesign.css
+      };
+      newDesign.tree.splice(
         selectedElement - 1,
-        findDanglingParen(newDesign, selectedElement + 1) - selectedElement + 2
+        findDanglingParen(newDesign.tree, selectedElement + 1) -
+          selectedElement +
+          2
       );
       showNewDesign(newDesign);
       event.stopPropagation();
