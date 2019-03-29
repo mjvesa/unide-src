@@ -193,10 +193,10 @@ export let paletteContent = [
           "(",
           ")",
           ")"
-        ],
-        ["tabs", ["vaadin-tabs", "(", ")"]],
-        ["tab", ["vaadin-tab", "(", ")"]]
-      ]
+        ]
+      ],
+      ["tabs", ["vaadin-tabs", "(", ")"]],
+      ["tab", ["vaadin-tab", "(", ")"]]
     ]
   ],
 
