@@ -5,7 +5,7 @@
   "repository": "https://github.com/mjvesa/UniDe",
   "main": "unide.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest"
   },
   "author": "",
   "license": "ISC",
@@ -19,6 +19,7 @@
     "prettier": "^1.16.4"
   },
   "devDependencies": {
-    "eslint": "^5.15.3"
+    "eslint": "^5.15.3",
+    "jest": "^24.5.0"
   }
 }
