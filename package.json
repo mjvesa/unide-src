@@ -5,6 +5,8 @@
   "repository": "https://github.com/mjvesa/UniDe",
   "main": "unide.js",
   "scripts": {
+    "start-dev": "polymer serve --npm",
+    "build": "polymer build",   
     "test": "jest"
   },
   "author": "",
