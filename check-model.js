@@ -47,7 +47,5 @@ export const checkModel = model => {
   if (hadIssues) {
     console.log(JSON.stringify(model));
     debugger;
-  } else {
-    console.log("Model OK.");
   }
 };

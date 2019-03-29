@@ -96,15 +96,10 @@ const showNewDesign = newDesign => {
 
 // eslint-disable-next-line
 const startDragFromModel = (elementId, event) => {
-  let newDesign = { tree: currentDesign.tree.slice(), css: currentDesign.css };
   previousBegin = elementId - 1;
   previousEnd = findDanglingParen(currentDesign.tree, elementId + 1);
-  let elementTree = newDesign.tree.splice(
-    previousBegin,
-    previousEnd - elementId + 2
-  );
-  designStack.push(currentDesign);
-  currentDesign = newDesign;
+  let elementTree = currentDesign.tree.slice(previousBegin, previousEnd + 1);
+  checkModel(elementTree);
   event.dataTransfer.setData("text", JSON.stringify(elementTree));
   event.stopPropagation();
 };
@@ -205,12 +200,7 @@ let dropElement = e => {
   let index = Number(target.getAttribute("data-design-id"));
   if (index >= previousBegin && index <= previousEnd) {
     // Do not allow dropping on itself
-    debugger;
     return;
-  }
-  if (index > previousEnd) {
-    // Adjust for removed content
-    index -= previousEnd - previousBegin;
   }
   let snippet = JSON.parse(e.dataTransfer.getData("text"));
   let position = getPositionOnTarget(target, e.clientX, e.clientY);
@@ -218,6 +208,15 @@ let dropElement = e => {
     tree: insertSnippet(index, position, snippet, currentDesign.tree),
     css: currentDesign.css
   };
+
+  if (index < previousBegin) {
+    // Adjust for content added before old position
+    const snippetLength = previousEnd - previousBegin + 1;
+    previousBegin += snippetLength;
+    previousEnd += snippetLength;
+  }
+  newDesign.tree.splice(previousBegin, previousEnd - previousBegin + 1);
+
   designStack.push(currentDesign);
   currentDesign = newDesign;
   showCurrentDesign();
