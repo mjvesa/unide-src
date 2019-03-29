@@ -98,9 +98,7 @@ const showNewDesign = newDesign => {
 const startDragFromModel = (elementId, event) => {
   previousBegin = elementId - 1;
   previousEnd = findDanglingParen(currentDesign.tree, elementId + 1);
-  let elementTree = currentDesign.tree.slice(previousBegin, previousEnd + 1);
-  checkModel(elementTree);
-  event.dataTransfer.setData("text", JSON.stringify(elementTree));
+  //event.dataTransfer.setData("text", JSON.stringify(elementTree));
   event.stopPropagation();
 };
 
@@ -172,50 +170,79 @@ const placeMarker = e => {
   }
 };
 
-let insertSnippet = (index, position, snippet, tree) => {
+let insertSubtree = (index, position, subtree, tree) => {
   let spliceIndex;
   switch (position) {
     case POSITION_CHILD_OF_ELEMENT:
-      spliceIndex = findDanglingParen(currentDesign.tree, index + 1);
+      spliceIndex = findDanglingParen(tree, index + 1);
       break;
     case POSITION_BEFORE_ELEMENT:
       spliceIndex = index - 1;
       break;
     case POSITION_AFTER_ELEMENT:
-      spliceIndex = findDanglingParen(currentDesign.tree, index + 1) + 1;
+      spliceIndex = findDanglingParen(tree, index + 1) + 1;
       break;
   }
 
   let left = tree.slice(0, spliceIndex);
   let right = tree.slice(spliceIndex);
-  return left.concat(snippet).concat(right);
+  return left.concat(subtree).concat(right);
+};
+
+let moveSubtree = (index, position, begin, end, tree) => {
+  let subtree = currentDesign.tree.slice(begin, end + 1);
+  checkModel(subtree);
+
+  let newTree = insertSubtree(index, position, subtree, tree);
+
+  if (index < begin) {
+    // Adjust for content added before old position
+    const subtreeLength = end - begin + 1;
+    begin += subtreeLength;
+    end += subtreeLength;
+  }
+  newTree.splice(begin, end - begin + 1);
+  checkModel(newTree);
+  return newTree;
+};
+
+const insertingNewSubtree = () => {
+  return previousBegin === previousEnd;
 };
 
 let dropElement = e => {
   // Hide marker
   let marker = document.getElementById("marker");
   marker.style.display = "none";
-  // Find position of target and adjust
+  // Find position of target
   let target = getElementAt(e.clientX, e.clientY);
   let index = Number(target.getAttribute("data-design-id"));
-  if (index >= previousBegin && index <= previousEnd) {
-    // Do not allow dropping on itself
-    return;
-  }
-  let snippet = JSON.parse(e.dataTransfer.getData("text"));
   let position = getPositionOnTarget(target, e.clientX, e.clientY);
-  let newDesign = {
-    tree: insertSnippet(index, position, snippet, currentDesign.tree),
-    css: currentDesign.css
-  };
 
-  if (index < previousBegin) {
-    // Adjust for content added before old position
-    const snippetLength = previousEnd - previousBegin + 1;
-    previousBegin += snippetLength;
-    previousEnd += snippetLength;
+  let newDesign;
+
+  if (insertingNewSubtree()) {
+    let subtree = JSON.parse(e.dataTransfer.getData("text"));
+    newDesign = {
+      tree: insertSubtree(index, position, subtree, currentDesign.tree),
+      css: currentDesign.css
+    };
+  } else {
+    if (index >= previousBegin && index <= previousEnd) {
+      // Do not allow dropping on itself
+      return;
+    }
+    newDesign = {
+      tree: moveSubtree(
+        index,
+        position,
+        previousBegin,
+        previousEnd,
+        currentDesign.tree
+      ),
+      css: currentDesign.css
+    };
   }
-  newDesign.tree.splice(previousBegin, previousEnd - previousBegin + 1);
 
   designStack.push(currentDesign);
   currentDesign = newDesign;
