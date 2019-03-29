@@ -12,6 +12,7 @@ import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
 import { demoDesigns } from "./demo_designs";
+import * as Model from "./model";
 const initialDesign = `div
   (
     style
@@ -26,40 +27,11 @@ let storedDesigns = {};
 // DnD Stuff
 let previousBegin, previousEnd;
 
-// Positions for DnD
-const POSITION_BEFORE_ELEMENT = -1;
-const POSITION_CHILD_OF_ELEMENT = 0;
-const POSITION_AFTER_ELEMENT = 1;
-
 // Design stack for undo/redo
 let designStack = [];
 let redoStack = [];
 
 let textEditor;
-
-// Finds the first parenthesis starting from index which is not matched.
-// That paren marks the end of the component
-const findDanglingParen = (arr, index) => {
-  let i = index;
-  let parenCount = 0;
-  do {
-    if (i >= arr.length) {
-      throw "Ran out of array while dangling" + JSON.stringify(currentDesign);
-    }
-    switch (arr[i].trim()) {
-      case "(":
-        parenCount++;
-        break;
-      case ")":
-        parenCount--;
-        break;
-      default:
-        break;
-    }
-    i++;
-  } while (parenCount >= 0);
-  return i - 1;
-};
 
 const getPaperElement = () => {
   let el = document.getElementById("paper");
@@ -97,7 +69,7 @@ const showNewDesign = newDesign => {
 // eslint-disable-next-line
 const startDragFromModel = (elementId, event) => {
   previousBegin = elementId - 1;
-  previousEnd = findDanglingParen(currentDesign.tree, elementId + 1);
+  previousEnd = Model.findDanglingParen(currentDesign.tree, elementId + 1);
   //event.dataTransfer.setData("text", JSON.stringify(elementTree));
   event.stopPropagation();
 };
@@ -121,11 +93,11 @@ const getPositionOnTarget = (el, clientX, clientY) => {
       (midX - clientX) * (midX - clientX) + (midY - clientY) * (midY - clientY)
     ) <= radius
   ) {
-    return POSITION_CHILD_OF_ELEMENT;
+    return Model.POSITION_CHILD_OF_ELEMENT;
   } else if (clientY < midY) {
-    return POSITION_BEFORE_ELEMENT;
+    return Model.POSITION_BEFORE_ELEMENT;
   } else {
-    return POSITION_AFTER_ELEMENT;
+    return Model.POSITION_AFTER_ELEMENT;
   }
 };
 
@@ -149,14 +121,14 @@ const placeMarker = e => {
     marker.style.height = bcr.height + "px";
     let position = getPositionOnTarget(target, e.clientX, e.clientY);
     switch (position) {
-      case POSITION_CHILD_OF_ELEMENT:
+      case Model.POSITION_CHILD_OF_ELEMENT:
         marker.style.border = "1px red solid";
         break;
-      case POSITION_BEFORE_ELEMENT:
+      case Model.POSITION_BEFORE_ELEMENT:
         marker.style.border = "none";
         marker.style.borderTop = "1px red solid";
         break;
-      case POSITION_AFTER_ELEMENT:
+      case Model.POSITION_AFTER_ELEMENT:
         marker.style.border = "none";
         marker.style.borderBottom = "1px red solid";
         break;
@@ -168,42 +140,6 @@ const placeMarker = e => {
   } else {
     marker.style.display = "none";
   }
-};
-
-let insertSubtree = (index, position, subtree, tree) => {
-  let spliceIndex;
-  switch (position) {
-    case POSITION_CHILD_OF_ELEMENT:
-      spliceIndex = findDanglingParen(tree, index + 1);
-      break;
-    case POSITION_BEFORE_ELEMENT:
-      spliceIndex = index - 1;
-      break;
-    case POSITION_AFTER_ELEMENT:
-      spliceIndex = findDanglingParen(tree, index + 1) + 1;
-      break;
-  }
-
-  let left = tree.slice(0, spliceIndex);
-  let right = tree.slice(spliceIndex);
-  return left.concat(subtree).concat(right);
-};
-
-let moveSubtree = (index, position, begin, end, tree) => {
-  let subtree = currentDesign.tree.slice(begin, end + 1);
-  checkModel(subtree);
-
-  let newTree = insertSubtree(index, position, subtree, tree);
-
-  if (index < begin) {
-    // Adjust for content added before old position
-    const subtreeLength = end - begin + 1;
-    begin += subtreeLength;
-    end += subtreeLength;
-  }
-  newTree.splice(begin, end - begin + 1);
-  checkModel(newTree);
-  return newTree;
 };
 
 const insertingNewSubtree = () => {
@@ -224,7 +160,7 @@ let dropElement = e => {
   if (insertingNewSubtree()) {
     let subtree = JSON.parse(e.dataTransfer.getData("text"));
     newDesign = {
-      tree: insertSubtree(index, position, subtree, currentDesign.tree),
+      tree: Model.insertSubtree(index, position, subtree, currentDesign.tree),
       css: currentDesign.css
     };
   } else {
@@ -233,7 +169,7 @@ let dropElement = e => {
       return;
     }
     newDesign = {
-      tree: moveSubtree(
+      tree: Model.moveSubtree(
         index,
         position,
         previousBegin,
@@ -283,43 +219,6 @@ let selectElement = e => {
   }
 };
 
-const updateElementAttributes = (attributeString, elementIndex, tree) => {
-  let attributesAsStrings = attributeString.split("\n");
-  let attributes = [];
-  for (let i in attributesAsStrings) {
-    let str = attributesAsStrings[i].trim();
-    if (str !== "") {
-      let index = str.indexOf("\t");
-      if (index === -1) {
-        index = str.indexOf(" ");
-      }
-      let key = str.substring(0, index);
-      let value = str.substring(index);
-      attributes.push(key);
-      attributes.push(value);
-      attributes.push("=");
-    }
-  }
-  // Find range of previous attributes
-  let index = elementIndex + 1;
-  do {
-    let a = currentDesign.tree[index].trim();
-    if (a === "(") {
-      index--;
-      break;
-    }
-    if (a === ")") {
-      break;
-    }
-    index++;
-  } while (index < tree.length);
-
-  // Stick the attributes where the old ones were
-  let first = currentDesign.tree.slice(0, selectedElement + 1);
-  let rest = currentDesign.tree.slice(index, currentDesign.tree.length);
-  return first.concat(attributes).concat(rest);
-};
-
 /**
  * Updates the attributes of the selected element by removing
  * the previous ones and replacing them with new attributes.
@@ -327,7 +226,7 @@ const updateElementAttributes = (attributeString, elementIndex, tree) => {
 const updateAttributes = () => {
   let attributeString = document.getElementById("attributes").value;
   let newDesign = {
-    tree: updateElementAttributes(
+    tree: Model.updateSubtreeAttributes(
       attributeString,
       selectedElement,
       currentDesign.tree
@@ -705,15 +604,9 @@ const installKeyboardHandlers = () => {
 
     if (event.key === "Delete") {
       let newDesign = {
-        tree: currentDesign.tree.slice(),
+        tree: Model.deleteElement(selectedElement, currentDesign.tree),
         css: currentDesign.css
       };
-      newDesign.tree.splice(
-        selectedElement - 1,
-        findDanglingParen(newDesign.tree, selectedElement + 1) -
-          selectedElement +
-          2
-      );
       showNewDesign(newDesign);
       event.stopPropagation();
       event.preventDefault();
