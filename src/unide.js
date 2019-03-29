@@ -578,8 +578,13 @@ const installUIEventHandlers = () => {
 
 const initializeDesign = () => {
   getPaperElement().attachShadow({ mode: "open" });
-  currentDesign = { css: "", tree: initialDesign.split("\n") };
-  designStack.push(currentDesign);
+  const keys = Object.keys(storedDesigns.designs);
+  if (!storedDesigns.designs[keys[0]]) {
+    currentDesign = { css: "", tree: initialDesign.split("\n") };
+    designStack.push(currentDesign);
+  } else {
+    loadDesign(keys[0]);
+  }
 };
 
 const installKeyboardHandlers = () => {
