@@ -1,7 +1,8 @@
 {
   "name": "UniDe",
   "version": "1.0.0",
-  "description": "",
+  "description": "Universal Designer for templates using Vaadin Components",
+  "repository": "https://github.com/mjvesa/UniDe",
   "main": "unide.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,7 +10,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@types/jszip": "^3.1.4",
     "@vaadin/vaadin-core": "^13.0.1",
     "@vaadin/vaadin-grid": "^5.3.3",
     "@vaadin/vaadin-tabs": "^2.1.2",
