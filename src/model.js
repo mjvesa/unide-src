@@ -66,7 +66,7 @@ export let moveSubtree = (index, position, begin, end, tree) => {
 };
 
 export const deleteSubtree = (elementIndex, tree) => {
-  let newTree = tree.slice;
+  let newTree = tree.slice();
   newTree.splice(
     elementIndex - 1,
     findDanglingParen(newTree, elementIndex + 1) - elementIndex + 2

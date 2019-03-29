@@ -417,12 +417,14 @@ const createPaletteSection = (name, tags, palette) => {
  * in the palette.
  */
 const getStoredDesignsForPalette = () => {
-  let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
+  let project = JSON.parse(
+    window.localStorage.getItem("unide.project") || "{designs:{}}"
+  );
   let parsedDesigns = [];
-  let keys = Object.keys(designs);
+  let keys = Object.keys(project.designs);
   keys.forEach(key => {
     parsedDesigns.push(["#" + key, [key, "(", ")"]]);
-    parsedDesigns.push([key, designs[key]]);
+    parsedDesigns.push([key, project.designs[key].tree]);
   });
   return parsedDesigns;
 };
@@ -472,8 +474,8 @@ const populateDesignSelector = () => {
  */
 const saveDesign = () => {
   let designName = document.getElementById("design-name").value;
-  storedDesigns[designName] = currentDesign;
-  localStorage.setItem("designs", JSON.stringify(storedDesigns));
+  storedDesigns.designs[designName] = currentDesign;
+  localStorage.setItem("unide.project", JSON.stringify(storedDesigns));
   populateDesignSelector();
 };
 
@@ -485,7 +487,6 @@ const saveDesign = () => {
  */
 const loadDesign = designName => {
   document.getElementById("design-name").value = designName;
-  //  let designs = JSON.parse(window.localStorage.getItem("designs") || "{}");
   currentDesign = storedDesigns.designs[designName];
   designStack = [];
   redoStack = [];
@@ -507,7 +508,7 @@ const importRawModel = () => {
     const reader = new FileReader();
     reader.readAsText(file, "UTF-8");
     reader.onload = function(evt) {
-      localStorage.setItem("designs", evt.target.result);
+      localStorage.setItem("unide.project", evt.target.result);
       populateDesignSelector();
     };
   }
@@ -604,7 +605,7 @@ const installKeyboardHandlers = () => {
 
     if (event.key === "Delete") {
       let newDesign = {
-        tree: Model.deleteElement(selectedElement, currentDesign.tree),
+        tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
         css: currentDesign.css
       };
       showNewDesign(newDesign);
@@ -615,13 +616,13 @@ const installKeyboardHandlers = () => {
 };
 
 const getStoredDesigns = () => {
-  let designsStr = localStorage.getItem("designs") || "{}";
+  let designsStr = localStorage.getItem("unide.project") || '{"designs": {}}';
   storedDesigns = JSON.parse(designsStr);
 };
 
 const setDemoDesigns = () => {
-  if (!localStorage.getItem("designs")) {
-    localStorage.setItem("designs", JSON.stringify(demoDesigns));
+  if (!localStorage.getItem("unide.project")) {
+    localStorage.setItem("unide.project", JSON.stringify(demoDesigns));
   }
 };
 

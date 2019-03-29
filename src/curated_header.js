@@ -117,7 +117,7 @@ export let paletteContent = [
       ["input", ["input", "(", ")"]],
       ["label", ["label", "(", ")"]],
       ["li", ["li", "(", ")"]],
-
+      ["p", ["p", "(", ")"]],
       ["span", ["span", "(", ")"]],
       [
         "ol",
