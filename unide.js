@@ -257,7 +257,7 @@ let dropElement = e => {
  * @param {*} e
  */
 let selectElement = e => {
-  let target = document.elementFromPoint(e.clientX, e.clientY);
+  let target = getElementAt(e.clientX, e.clientY);
   let designId = target.getAttribute("data-design-id");
   if (designId) {
     selectedElement = Number(designId);
@@ -283,12 +283,7 @@ let selectElement = e => {
   }
 };
 
-/**
- * Updates the attributes of the selected element by removing
- * the previous ones and replacing them with new attributes.
- */
-const updateAttributes = () => {
-  let attributeString = document.getElementById("attributes").value;
+const updateElementAttributes = (attributeString, elementIndex, tree) => {
   let attributesAsStrings = attributeString.split("\n");
   let attributes = [];
   for (let i in attributesAsStrings) {
@@ -306,7 +301,7 @@ const updateAttributes = () => {
     }
   }
   // Find range of previous attributes
-  let index = selectedElement + 1;
+  let index = elementIndex + 1;
   do {
     let a = currentDesign.tree[index].trim();
     if (a === "(") {
@@ -317,13 +312,26 @@ const updateAttributes = () => {
       break;
     }
     index++;
-  } while (index < currentDesign.tree.length);
+  } while (index < tree.length);
 
   // Stick the attributes where the old ones were
   let first = currentDesign.tree.slice(0, selectedElement + 1);
   let rest = currentDesign.tree.slice(index, currentDesign.tree.length);
+  return first.concat(attributes).concat(rest);
+};
+
+/**
+ * Updates the attributes of the selected element by removing
+ * the previous ones and replacing them with new attributes.
+ */
+const updateAttributes = () => {
+  let attributeString = document.getElementById("attributes").value;
   let newDesign = {
-    tree: first.concat(attributes).concat(rest),
+    tree: updateElementAttributes(
+      attributeString,
+      selectedElement,
+      currentDesign.tree
+    ),
     css: currentDesign.css
   };
   designStack.push(currentDesign);
