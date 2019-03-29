@@ -167,7 +167,10 @@ export let modelToFlow = (pascalCaseName, code) => {
           } catch (e) {
             if (nos === "textContent") {
               result = result.concat(
-                `${currentVar}.getElement().setText("${tos}");\n`
+                `${currentVar}.getElement().setText("${tos.replace(
+                  /\"/g,
+                  '\\"'
+                )}");\n`
               );
             } else {
               result = result.concat(

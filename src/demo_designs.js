@@ -1,4 +1,4 @@
-export const demoDesigns = {
+export const demoDesigns = {
   "designs": {
     "tour-1": {
       "tree": [
@@ -121,6 +121,12 @@ export const demoDesigns = {
         "(",
         "textContent",
         " Except... Exporting the design can be done by choosing the target platform from the \"Export\" dropdown above, and then clicking on \"Export\". Flow, Vanilla JS (Web Components) and LitElement produce projects that can be built and run straight away. The others require a bit more work, but are already useful. The raw export produces a file that can be imported by first clicking on \"Choose File\" and the \"Import Raw\". That replaces the complete project, so be careful!",
+        "=",
+        ")",
+        "p",
+        "(",
+        "textContent",
+        " One more thing. When exporting to flow, the project can be built and run with \"mvn package\" followed by \"mvn jetty:run\". So you need Java and maven. For VanillaJS and LitElement \"npm install\" followed by \"polymer serve --npm\" does the trick",
         "=",
         ")",
         "  )"

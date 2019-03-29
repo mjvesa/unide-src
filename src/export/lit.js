@@ -3,12 +3,12 @@
  */
 import jsImports from "./js_imports.js";
 import { getIndexHTML } from "./vanilla_index_html";
+import { unideGrid } from "./unide-grid-import";
 
 export let exportToLitElement = project => {
   let zip = new JSZip();
   let designs = project.designs;
   let keys = Object.keys(designs);
-  let litElements = [];
   for (let i in keys) {
     let key = keys[i];
     zip.file(key + ".js", modelToLitElement(key, designs[key].tree));
@@ -16,6 +16,7 @@ export let exportToLitElement = project => {
 
   zip.file("package.json", packageJson);
   zip.file("index.html", getIndexHTML(keys));
+  zip.file("unide-grid.js", unideGrid);
 
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "lit-element-designs.zip");
@@ -94,7 +95,9 @@ export let modelToLitElement = (tagName, code) => {
             result = result.concat(` .${nos}=\${${tos}}`);
           } catch (e) {
             current[nos] = tos;
-            result = result.concat(` .${nos}=\$\{"${tos}"\}`);
+            result = result.concat(
+              ` .${nos}=\$\{"${tos.replace(/\"/g, '\\"')}"\}`
+            );
           }
         } else {
           result = result.concat(` ${nos}="${tos}"`);

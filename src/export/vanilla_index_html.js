@@ -27,7 +27,7 @@ window.UniDe.route = (viewName) => {
         document.getElementById('content').innerHTML = html;
     });
 };
-window.UniDe.route('login-view');
+window.UniDe.route('${views[0]}');
 </script>
 </body>
 </html>`;
