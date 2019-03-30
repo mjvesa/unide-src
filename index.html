@@ -60,14 +60,18 @@
     margin-left: 1em;
   }
 
+  #attribute-panel {
+    border-top: 1px solid gray;
+    height: 50%;
+  }
   #attributes {
     width: 100%;
     height: 50%;
     border: none;
-    border-top: 1px solid gray;
     width: 15vw;
     background-color: #223;
     color: white;
+    border-top: 1px solid gray;
   }
 
   #marker {
@@ -157,7 +161,11 @@
           </div>
           <div>
           <div id="outline">outline</div>
-          <textarea id="attributes" wrap="soft">attributes</textarea>
+          <div id="attribute-panel"> 
+            <table>
+                <tr><td>Target Route</td><td><input type="text" id="target-route"></input></td></tr>
+              </table>
+            <textarea id="attributes" wrap="soft">attributes</textarea>
           </div>
       </div>
       <script type="module">

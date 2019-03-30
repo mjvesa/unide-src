@@ -31,7 +31,7 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let modelToVanilla = (tagName, code) => {
+export let modelToVanilla = (tagName, design) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -40,20 +40,16 @@ export let modelToVanilla = (tagName, code) => {
 
   let current = document.createElement("div");
   let currentTag = "";
-  let currentClosed = true;
 
   let varCount = 0;
-  let currentVar = "this";
+  let currentVar = "shadow";
   let varStack = [];
 
-  let elementStack = [];
-  let currentElement = "this";
-
   let result = "";
-  code.forEach((str, index) => {
+  design.tree.forEach(str => {
     let trimmed = str.trim();
     switch (trimmed) {
-      case "(":
+      case "(": {
         let old = current;
         tree.push(current);
 
@@ -72,12 +68,14 @@ export let modelToVanilla = (tagName, code) => {
         old.appendChild(current);
         currentVar = newVar;
         break;
-      case ")":
+      }
+      case ")": {
         currentVar = varStack.pop();
         current = tree.pop();
         currentTag = tagTree.pop();
         break;
-      case "=":
+      }
+      case "=": {
         let tos = stack.pop();
         let nos = stack.pop();
         if (!nos || !tos) {
@@ -90,7 +88,7 @@ export let modelToVanilla = (tagName, code) => {
           );
         } else if (nos in current) {
           try {
-            let json = JSON.parse(tos);
+            JSON.parse(tos);
             result = result.concat(` ${currentVar}["${nos}"]=${tos};\n`);
           } catch (e) {
             result = result.concat(
@@ -103,6 +101,7 @@ export let modelToVanilla = (tagName, code) => {
           );
         }
         break;
+      }
       default:
         stack.push(trimmed);
     }
@@ -119,6 +118,10 @@ export let modelToVanilla = (tagName, code) => {
    class ${pascalCaseName} extends HTMLElement {
     constructor() {
       super();
+        const shadow = this.attachShadow({ mode: "open" });
+        const style = document.createElement('style');
+        style.textContent = \`${design.css}\`;
+        shadow.appendChild(style);
         ${result}
       }
     }

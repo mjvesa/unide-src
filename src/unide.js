@@ -207,7 +207,11 @@ let selectElement = e => {
       if (value === "=") {
         let tos = stack.pop();
         let nos = stack.pop();
-        props = props + `${nos}\t${tos}\n`;
+        if (nos.trim() === "targetRoute") {
+          document.getElementById("target-route").value = tos;
+        } else {
+          props = props + `${nos}\t${tos}\n`;
+        }
       } else {
         stack.push(value);
       }
@@ -226,6 +230,10 @@ let selectElement = e => {
  */
 const updateAttributes = () => {
   let attributeString = document.getElementById("attributes").value;
+  let targetRoute = document.getElementById("target-route").value;
+  if (targetRoute.trim() !== "") {
+    attributeString = attributeString.concat(`targetRoute\t${targetRoute}`);
+  }
   let newDesign = {
     tree: Model.updateSubtreeAttributes(
       attributeString,
@@ -301,7 +309,7 @@ const modelToDOM = (code, target, inert = false) => {
         let old = current;
         tree.push(current);
         let tag = stack.pop();
-        if (tag in storedDesigns) {
+        if (tag in storedDesigns.designs) {
           current = document.createElement("div");
           modelToDOM(storedDesigns[tag], current, true);
         } else {
@@ -573,6 +581,37 @@ const installUIEventHandlers = () => {
       let css = textEditor.getValue();
       el.textContent = css;
       currentDesign.css = css;
+    }
+  });
+
+  let showingEditor = false;
+
+  textEditor.on("cursorActivity", () => {
+    let el = document.getElementById("element-preview");
+    let pos = textEditor.getCursor();
+    let line = textEditor.getLine(pos.line);
+    let pieces = line.split(":");
+    let prop = pieces[0].trim();
+    if (prop === "font-size") {
+      if (!showingEditor) {
+        showingEditor = true;
+        el.innerHTML = '<input type="range" id="somerange"></input>';
+        el.style.display = "block";
+        el.style.top = pos.line + 4 + "rem";
+        el.style.left = pos.ch + "rem";
+        let rangeEl = document.getElementById("somerange");
+        rangeEl.oninput = event => {
+          line = textEditor.getLine(pos.line);
+          let end = { line: pos.line, ch: line.length };
+          let beginning = { line: pos.line, ch: 0 };
+          let newContent = line.replace(/[0-9]+/, rangeEl.value);
+          //"font-size:" + rangeEl.value + "px",
+          textEditor.replaceRange(newContent, beginning, end);
+        };
+      }
+    } else {
+      showingEditor = false;
+      el.style.display = "none";
     }
   });
 };
