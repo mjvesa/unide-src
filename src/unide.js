@@ -48,6 +48,7 @@ const showCurrentDesign = () => {
   paper.shadowRoot.innerHTML = "";
   let style = document.createElement("style");
   style.textContent = currentDesign.css; //textEditor.getValue();
+  textEditor.getDoc().setValue(currentDesign.css);
   paper.shadowRoot.appendChild(style);
   modelToDOM(currentDesign.tree, paper.shadowRoot);
   let outline = getOutlineElement();
