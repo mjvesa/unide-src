@@ -11,7 +11,7 @@ export let exportToVanilla = project => {
   let keys = Object.keys(designs);
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".js", modelToVanilla(key, designs[key].tree));
+    zip.file(key + ".js", modelToVanilla(key, designs[key]));
   }
   zip.file("package.json", packageJson);
   zip.file("index.html", getIndexHTML(keys));
