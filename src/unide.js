@@ -592,7 +592,7 @@ const installUIEventHandlers = () => {
     let line = textEditor.getLine(pos.line);
     let pieces = line.split(":");
     let prop = pieces[0].trim();
-    if (prop === "font-size") {
+    if (["font-size", "width", "height", "left", "top"].includes(prop)) {
       if (!showingEditor) {
         showingEditor = true;
         el.innerHTML = '<input type="range" id="somerange"></input>';

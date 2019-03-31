@@ -32,7 +32,7 @@ let kebabToPascalCase = str => {
   return result;
 };
 
-export let modelToLitElement = (tagName, code) => {
+export let modelToLitElement = (tagName, design) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -44,10 +44,10 @@ export let modelToLitElement = (tagName, code) => {
   let currentClosed = true;
 
   let result = "";
-  code.forEach((str, index) => {
+  design.tree.forEach(str => {
     let trimmed = str.trim();
     switch (trimmed) {
-      case "(":
+      case "(": {
         if (!currentClosed) {
           result = result.concat(">\n");
           currentClosed = true;
@@ -66,7 +66,8 @@ export let modelToLitElement = (tagName, code) => {
         old.appendChild(current);
         currentClosed = false;
         break;
-      case ")":
+      }
+      case ")": {
         if (!currentClosed) {
           result = result.concat(">\n");
           currentClosed = true;
@@ -75,7 +76,8 @@ export let modelToLitElement = (tagName, code) => {
         result = result.concat(`</${currentTag}>\n`);
         currentTag = tagTree.pop();
         break;
-      case "=":
+      }
+      case "=": {
         let tos = stack.pop();
         let nos = stack.pop();
         if (!nos || !tos) {
@@ -104,6 +106,7 @@ export let modelToLitElement = (tagName, code) => {
           current.setAttribute(nos, tos);
         }
         break;
+      }
       default:
         stack.push(trimmed);
     }
@@ -119,6 +122,10 @@ export let modelToLitElement = (tagName, code) => {
     `import { LitElement, html } from 'lit-element';
     ${importStrings}
     class ${pascalCaseName} extends LitElement {
+      static get styles() {
+        return css\`
+        ${design.css}
+      \`;
       render() {
         return html\`${result}\`;
       }
