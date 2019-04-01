@@ -11,7 +11,7 @@ export let exportToLitElement = project => {
   let keys = Object.keys(designs);
   for (let i in keys) {
     let key = keys[i];
-    zip.file(key + ".js", modelToLitElement(key, designs[key].tree));
+    zip.file(key + ".js", modelToLitElement(key, designs[key]));
   }
 
   zip.file("package.json", packageJson);
@@ -119,13 +119,15 @@ export let modelToLitElement = (tagName, design) => {
   });
 
   return prettier.format(
-    `import { LitElement, html } from 'lit-element';
+    `import { LitElement, html, css } from 'lit-element';
     ${importStrings}
     class ${pascalCaseName} extends LitElement {
       static get styles() {
         return css\`
         ${design.css}
       \`;
+      }
+
       render() {
         return html\`${result}\`;
       }
