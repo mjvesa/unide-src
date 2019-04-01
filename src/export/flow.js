@@ -24,6 +24,7 @@ export let exportToFlow = project => {
       "src/main/java/unide/app/" + pascalCaseName + ".java",
       modelToFlow(pascalCaseName, designs[key].tree)
     );
+    zip.file(`src/main/java/unide/app/${pascalCaseName}.css`, designs[key].css);
   }
   zip.file("pom.xml", pomXML);
   zip.file("src/main/webapp/frontend/css/shared-styles.html", sharedStyles);
@@ -199,10 +200,12 @@ export let modelToFlow = (pascalCaseName, code) => {
   ${importStrings}
   import java.util.ArrayList;
   import com.vaadin.flow.component.dependency.HtmlImport;
+  import com.vaadin.flow.component.dependency.StyleSheet;
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
   @Route("${pascalCaseName}")
   @HtmlImport("css/shared-styles.html")
+  @StyleSheet("${pascalCaseName}.css")
   public class ${pascalCaseName} extends Div {
     ${internalClasses}
     public ${pascalCaseName}() {

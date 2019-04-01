@@ -7,7 +7,6 @@ export const cssPropertyTypes = {
     "left",
     "bottom",
     "float",
-    "display",
     "overflow",
     "box-sizing",
     "width",

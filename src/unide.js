@@ -647,6 +647,34 @@ const installUIEventHandlers = () => {
             }
           });
         }
+      } else if (cssPropertyTypes.finite.hasOwnProperty(prop)) {
+        if (!showingEditor || lastLine !== pos.line) {
+          let choices = cssPropertyTypes.finite[prop];
+          showingEditor = true;
+          lastLine = pos.line;
+          el.innerHTML = '<select id="finite-select"></select>';
+          el.style.display = "block";
+          el.style.top = pos.line + 4 + "rem";
+          el.style.left = pos.ch + "rem";
+          let parent = document.getElementById("finite-select");
+          choices.forEach(choice => {
+            let opt = document.createElement("option");
+            opt.textContent = choice;
+            parent.appendChild(opt);
+          });
+
+          parent.onchange = () => {
+            let newLine = textEditor.getLine(pos.line);
+            let end = { line: pos.line, ch: newLine.length };
+            let beginning = { line: pos.line, ch: 0 };
+            let newContent = newLine.replace(
+              /:[ ]*#*([a-z]|-)*[ ]*;?/,
+              ": " + parent.value + ";"
+            );
+            //"font-size:" + rangeEl.value + "px",
+            textEditor.replaceRange(newContent, beginning, end);
+          };
+        }
       } else {
         showingEditor = false;
         lastLine = 0;
