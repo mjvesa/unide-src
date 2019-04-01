@@ -12,7 +12,9 @@ import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
 import { demoDesigns } from "./demo_designs";
+import Picker from "vanilla-picker";
 import * as Model from "./model";
+import { cssPropertyTypes } from "./css-proprety-types";
 const initialDesign = `div
   (
     style
@@ -585,6 +587,7 @@ const installUIEventHandlers = () => {
   });
 
   let showingEditor = false;
+  let lastLine = 0;
 
   textEditor.on("cursorActivity", () => {
     let el = document.getElementById("element-preview");
@@ -592,25 +595,66 @@ const installUIEventHandlers = () => {
     let line = textEditor.getLine(pos.line);
     let pieces = line.split(":");
     let prop = pieces[0].trim();
-    if (["font-size", "width", "height", "left", "top"].includes(prop)) {
-      if (!showingEditor) {
-        showingEditor = true;
-        el.innerHTML = '<input type="range" id="somerange"></input>';
-        el.style.display = "block";
-        el.style.top = pos.line + 4 + "rem";
-        el.style.left = pos.ch + "rem";
-        let rangeEl = document.getElementById("somerange");
-        rangeEl.oninput = event => {
-          line = textEditor.getLine(pos.line);
-          let end = { line: pos.line, ch: line.length };
-          let beginning = { line: pos.line, ch: 0 };
-          let newContent = line.replace(/[0-9]+/, rangeEl.value);
-          //"font-size:" + rangeEl.value + "px",
-          textEditor.replaceRange(newContent, beginning, end);
-        };
+    if (pieces.length > 1) {
+      if (cssPropertyTypes.size.includes(prop)) {
+        if (!showingEditor || lastLine !== pos.line) {
+          showingEditor = true;
+          lastLine = pos.line;
+          el.innerHTML = '<input type="range" id="somerange"></input>';
+          el.style.display = "block";
+          el.style.top = pos.line + 4 + "rem";
+          el.style.left = pos.ch + "rem";
+          let rangeEl = document.getElementById("somerange");
+          rangeEl.oninput = event => {
+            line = textEditor.getLine(pos.line);
+            let end = { line: pos.line, ch: line.length };
+            let beginning = { line: pos.line, ch: 0 };
+            let newContent;
+            if (/[0-9]+/.test(line)) {
+              newContent = line.replace(/[0-9]+/, rangeEl.value);
+            } else {
+              newContent = line.replace(
+                /:[ ]*[0-9]*[ ]*;?/,
+                ": " + rangeEl.value + "px;"
+              );
+            }
+            //"font-size:" + rangeEl.value + "px",
+            textEditor.replaceRange(newContent, beginning, end);
+          };
+        }
+      } else if (cssPropertyTypes.color.includes(prop)) {
+        if (!showingEditor || lastLine !== pos.line) {
+          showingEditor = true;
+          lastLine = pos.line;
+          el.innerHTML = '<div id="color-picker">Pick Color</div>';
+          el.style.display = "block";
+          el.style.top = pos.line + 4 + "rem";
+          el.style.left = pos.ch + "rem";
+          let parent = document.getElementById("color-picker");
+          new Picker({
+            parent: parent,
+            color: pieces[1].replace(";", ""),
+            onChange: color => {
+              let newLine = textEditor.getLine(pos.line);
+              let end = { line: pos.line, ch: newLine.length };
+              let beginning = { line: pos.line, ch: 0 };
+              let newContent = newLine.replace(
+                /:[ ]*#*([a-z]|[0-9])*[ ]*;?/,
+                ": " + color.hex + ";"
+              );
+              //"font-size:" + rangeEl.value + "px",
+              textEditor.replaceRange(newContent, beginning, end);
+            }
+          });
+        }
+      } else {
+        showingEditor = false;
+        lastLine = 0;
+        el.style.display = "none";
       }
     } else {
       showingEditor = false;
+      lastLine = 0;
       el.style.display = "none";
     }
   });

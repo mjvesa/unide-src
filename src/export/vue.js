@@ -17,20 +17,16 @@ export let exportToVue = project => {
   let zip = new JSZip();
   let designs = project.designs;
   let keys = Object.keys(designs);
-  let litElements = [];
   for (let i in keys) {
     let key = keys[i];
-    zip.file(
-      kebabToPascalCase(key) + ".vue",
-      modelToVue(key, designs[key].tree)
-    );
+    zip.file(kebabToPascalCase(key) + ".vue", modelToVue(key, designs[key]));
   }
   zip.generateAsync({ type: "blob" }).then(content => {
     saveAs(content, "vue-designs.zip");
   });
 };
 
-export let modelToVue = (tagName, code) => {
+export let modelToVue = (tagName, design) => {
   let pascalCaseName = kebabToPascalCase(tagName);
   let importedTags = new Set();
   let stack = [];
@@ -50,7 +46,7 @@ export let modelToVue = (tagName, code) => {
 
   let result = "";
 
-  code.forEach((str, index) => {
+  design.tree.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
       case "(":
