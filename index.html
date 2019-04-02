@@ -104,7 +104,13 @@
   }
 
   #text-editor {
-    height: 100%;
+    height: calc(100% - 20rem);
+  }
+
+  #css-rules {
+    display: block;
+    height: 20rem;
+    overflow: auto;
   }
   .CodeMirror { height: 100%; }
 
@@ -156,7 +162,10 @@
         </span>
       </span>
       <div id="container">
-        <div id="text-editor"></div>
+        <div id="editor-panel">
+          <div id="text-editor"></div>
+          <div id="css-rules"></div>
+        </div>
         <div id="paper">paper</div>
         <div>
             <div id="palette">&nbsp;</div>

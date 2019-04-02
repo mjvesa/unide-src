@@ -15,6 +15,7 @@ import { demoDesigns } from "./demo_designs";
 import Picker from "vanilla-picker";
 import * as Model from "./model";
 import { cssPropertyTypes } from "./css-proprety-types";
+import { cssProperties } from "./css-properties.js";
 const initialDesign = `div
   (
     style
@@ -36,7 +37,7 @@ let redoStack = [];
 let textEditor;
 
 const getPaperElement = () => {
-  let el = document.getElementById("paper");
+  const el = document.getElementById("paper");
   return el;
 };
 
@@ -46,14 +47,14 @@ const getOutlineElement = () => {
 
 const showCurrentDesign = () => {
   checkModel(currentDesign.tree);
-  let paper = getPaperElement();
+  const paper = getPaperElement();
   paper.shadowRoot.innerHTML = "";
-  let style = document.createElement("style");
+  const style = document.createElement("style");
   style.textContent = currentDesign.css; //textEditor.getValue();
   textEditor.getDoc().setValue(currentDesign.css);
   paper.shadowRoot.appendChild(style);
   modelToDOM(currentDesign.tree, paper.shadowRoot);
-  let outline = getOutlineElement();
+  const outline = getOutlineElement();
   outline.innerHTML = "";
   modelToOutline(currentDesign.tree, outline);
 };
@@ -87,10 +88,10 @@ const startDragFromModel = (elementId, event) => {
  * @param {*} clientY
  */
 const getPositionOnTarget = (el, clientX, clientY) => {
-  let bcr = el.getBoundingClientRect();
-  let radius = Math.min(bcr.right - bcr.left, bcr.bottom - bcr.top) / 2;
-  let midX = (bcr.left + bcr.right) / 2;
-  let midY = (bcr.top + bcr.bottom) / 2;
+  const bcr = el.getBoundingClientRect();
+  const radius = Math.min(bcr.right - bcr.left, bcr.bottom - bcr.top) / 2;
+  const midX = (bcr.left + bcr.right) / 2;
+  const midY = (bcr.top + bcr.bottom) / 2;
   if (
     Math.sqrt(
       (midX - clientX) * (midX - clientX) + (midY - clientY) * (midY - clientY)
@@ -111,18 +112,18 @@ const getElementAt = (x, y) => {
 };
 
 const placeMarker = e => {
-  let marker = document.getElementById("marker");
+  const marker = document.getElementById("marker");
   marker.style.display = "none";
-  let target = getElementAt(e.clientX, e.clientY);
-  let designId = target ? target.getAttribute("data-design-id") : null;
+  const target = getElementAt(e.clientX, e.clientY);
+  const designId = target ? target.getAttribute("data-design-id") : null;
   if (target && designId) {
-    let bcr = target.getBoundingClientRect();
+    const bcr = target.getBoundingClientRect();
     marker.style.display = "block";
     marker.style.top = bcr.top + "px";
     marker.style.left = bcr.left + "px";
     marker.style.width = bcr.width + "px";
     marker.style.height = bcr.height + "px";
-    let position = getPositionOnTarget(target, e.clientX, e.clientY);
+    const position = getPositionOnTarget(target, e.clientX, e.clientY);
     switch (position) {
       case Model.POSITION_CHILD_OF_ELEMENT:
         marker.style.border = "1px red solid";
@@ -149,19 +150,19 @@ const insertingNewSubtree = () => {
   return previousBegin === previousEnd;
 };
 
-let dropElement = e => {
+const dropElement = e => {
   // Hide marker
-  let marker = document.getElementById("marker");
+  const marker = document.getElementById("marker");
   marker.style.display = "none";
   // Find position of target
-  let target = getElementAt(e.clientX, e.clientY);
-  let index = Number(target.getAttribute("data-design-id"));
-  let position = getPositionOnTarget(target, e.clientX, e.clientY);
+  const target = getElementAt(e.clientX, e.clientY);
+  const index = Number(target.getAttribute("data-design-id"));
+  const position = getPositionOnTarget(target, e.clientX, e.clientY);
 
   let newDesign;
 
   if (insertingNewSubtree()) {
-    let subtree = JSON.parse(e.dataTransfer.getData("text"));
+    const subtree = JSON.parse(e.dataTransfer.getData("text"));
     newDesign = {
       tree: Model.insertSubtree(index, position, subtree, currentDesign.tree),
       css: currentDesign.css
@@ -195,20 +196,20 @@ let dropElement = e => {
  *
  * @param {*} e
  */
-let selectElement = e => {
-  let target = getElementAt(e.clientX, e.clientY);
-  let designId = target.getAttribute("data-design-id");
+const selectElement = e => {
+  const target = getElementAt(e.clientX, e.clientY);
+  const designId = target.getAttribute("data-design-id");
   if (designId) {
     selectedElement = Number(designId);
     // Mini interpreter for extracting property values
-    let stack = [];
+    const stack = [];
     let props = "";
     let ip = Number(designId) + 1;
     let value = currentDesign.tree[ip].trim();
     while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
       if (value === "=") {
-        let tos = stack.pop();
-        let nos = stack.pop();
+        const tos = stack.pop();
+        const nos = stack.pop();
         if (nos.trim() === "targetRoute") {
           document.getElementById("target-route").value = tos;
         } else {
@@ -232,11 +233,11 @@ let selectElement = e => {
  */
 const updateAttributes = () => {
   let attributeString = document.getElementById("attributes").value;
-  let targetRoute = document.getElementById("target-route").value;
+  const targetRoute = document.getElementById("target-route").value;
   if (targetRoute.trim() !== "") {
     attributeString = attributeString.concat(`targetRoute\t${targetRoute}`);
   }
-  let newDesign = {
+  const newDesign = {
     tree: Model.updateSubtreeAttributes(
       attributeString,
       selectedElement,
@@ -251,7 +252,7 @@ const updateAttributes = () => {
 
 // eslint-disable-next-line
 const navigateTo = event => {
-  let targetRoute = event.target.getAttribute("targetroute");
+  const targetRoute = event.target.getAttribute("targetroute");
   if (targetRoute) {
     loadDesign(targetRoute);
   }
@@ -273,14 +274,14 @@ const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   // eslint-disable-next-line
   let tree = [];
   let current;
-  let lparenfn = eval(lparenfnStr);
-  let rparenfn = eval(rparenfnStr);
-  let eqfn = eval(eqfnStr);
-  let valuefn = eval(valuefnStr);
+  const lparenfn = eval(lparenfnStr);
+  const rparenfn = eval(rparenfnStr);
+  const eqfn = eval(eqfnStr);
+  const valuefn = eval(valuefnStr);
   return (code, target, inert = false) => {
     current = target;
     code.forEach((str, index) => {
-      let trimmed = str.trim();
+      const trimmed = str.trim();
       switch (trimmed) {
         case "(":
           lparenfn(index, inert);
@@ -300,17 +301,17 @@ const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
 };
 
 const modelToDOM = (code, target, inert = false) => {
-  let stack = [];
-  let tree = [];
+  const stack = [];
+  const tree = [];
   let current = target;
   // current = target;
   code.forEach((str, index) => {
-    let trimmed = str.trim();
+    const trimmed = str.trim();
     switch (trimmed) {
       case "(": {
-        let old = current;
+        const old = current;
         tree.push(current);
-        let tag = stack.pop();
+        const tag = stack.pop();
         if (tag in storedDesigns.designs) {
           current = document.createElement("div");
           modelToDOM(storedDesigns[tag], current, true);
@@ -335,11 +336,11 @@ const modelToDOM = (code, target, inert = false) => {
         break;
       }
       case "=": {
-        let tos = stack.pop();
-        let nos = stack.pop();
+        const tos = stack.pop();
+        const nos = stack.pop();
         if (nos in current) {
           try {
-            let json = JSON.parse(tos);
+            const json = JSON.parse(tos);
             current[nos] = json;
           } catch (e) {
             current[nos] = tos;
@@ -383,7 +384,7 @@ const modelToOutline = makeATIRInterpreter(
  * @param {*} palette
  */
 const createPaletteSection = (name, tags, palette) => {
-  let outer = document.createElement("div");
+  const outer = document.createElement("div");
   outer.className = "palette-section";
   outer.innerHTML = name;
   outer.onmouseover = () => {
@@ -393,9 +394,9 @@ const createPaletteSection = (name, tags, palette) => {
     outer.style.height = null;
   };
   palette.appendChild(outer);
-  for (let i in tags) {
-    let tagAndSnippet = tags[i];
-    let el = document.createElement("div");
+  for (const i in tags) {
+    const tagAndSnippet = tags[i];
+    const el = document.createElement("div");
     const snippet = tagAndSnippet[1];
     if (snippet) {
       el.draggable = true;
@@ -428,11 +429,11 @@ const createPaletteSection = (name, tags, palette) => {
  * in the palette.
  */
 const getStoredDesignsForPalette = () => {
-  let project = JSON.parse(
+  const project = JSON.parse(
     window.localStorage.getItem("unide.project") || "{designs:{}}"
   );
-  let parsedDesigns = [];
-  let keys = Object.keys(project.designs);
+  const parsedDesigns = [];
+  const keys = Object.keys(project.designs);
   keys.forEach(key => {
     parsedDesigns.push(["#" + key, [key, "(", ")"]]);
     parsedDesigns.push([key, project.designs[key].tree]);
@@ -446,15 +447,15 @@ const getStoredDesignsForPalette = () => {
  * as components or expanded into the current design.
  */
 const populatePalette = () => {
-  let palette = document.getElementById("palette");
+  const palette = document.getElementById("palette");
   palette.innerHTML = "";
   createPaletteSection(
     "<h2>Designs</h2>",
     getStoredDesignsForPalette(),
     palette
   );
-  for (let j in paletteContent) {
-    let section = paletteContent[j];
+  for (const j in paletteContent) {
+    const section = paletteContent[j];
     createPaletteSection(section[0], section[1], palette);
   }
 };
@@ -464,14 +465,14 @@ const populatePalette = () => {
  * in local storage.
  */
 const populateDesignSelector = () => {
-  let selector = document.getElementById("choose-design");
+  const selector = document.getElementById("choose-design");
   selector.innerHTML = "";
-  let keys = Object.keys(storedDesigns.designs);
-  let placeholder = document.createElement("option");
+  const keys = Object.keys(storedDesigns.designs);
+  const placeholder = document.createElement("option");
   placeholder.textContent = "Select a design";
   selector.add(placeholder);
-  for (let i in keys) {
-    let el = document.createElement("option");
+  for (const i in keys) {
+    const el = document.createElement("option");
     el.textContent = keys[i];
     el.setAttribute("value", keys[i]);
     selector.add(el);
@@ -484,7 +485,7 @@ const populateDesignSelector = () => {
  * @param {*} event
  */
 const saveDesign = () => {
-  let designName = document.getElementById("design-name").value;
+  const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   localStorage.setItem("unide.project", JSON.stringify(storedDesigns));
   populateDesignSelector();
@@ -530,7 +531,7 @@ const importRawModel = () => {
  * in local storage based on user selection.
  */
 const exportDesign = () => {
-  let format = document.getElementById("choose-export-format").value;
+  const format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
   } else if (format === "Angular") {
@@ -560,16 +561,16 @@ const exportDesign = () => {
  * Installs handlers for mouse events on various parts of the UI
  */
 const installUIEventHandlers = () => {
-  let outline = getOutlineElement();
+  const outline = getOutlineElement();
   outline.ondragover = placeMarker;
   outline.onclick = selectElement;
-  let paper = getPaperElement();
+  const paper = getPaperElement();
   paper.ondragover = placeMarker;
   paper.onclick = selectElement;
-  let marker = document.getElementById("marker");
+  const marker = document.getElementById("marker");
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
-  let attributes = document.getElementById("attributes");
+  const attributes = document.getElementById("attributes");
   attributes.onblur = updateAttributes;
 
   document.getElementById("save-design").onclick = saveDesign;
@@ -578,9 +579,9 @@ const installUIEventHandlers = () => {
   document.getElementById("import-file").onclick = importRawModel;
 
   textEditor.on("change", () => {
-    let el = paper.shadowRoot.querySelector("style");
+    const el = paper.shadowRoot.querySelector("style");
     if (el) {
-      let css = textEditor.getValue();
+      const css = textEditor.getValue();
       el.textContent = css;
       currentDesign.css = css;
     }
@@ -590,11 +591,11 @@ const installUIEventHandlers = () => {
   let lastLine = 0;
 
   textEditor.on("cursorActivity", () => {
-    let el = document.getElementById("element-preview");
-    let pos = textEditor.getCursor();
+    const el = document.getElementById("element-preview");
+    const pos = textEditor.getCursor();
     let line = textEditor.getLine(pos.line);
-    let pieces = line.split(":");
-    let prop = pieces[0].trim();
+    const pieces = line.split(":");
+    const prop = pieces[0].trim();
     if (pieces.length > 1) {
       if (cssPropertyTypes.size.includes(prop)) {
         if (!showingEditor || lastLine !== pos.line) {
@@ -604,11 +605,11 @@ const installUIEventHandlers = () => {
           el.style.display = "block";
           el.style.top = pos.line + 4 + "rem";
           el.style.left = pos.ch + "rem";
-          let rangeEl = document.getElementById("somerange");
+          const rangeEl = document.getElementById("somerange");
           rangeEl.oninput = event => {
             line = textEditor.getLine(pos.line);
-            let end = { line: pos.line, ch: line.length };
-            let beginning = { line: pos.line, ch: 0 };
+            const end = { line: pos.line, ch: line.length };
+            const beginning = { line: pos.line, ch: 0 };
             let newContent;
             if (/[0-9]+/.test(line)) {
               newContent = line.replace(/[0-9]+/, rangeEl.value);
@@ -630,15 +631,15 @@ const installUIEventHandlers = () => {
           el.style.display = "block";
           el.style.top = pos.line + 4 + "rem";
           el.style.left = pos.ch + "rem";
-          let parent = document.getElementById("color-picker");
+          const parent = document.getElementById("color-picker");
           new Picker({
             parent: parent,
             color: pieces[1].replace(";", ""),
             onChange: color => {
-              let newLine = textEditor.getLine(pos.line);
-              let end = { line: pos.line, ch: newLine.length };
-              let beginning = { line: pos.line, ch: 0 };
-              let newContent = newLine.replace(
+              const newLine = textEditor.getLine(pos.line);
+              const end = { line: pos.line, ch: newLine.length };
+              const beginning = { line: pos.line, ch: 0 };
+              const newContent = newLine.replace(
                 /:[ ]*#*([a-z]|[0-9])*[ ]*;?/,
                 ": " + color.hex + ";"
               );
@@ -649,25 +650,25 @@ const installUIEventHandlers = () => {
         }
       } else if (cssPropertyTypes.finite.hasOwnProperty(prop)) {
         if (!showingEditor || lastLine !== pos.line) {
-          let choices = cssPropertyTypes.finite[prop];
+          const choices = cssPropertyTypes.finite[prop];
           showingEditor = true;
           lastLine = pos.line;
           el.innerHTML = '<select id="finite-select"></select>';
           el.style.display = "block";
           el.style.top = pos.line + 4 + "rem";
           el.style.left = pos.ch + "rem";
-          let parent = document.getElementById("finite-select");
+          const parent = document.getElementById("finite-select");
           choices.forEach(choice => {
-            let opt = document.createElement("option");
+            const opt = document.createElement("option");
             opt.textContent = choice;
             parent.appendChild(opt);
           });
 
           parent.onchange = () => {
-            let newLine = textEditor.getLine(pos.line);
-            let end = { line: pos.line, ch: newLine.length };
-            let beginning = { line: pos.line, ch: 0 };
-            let newContent = newLine.replace(
+            const newLine = textEditor.getLine(pos.line);
+            const end = { line: pos.line, ch: newLine.length };
+            const beginning = { line: pos.line, ch: 0 };
+            const newContent = newLine.replace(
               /:[ ]*#*([a-z]|-)*[ ]*;?/,
               ": " + parent.value + ";"
             );
@@ -721,7 +722,7 @@ const installKeyboardHandlers = () => {
     }
 
     if (event.key === "Delete") {
-      let newDesign = {
+      const newDesign = {
         tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
         css: currentDesign.css
       };
@@ -733,7 +734,7 @@ const installKeyboardHandlers = () => {
 };
 
 const getStoredDesigns = () => {
-  let designsStr = localStorage.getItem("unide.project") || '{"designs": {}}';
+  const designsStr = localStorage.getItem("unide.project") || '{"designs": {}}';
   storedDesigns = JSON.parse(designsStr);
 };
 
@@ -752,10 +753,33 @@ const setupTextEditor = () => {
   });
 };
 
+const insertCssAtCursor = cssText => {
+  const pos = textEditor.getCursor();
+  textEditor.replaceRange(cssText, pos);
+};
+
+const setupCssRules = () => {
+  const el = document.getElementById("css-rules");
+  Object.keys(cssProperties).forEach(key => {
+    const header = document.createElement("h1");
+    header.textContent = key;
+    el.appendChild(header);
+    cssProperties[key].forEach(propName => {
+      const div = document.createElement("div");
+      div.textContent = propName;
+      div.onclick = () => {
+        insertCssAtCursor(propName + ":");
+      };
+      el.appendChild(div);
+    });
+  });
+};
+
 const initDesigner = () => {
   setDemoDesigns();
   getStoredDesigns();
   setupTextEditor();
+  setupCssRules();
   populatePalette();
   populateDesignSelector();
   initializeDesign();

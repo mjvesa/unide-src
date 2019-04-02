@@ -25,13 +25,9 @@ export const cssPropertyTypes = {
     "--lumo-border-radius"
   ],
   color: [
-    "background",
-    "background-color",
-    "background-image",
-    "background-repeat",
-    "background-attachment",
-    "background-position",
     "color",
+    "background-color",
+    "border-color",
     "--lumo-base-color",
     "--lumo-tint",
     "--lumo-tint-90pct",
