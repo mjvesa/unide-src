@@ -16,6 +16,9 @@ import Picker from "vanilla-picker";
 import * as Model from "./model";
 import { cssPropertyTypes } from "./css-proprety-types";
 import { cssProperties } from "./css-properties.js";
+
+const $ = document.querySelector.bind(document);
+
 const initialDesign = `div
   (
     style
@@ -111,6 +114,12 @@ const getElementAt = (x, y) => {
   return el;
 };
 
+const hideMarkers = () => {
+  $("#select-marker-outline").style.display = "none";
+  $("#select-marker-paper").style.display = "none";
+  $("#marker").style.display = "none";
+};
+
 const placeMarker = e => {
   const marker = document.getElementById("marker");
   marker.style.display = "none";
@@ -151,9 +160,7 @@ const insertingNewSubtree = () => {
 };
 
 const dropElement = e => {
-  // Hide marker
-  const marker = document.getElementById("marker");
-  marker.style.display = "none";
+  hideMarkers();
   // Find position of target
   const target = getElementAt(e.clientX, e.clientY);
   const index = Number(target.getAttribute("data-design-id"));
@@ -190,6 +197,15 @@ const dropElement = e => {
   e.preventDefault();
 };
 
+const placeSelectMarker = (target, marker) => {
+  const bcr = target.getBoundingClientRect();
+  marker.style.display = "block";
+  marker.style.top = bcr.top + "px";
+  marker.style.left = bcr.left + "px";
+  marker.style.width = bcr.width + "px";
+  marker.style.height = bcr.height + "px";
+};
+
 /**
  * Selects the clicked element and displays its attributes in the
  * attribute panel.
@@ -200,6 +216,14 @@ const selectElement = e => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
   if (designId) {
+    placeSelectMarker(
+      $("#paper").shadowRoot.querySelector(`[data-design-id="${designId}"]`),
+      document.getElementById("select-marker-paper")
+    );
+    placeSelectMarker(
+      $(`#outline [data-design-id="${designId}"]`),
+      document.getElementById("select-marker-outline")
+    );
     selectedElement = Number(designId);
     // Mini interpreter for extracting property values
     const stack = [];
@@ -567,16 +591,16 @@ const installUIEventHandlers = () => {
   const paper = getPaperElement();
   paper.ondragover = placeMarker;
   paper.onclick = selectElement;
-  const marker = document.getElementById("marker");
+  const marker = $("#marker");
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
-  const attributes = document.getElementById("attributes");
+  const attributes = $("#attributes");
   attributes.onblur = updateAttributes;
 
-  document.getElementById("save-design").onclick = saveDesign;
-  document.getElementById("choose-design").onchange = loadSelectedDesign;
-  document.getElementById("export-design").onclick = exportDesign;
-  document.getElementById("import-file").onclick = importRawModel;
+  $("#save-design").onclick = saveDesign;
+  $("#choose-design").onchange = loadSelectedDesign;
+  $("#export-design").onclick = exportDesign;
+  $("#import-file").onclick = importRawModel;
 
   textEditor.on("change", () => {
     const el = paper.shadowRoot.querySelector("style");
@@ -619,7 +643,6 @@ const installUIEventHandlers = () => {
                 ": " + rangeEl.value + "px;"
               );
             }
-            //"font-size:" + rangeEl.value + "px",
             textEditor.replaceRange(newContent, beginning, end);
           };
         }

@@ -3,23 +3,22 @@
  */
 import flowImports from "./flow_imports.js";
 
-let kebabToPascalCase = str => {
-  let parts = str.split("-");
+const kebabToPascalCase = str => {
+  const parts = str.split("-");
   let result = "";
-  for (let i in parts) {
+  for (const i in parts) {
     result = result.concat(parts[i][0].toUpperCase() + parts[i].slice(1));
   }
   return result;
 };
 
-export let exportToFlow = project => {
-  let zip = new JSZip();
-  let designs = project.designs;
-  let keys = Object.keys(designs);
-  let litElements = [];
-  for (let i in keys) {
-    let key = keys[i];
-    let pascalCaseName = kebabToPascalCase(key);
+export const exportToFlow = project => {
+  const zip = new JSZip();
+  const designs = project.designs;
+  const keys = Object.keys(designs);
+  for (const i in keys) {
+    const key = keys[i];
+    const pascalCaseName = kebabToPascalCase(key);
     zip.file(
       "src/main/java/unide/app/" + pascalCaseName + ".java",
       modelToFlow(pascalCaseName, designs[key].tree)
@@ -34,14 +33,13 @@ export let exportToFlow = project => {
   });
 };
 
-export let modelToFlow = (pascalCaseName, code) => {
-  let importedTags = new Set();
+export const modelToFlow = (pascalCaseName, code) => {
+  const importedTags = new Set();
   let internalClasses = "";
-  let stack = [];
-  let tree = [];
-  let tagTree = [];
+  const stack = [];
+  const tree = [];
   let variableCount = 0;
-  let variableStack = [];
+  const variableStack = [];
 
   let current = document.createElement("div");
   let currentTag = "";
@@ -50,22 +48,22 @@ export let modelToFlow = (pascalCaseName, code) => {
   importedTags.add("div");
 
   let result = "";
-  code.forEach((str, index) => {
-    let trimmed = str.trim();
+  code.forEach(str => {
+    const trimmed = str.trim();
     switch (trimmed) {
-      case "(":
+      case "(": {
         currentTag = stack.pop();
-        let elementClass = flowImports[currentTag]
+        const elementClass = flowImports[currentTag]
           ? flowImports[currentTag].name
           : kebabToPascalCase(currentTag);
 
         //Create an element in the DOM
-        let old = current;
+        const old = current;
         tree.push(current);
         current = document.createElement(currentTag);
         old.appendChild(current);
 
-        let newVar = "el" + variableCount;
+        const newVar = "el" + variableCount;
         variableCount++;
 
         if (currentTag === "unide-grid") {
@@ -82,20 +80,21 @@ export let modelToFlow = (pascalCaseName, code) => {
           importedTags.add(currentTag);
         }
         break;
+      }
       case ")":
         current = tree.pop();
         currentVar = variableStack.pop();
         break;
-      case "=":
-        let tos = stack.pop();
-        let nos = stack.pop();
+      case "=": {
+        const tos = stack.pop();
+        const nos = stack.pop();
         if (!nos || !tos) {
           return;
         }
 
         if (currentTag === "unide-grid") {
           if (nos === "items") {
-            let obj = JSON.parse(tos);
+            const obj = JSON.parse(tos);
             let gridItems = ` ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();
                               ${pascalCaseName}GridType item;\n`;
             obj.forEach(values => {
@@ -111,7 +110,7 @@ export let modelToFlow = (pascalCaseName, code) => {
               .concat(`${currentVar}.setItems(items);\n`);
             return;
           } else if (nos === "columnCaptions") {
-            let obj = JSON.parse(tos);
+            const obj = JSON.parse(tos);
             let methods = "";
             let fields = "";
             let creation = "";
@@ -152,7 +151,7 @@ export let modelToFlow = (pascalCaseName, code) => {
           );
         } else if (nos in current) {
           try {
-            let json = JSON.parse(tos);
+            JSON.parse(tos);
             if (nos === "textContent") {
               result = result.concat(
                 `${currentVar}.getElement().setText("${tos}");\n`
@@ -160,7 +159,7 @@ export let modelToFlow = (pascalCaseName, code) => {
             } else {
               result = result.concat(
                 `${currentVar}.getElement().setProperty("${nos}","${tos.replace(
-                  /\"/g,
+                  /"/g,
                   "'"
                 )}");\n`
               );
@@ -169,7 +168,7 @@ export let modelToFlow = (pascalCaseName, code) => {
             if (nos === "textContent") {
               result = result.concat(
                 `${currentVar}.getElement().setText("${tos.replace(
-                  /\"/g,
+                  /"/g,
                   '\\"'
                 )}");\n`
               );
@@ -185,6 +184,7 @@ export let modelToFlow = (pascalCaseName, code) => {
           );
         }
         break;
+      }
       default:
         stack.push(trimmed);
     }
@@ -215,7 +215,7 @@ export let modelToFlow = (pascalCaseName, code) => {
   `;
 };
 
-let pomXML = `<?xml version="1.0" encoding="UTF-8"?>
+const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>unide.app</groupId>

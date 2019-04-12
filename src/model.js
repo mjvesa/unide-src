@@ -29,7 +29,7 @@ export const findDanglingParen = (arr, index) => {
   return i - 1;
 };
 
-export let insertSubtree = (index, position, subtree, tree) => {
+export const insertSubtree = (index, position, subtree, tree) => {
   let spliceIndex;
   switch (position) {
     case POSITION_CHILD_OF_ELEMENT:
@@ -43,16 +43,16 @@ export let insertSubtree = (index, position, subtree, tree) => {
       break;
   }
 
-  let left = tree.slice(0, spliceIndex);
-  let right = tree.slice(spliceIndex);
+  const left = tree.slice(0, spliceIndex);
+  const right = tree.slice(spliceIndex);
   return left.concat(subtree).concat(right);
 };
 
-export let moveSubtree = (index, position, begin, end, tree) => {
-  let subtree = tree.slice(begin, end + 1);
+export const moveSubtree = (index, position, begin, end, tree) => {
+  const subtree = tree.slice(begin, end + 1);
   checkModel(subtree);
 
-  let newTree = insertSubtree(index, position, subtree, tree);
+  const newTree = insertSubtree(index, position, subtree, tree);
 
   if (index < begin) {
     // Adjust for content added before old position
@@ -66,7 +66,7 @@ export let moveSubtree = (index, position, begin, end, tree) => {
 };
 
 export const deleteSubtree = (elementIndex, tree) => {
-  let newTree = tree.slice();
+  const newTree = tree.slice();
   newTree.splice(
     elementIndex - 1,
     findDanglingParen(newTree, elementIndex + 1) - elementIndex + 2
@@ -79,17 +79,17 @@ export const updateSubtreeAttributes = (
   elementIndex,
   tree
 ) => {
-  let attributesAsStrings = attributeString.split("\n");
-  let attributes = [];
-  for (let i in attributesAsStrings) {
-    let str = attributesAsStrings[i].trim();
+  const attributesAsStrings = attributeString.split("\n");
+  const attributes = [];
+  for (const i in attributesAsStrings) {
+    const str = attributesAsStrings[i].trim();
     if (str !== "") {
       let index = str.indexOf("\t");
       if (index === -1) {
         index = str.indexOf(" ");
       }
-      let key = str.substring(0, index);
-      let value = str.substring(index);
+      const key = str.substring(0, index);
+      const value = str.substring(index);
       attributes.push(key);
       attributes.push(value);
       attributes.push("=");
@@ -98,7 +98,7 @@ export const updateSubtreeAttributes = (
   // Find range of previous attributes
   let index = elementIndex + 1;
   do {
-    let a = tree[index].trim();
+    const a = tree[index].trim();
     if (a === "(") {
       index--;
       break;
@@ -110,7 +110,7 @@ export const updateSubtreeAttributes = (
   } while (index < tree.length);
 
   // Stick the attributes where the old ones were
-  let first = tree.slice(0, elementIndex + 1);
-  let rest = tree.slice(index, tree.length);
+  const first = tree.slice(0, elementIndex + 1);
+  const rest = tree.slice(index, tree.length);
   return first.concat(attributes).concat(rest);
 };
