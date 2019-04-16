@@ -121,6 +121,10 @@
   #text-editor {
     height: calc(100% - 20rem);
   }
+  
+  #css-rule-filter {
+    width: 100%;
+  }
 
   #css-rules {
     display: block;
@@ -181,7 +185,10 @@
       <div id="container">
         <div id="editor-panel">
           <div id="text-editor"></div>
-          <div id="css-rules"></div>
+          <div>
+            <input id="css-rule-filter" type="text"></input>
+            <div id="css-rules"></div>
+          </div>
         </div>
         <div id="paper" theme="dark">paper</div>
         <div>

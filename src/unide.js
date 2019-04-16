@@ -489,7 +489,7 @@ const populatePalette = () => {
  * in local storage.
  */
 const populateDesignSelector = () => {
-  const selector = document.getElementById("choose-design");
+  const selector = $("#choose-design");
   selector.innerHTML = "";
   const keys = Object.keys(storedDesigns.designs);
   const placeholder = document.createElement("option");
@@ -522,7 +522,7 @@ const saveDesign = () => {
  * @param {*} designName
  */
 const loadDesign = designName => {
-  document.getElementById("design-name").value = designName;
+  $("#design-name").value = designName;
   currentDesign = storedDesigns.designs[designName];
   designStack = [];
   redoStack = [];
@@ -601,6 +601,11 @@ const installUIEventHandlers = () => {
   $("#choose-design").onchange = loadSelectedDesign;
   $("#export-design").onclick = exportDesign;
   $("#import-file").onclick = importRawModel;
+
+  $("#css-rule-filter").oninput = () => {
+    console.log("DAMN DHINEQWF");
+    setupCssRules($("#css-rule-filter").value);
+  };
 
   textEditor.on("change", () => {
     const el = paper.shadowRoot.querySelector("style");
@@ -769,7 +774,7 @@ const setDemoDesigns = () => {
 
 const setupTextEditor = () => {
   // eslint-disable-next-line no-undef
-  textEditor = CodeMirror(document.getElementById("text-editor"), {
+  textEditor = CodeMirror($("#text-editor"), {
     mode: "text/css",
     theme: "tomorrow-night-eighties",
     extraKeys: { "Ctrl-Space": "autocomplete" }
@@ -781,20 +786,23 @@ const insertCssAtCursor = cssText => {
   textEditor.replaceRange(cssText, pos);
 };
 
-const setupCssRules = () => {
-  const el = document.getElementById("css-rules");
+const setupCssRules = filter => {
+  const el = $("#css-rules");
+  el.innerHTML = "";
   Object.keys(cssProperties).forEach(key => {
-    const header = document.createElement("h1");
-    header.textContent = key;
-    el.appendChild(header);
-    cssProperties[key].forEach(propName => {
-      const div = document.createElement("div");
-      div.textContent = propName;
-      div.onclick = () => {
-        insertCssAtCursor(propName + ":");
-      };
-      el.appendChild(div);
-    });
+    if (!filter || key.includes(filter)) {
+      const header = document.createElement("h1");
+      header.textContent = key;
+      el.appendChild(header);
+      cssProperties[key].forEach(propName => {
+        const div = document.createElement("div");
+        div.textContent = propName;
+        div.onclick = () => {
+          insertCssAtCursor(propName + ":");
+        };
+        el.appendChild(div);
+      });
+    }
   });
 };
 

@@ -73,6 +73,47 @@ export const cssPropertyTypes = {
     "--lumo-disabled-text-color"
   ],
   finite: {
-    display: ["none", "block", "inline", "inline-block", "flex", "grid"]
+    "align-content": [
+      "stretch",
+      "center",
+      "flex-start",
+      "flex-end",
+      "space-between",
+      "space-around",
+      "initial",
+      "inherit"
+    ],
+    "align-items": [
+      "stretch",
+      "center",
+      "flex-start",
+      "flex-end",
+      "baseline",
+      "initial",
+      "inherit"
+    ],
+    "align-self": [
+      "auto",
+      "stretch",
+      "center",
+      "flex-start",
+      "flex-end",
+      "baseline",
+      "initial",
+      "inherit"
+    ],
+
+    all: ["initial", "inherit", "unset"],
+    "animation-direction": [
+      "normal",
+      "reverse",
+      "alternate",
+      "alternate-reverse",
+      "initial",
+      "inherit"
+    ],
+
+    display: ["none", "block", "inline", "inline-block", "flex", "grid"],
+    flex: ["0", "1", "auto"]
   }
 };
