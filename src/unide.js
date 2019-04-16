@@ -800,6 +800,14 @@ const setupCssRules = filter => {
         div.onclick = () => {
           insertCssAtCursor(propName + ":");
         };
+        div.oncontextmenu = event => {
+          window.open(
+            `https://developer.mozilla.org/en-US/docs/Web/CSS/${propName}`,
+            "_blank"
+          );
+          event.preventDefault();
+          event.stopPropagation();
+        };
         el.appendChild(div);
       });
     }

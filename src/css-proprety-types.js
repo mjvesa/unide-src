@@ -113,6 +113,16 @@ export const cssPropertyTypes = {
       "inherit"
     ],
 
+    "justify-content": [
+      "center",
+      "flex-start",
+      "flex-end",
+      "space-between",
+      "space-around",
+      "initial",
+      "inherit"
+    ],
+
     display: ["none", "block", "inline", "inline-block", "flex", "grid"],
     flex: ["0", "1", "auto"]
   }
