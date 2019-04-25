@@ -16,6 +16,7 @@ import Picker from "vanilla-picker";
 import * as Model from "./model";
 import { cssPropertyTypes } from "./css-proprety-types";
 import { cssProperties } from "./css-properties.js";
+import { enterSketchMode } from "./sketch-mode";
 
 const $ = document.querySelector.bind(document);
 
@@ -488,8 +489,7 @@ const populatePalette = () => {
  * Populates the design selector with the designs found
  * in local storage.
  */
-const populateDesignSelector = () => {
-  const selector = $("#choose-design");
+const populateDesignSelector = selector => {
   selector.innerHTML = "";
   const keys = Object.keys(storedDesigns.designs);
   const placeholder = document.createElement("option");
@@ -581,6 +581,12 @@ const exportDesign = () => {
   }
 };
 
+const switchToSketchMode = () => {
+  enterSketchMode(getPaperElement(), design => {
+    showNewDesign({ css: "", tree: design });
+  });
+};
+
 /**
  * Installs handlers for mouse events on various parts of the UI
  */
@@ -601,9 +607,9 @@ const installUIEventHandlers = () => {
   $("#choose-design").onchange = loadSelectedDesign;
   $("#export-design").onclick = exportDesign;
   $("#import-file").onclick = importRawModel;
+  $("#sketch-design").onclick = switchToSketchMode;
 
   $("#css-rule-filter").oninput = () => {
-    console.log("DAMN DHINEQWF");
     setupCssRules($("#css-rule-filter").value);
   };
 
@@ -820,7 +826,8 @@ const initDesigner = () => {
   setupTextEditor();
   setupCssRules();
   populatePalette();
-  populateDesignSelector();
+  populateDesignSelector($("#choose-design"));
+  populateDesignSelector($("#target-route"));
   initializeDesign();
   installUIEventHandlers();
   installKeyboardHandlers();

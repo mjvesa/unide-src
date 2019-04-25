@@ -35,8 +35,9 @@ import "@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
 import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
 import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
 import "./unide-grid.js";
+import "@vaadin/vaadin-icons";
 
-export let paletteContent = [
+export const paletteContent = [
   [
     "<h2>Templates</h2>",
     [
