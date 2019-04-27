@@ -340,7 +340,7 @@ const insertCssRule = el => {
     current = current.parentElement;
   }
   textEditor.setCursor(textEditor.lineCount(), 0);
-  insertCssAtCursor(`\n${selector} {\n\n}`);
+  insertCssAtCursor(`\n${selector.trim().replace(/ /g, " > ")} {\n\n}`);
   textEditor.setCursor(textEditor.lineCount() - 2, 0);
   textEditor.focus();
 };
