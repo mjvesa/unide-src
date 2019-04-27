@@ -7,8 +7,13 @@ export const getIndexHTML = views => {
 
   return `<html>
 <head>
-    <title>UniDe VanillaJS</title>
+    <title>UniDe Project</title>
     <script src='./node_modules/universal-router/universal-router.js'></script>
+    <script src="./node_modules/@vaadin/vaadin-lumo-styles/color.js" type="module"></script>
+    <script src="./node_modules/@vaadin/vaadin-lumo-styles/sizing.js" type="module"></script>
+    <script src="./node_modules/@vaadin/vaadin-lumo-styles/spacing.js" type="module"></script>
+    <script src="./node_modules/@vaadin/vaadin-lumo-styles/style.js" type="module"></script>
+    <script src="./node_modules/@vaadin/vaadin-lumo-styles/typography.js" type="module"></script>
 </head>
 <body>
 <div id="content"></div>

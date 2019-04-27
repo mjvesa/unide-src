@@ -1,4 +1,4 @@
-let flowImports = {
+const flowImports = {
   a: {
     name: "Anchor",
     import: "import com.vaadin.flow.component.html.Anchor;"
@@ -101,8 +101,8 @@ let flowImports = {
   },
 
   "vaadin-split-layout": {
-    name: "SplitLayout",
-    import: "import com.vaadin.flow.component.splitlayout.SplitLayout;"
+    name: "UnideSplitLayout",
+    import: ""
   },
   "vaadin-progress-bar": {
     name: "VaadinProgressBar",
@@ -143,11 +143,11 @@ let flowImports = {
   },
   "vaadin-horizontal-layout": {
     name: "HorizontalLayout",
-    import: "com.vaadin.flow.component.orderedlayout.HorizontalLayout;"
+    import: "import com.vaadin.flow.component.orderedlayout.HorizontalLayout;"
   },
   "vaadin-vertical-layout": {
     name: "VerticalLayout",
-    import: "com.vaadin.flow.component.orderedlayout.VerticalLayout;"
+    import: "import com.vaadin.flow.component.orderedlayout.VerticalLayout;"
   },
   "vaadin-form-layout": {
     name: "FormLayout",

@@ -231,12 +231,13 @@ const selectElement = e => {
     let props = "";
     let ip = Number(designId) + 1;
     let value = currentDesign.tree[ip].trim();
+    $("#target-route").value = "";
     while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
       if (value === "=") {
         const tos = stack.pop();
         const nos = stack.pop();
         if (nos.trim() === "targetRoute") {
-          document.getElementById("target-route").value = tos;
+          $("#target-route").value = tos;
         } else {
           props = props + `${nos}\t${tos}\n`;
         }
@@ -257,10 +258,11 @@ const selectElement = e => {
  * the previous ones and replacing them with new attributes.
  */
 const updateAttributes = () => {
-  let attributeString = document.getElementById("attributes").value;
-  const targetRoute = document.getElementById("target-route").value;
+  let attributeString = $("#attributes").value;
+  const targetRoute = $("#target-route").value;
+
   if (targetRoute.trim() !== "") {
-    attributeString = attributeString.concat(`targetRoute\t${targetRoute}`);
+    attributeString = attributeString.concat(`\ntargetRoute\t${targetRoute}\n`);
   }
   const newDesign = {
     tree: Model.updateSubtreeAttributes(
@@ -325,6 +327,24 @@ const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
   };
 };
 
+const insertCssRule = el => {
+  let selector = "";
+  let current = el;
+  const shadowParent = getPaperElement().shadowRoot;
+  while (current && current != shadowParent) {
+    if (current.className != "") {
+      selector = `.${current.className} ${selector}`;
+    } else {
+      selector = `${current.tagName.toLowerCase()} ${selector}`;
+    }
+    current = current.parentElement;
+  }
+  textEditor.setCursor(textEditor.lineCount(), 0);
+  insertCssAtCursor(`\n${selector} {\n\n}`);
+  textEditor.setCursor(textEditor.lineCount() - 2, 0);
+  textEditor.focus();
+};
+
 const modelToDOM = (code, target, inert = false) => {
   const stack = [];
   const tree = [];
@@ -350,6 +370,12 @@ const modelToDOM = (code, target, inert = false) => {
           };
           current.ondblclick = event => {
             navigateTo(event);
+          };
+
+          current.oncontextmenu = event => {
+            insertCssRule(event.target);
+            event.stopPropagation();
+            event.preventDefault();
           };
           current.draggable = true;
         }
@@ -503,6 +529,11 @@ const populateDesignSelector = selector => {
   }
 };
 
+const populateDesignSelectors = () => {
+  populateDesignSelector($("#choose-design"));
+  populateDesignSelector($("#target-route"));
+};
+
 /**
  * Saves the current design into local storage.
  *
@@ -512,7 +543,7 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   localStorage.setItem("unide.project", JSON.stringify(storedDesigns));
-  populateDesignSelector();
+  populateDesignSelectors();
 };
 
 /**
@@ -522,6 +553,7 @@ const saveDesign = () => {
  * @param {*} designName
  */
 const loadDesign = designName => {
+  hideMarkers();
   $("#design-name").value = designName;
   currentDesign = storedDesigns.designs[designName];
   designStack = [];
@@ -545,7 +577,7 @@ const importRawModel = () => {
     reader.readAsText(file, "UTF-8");
     reader.onload = function(evt) {
       localStorage.setItem("unide.project", evt.target.result);
-      populateDesignSelector();
+      populateDesignSelectors();
     };
   }
 };
@@ -582,9 +614,36 @@ const exportDesign = () => {
 };
 
 const switchToSketchMode = () => {
+  hideMarkers();
   enterSketchMode(getPaperElement(), design => {
     showNewDesign({ css: "", tree: design });
   });
+};
+
+const initializeDesign = () => {
+  const keys = Object.keys(storedDesigns.designs);
+  if (!storedDesigns.designs[keys[0]]) {
+    currentDesign = { css: "", tree: initialDesign.split("\n") };
+    designStack.push(currentDesign);
+    $("#choose-design").value = keys[0];
+  } else {
+    loadDesign(keys[0]);
+  }
+};
+
+const deleteDesign = () => {
+  const designName = $("#design-name").value;
+  delete storedDesigns.designs[designName];
+  localStorage.setItem("unide.project", JSON.stringify(storedDesigns));
+  populateDesignSelectors();
+  initializeDesign();
+};
+
+const newDesign = () => {
+  $("#design-name").value = "";
+  currentDesign = { css: "", tree: initialDesign.split("\n") };
+  designStack.push(currentDesign);
+  showCurrentDesign();
 };
 
 /**
@@ -602,12 +661,15 @@ const installUIEventHandlers = () => {
   marker.ondragover = placeMarker;
   const attributes = $("#attributes");
   attributes.onblur = updateAttributes;
+  $("#target-route").onchange = updateAttributes;
 
   $("#save-design").onclick = saveDesign;
   $("#choose-design").onchange = loadSelectedDesign;
   $("#export-design").onclick = exportDesign;
   $("#import-file").onclick = importRawModel;
   $("#sketch-design").onclick = switchToSketchMode;
+  $("#delete-design").onclick = deleteDesign;
+  $("#new-design").onclick = newDesign;
 
   $("#css-rule-filter").oninput = () => {
     setupCssRules($("#css-rule-filter").value);
@@ -641,7 +703,7 @@ const installUIEventHandlers = () => {
           el.style.top = pos.line + 4 + "rem";
           el.style.left = pos.ch + "rem";
           const rangeEl = document.getElementById("somerange");
-          rangeEl.oninput = event => {
+          rangeEl.oninput = () => {
             line = textEditor.getLine(pos.line);
             const end = { line: pos.line, ch: line.length };
             const beginning = { line: pos.line, ch: 0 };
@@ -721,17 +783,6 @@ const installUIEventHandlers = () => {
       el.style.display = "none";
     }
   });
-};
-
-const initializeDesign = () => {
-  getPaperElement().attachShadow({ mode: "open" });
-  const keys = Object.keys(storedDesigns.designs);
-  if (!storedDesigns.designs[keys[0]]) {
-    currentDesign = { css: "", tree: initialDesign.split("\n") };
-    designStack.push(currentDesign);
-  } else {
-    loadDesign(keys[0]);
-  }
 };
 
 const installKeyboardHandlers = () => {
@@ -820,14 +871,18 @@ const setupCssRules = filter => {
   });
 };
 
+const initializePaper = () => {
+  getPaperElement().attachShadow({ mode: "open" });
+};
+
 const initDesigner = () => {
   setDemoDesigns();
   getStoredDesigns();
   setupTextEditor();
   setupCssRules();
   populatePalette();
-  populateDesignSelector($("#choose-design"));
-  populateDesignSelector($("#target-route"));
+  populateDesignSelectors();
+  initializePaper();
   initializeDesign();
   installUIEventHandlers();
   installKeyboardHandlers();

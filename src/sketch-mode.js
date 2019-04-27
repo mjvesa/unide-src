@@ -237,8 +237,8 @@ const heuristics = [
   [isGrid, "unide-grid"],
   [isSplitLayout, "vaadin-split-layout"],
   [isVerticalLayout, "vaadin-vertical-layout"],
-  [isHorizontalLayout, "vaadin-horizontal-layout"],
-  [isGridLayout, "grid-layout"]
+  [isHorizontalLayout, "vaadin-horizontal-layout"]
+  // [isGridLayout, "grid-layout"]
 ];
 
 const getTagForRect = rect => {
@@ -276,9 +276,7 @@ const createTreeFromRects = rects => {
   return roots;
 };
 
-const rects = [];
-
-const showCurrentGuess = rect => {
+const showCurrentGuess = (rect, rects) => {
   const el = $("#current-guess");
   el.style.display = "inline";
   el.style.top = rect.top - 20 + "px";
@@ -390,25 +388,21 @@ const createAndAppendChildElements = rects => {
       tagName !== "vaadin-checkbox"
     ) {
       if (tagName == "unide-grid") {
-        /*
-        const columnNames = rect.text.split(",");
-        columnNames.forEach(columnName => {
-          const column = document.createElement("vaadin-grid-column");
-          column.setAttribute("path", columnName);
-          column.setAttribute("header", columnName);
-          el.appendChild(column);
+        const columns = rect.text.split(",");
+        const columnCaptions = [];
+        columns.forEach(column => {
+          columnCaptions.push({ name: column, path: column });
         });
+        setAttribute("columnCaptions", JSON.stringify(columnCaptions));
         const items = [];
         for (let i = 0; i < 200; i++) {
           const item = {};
-          columnNames.forEach(columnName => {
-            item[columnName] =
-              ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
+          columns.forEach(column => {
+            item[column] = ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
           });
           items.push(item);
         }
         setAttribute("items", JSON.stringify(items));
-        */
       } else if (rect.text.includes(",")) {
         rect.text.split(",").forEach(str => {
           children.push("vaadin-item", "(", "textContent", str, "=", ")");
@@ -440,6 +434,7 @@ const createAndAppendChildElements = rects => {
 };
 
 export const enterSketchMode = (targetEl, designCallback) => {
+  const rects = [];
   let draggedEl;
   let draggedRect = {};
   let originX, originY;
@@ -482,13 +477,13 @@ export const enterSketchMode = (targetEl, designCallback) => {
     draggedEl.contentEditable = true;
     draggedEl.oninput = event => {
       event.target.rect.text = event.target.textContent;
-      showCurrentGuess(event.target.rect);
+      showCurrentGuess(event.target.rect, rects);
     };
 
     draggedEl.onmouseover = event => {
       event.target.focus();
       focusedElement = event.target;
-      showCurrentGuess(event.target.rect);
+      showCurrentGuess(event.target.rect, rects);
     };
 
     draggedEl.onmousever = () => {
@@ -514,7 +509,7 @@ export const enterSketchMode = (targetEl, designCallback) => {
         right: event.clientX,
         bottom: event.clientY
       });
-      showCurrentGuess(draggedRect);
+      showCurrentGuess(draggedRect, rects);
     }
   };
 

@@ -90,8 +90,8 @@ export const updateSubtreeAttributes = (
       }
       const key = str.substring(0, index);
       const value = str.substring(index);
-      attributes.push(key);
-      attributes.push(value);
+      attributes.push(key.trim());
+      attributes.push(value.trim());
       attributes.push("=");
     }
   }

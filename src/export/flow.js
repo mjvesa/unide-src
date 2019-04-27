@@ -23,8 +23,12 @@ export const exportToFlow = project => {
       "src/main/java/unide/app/" + pascalCaseName + ".java",
       modelToFlow(pascalCaseName, designs[key].tree)
     );
-    zip.file(`src/main/java/unide/app/${pascalCaseName}.css`, designs[key].css);
+    zip.file(
+      `src/main/webapp/frontend/${pascalCaseName}.css`,
+      designs[key].css
+    );
   }
+  zip.file("src/main/java/unide/app/UnideSplitLayout.java", unideSplitLayout);
   zip.file("pom.xml", pomXML);
   zip.file("src/main/webapp/frontend/css/shared-styles.html", sharedStyles);
 
@@ -214,6 +218,24 @@ export const modelToFlow = (pascalCaseName, code) => {
     }
   `;
 };
+
+const unideSplitLayout = `package unide.app;
+import com.vaadin.flow.component.splitlayout.SplitLayout;
+import com.vaadin.flow.component.Component;
+
+public class UnideSplitLayout extends SplitLayout {
+
+  private boolean firstAdded = false;
+  public void add(Component component) {
+    if (!firstAdded) {
+      addToPrimary(component);
+      firstAdded = true;
+    } else {
+      addToSecondary(component);
+    }
+  }
+}
+`;
 
 const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
