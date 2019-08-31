@@ -10,7 +10,7 @@
     "test": "jest"
   },
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@vaadin/vaadin-core": "^13.0.1",
     "@vaadin/vaadin-grid": "^5.3.3",
