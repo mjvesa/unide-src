@@ -1,14 +1,6 @@
-// UniDe Universal Designer for components
-import { exportToAngular } from "./export/angular";
-import { exportToLitElement } from "./export/lit";
-import { exportToFlow } from "./export/flow";
-import { exportToPreact } from "./export/preact";
-import { exportToReact } from "./export/react";
+// Visual designer for pure Java and Vaadin
+import { exportToJava } from "./export/java";
 import { exportToRaw } from "./export/raw";
-import { exportToSvelte } from "./export/svelte";
-import { exportToVanilla } from "./export/vanilla";
-import { exportToVoK } from "./export/vok";
-import { exportToVue } from "./export/vue";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
 import { demoDesigns } from "./demo_designs";
@@ -590,24 +582,12 @@ const exportDesign = () => {
   const format = document.getElementById("choose-export-format").value;
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
-  } else if (format === "Angular") {
-    exportToAngular(storedDesigns);
-  } else if (format === "Flow") {
-    exportToFlow(storedDesigns);
-  } else if (format === "Preact") {
-    exportToPreact(storedDesigns);
+  } else if (format === "Java") {
+    exportToJava(storedDesigns);
   } else if (format === "Raw") {
     exportToRaw(storedDesigns);
-  } else if (format === "React") {
-    exportToReact(storedDesigns);
-  } else if (format === "Svelte") {
-    exportToSvelte(storedDesigns);
   } else if (format === "VanillaJS") {
     exportToVanilla(storedDesigns);
-  } else if (format === "Vaadin on Kotlin") {
-    exportToVoK(storedDesigns);
-  } else if (format === "Vue") {
-    exportToVue(storedDesigns);
   } else {
     window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
