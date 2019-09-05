@@ -34,8 +34,8 @@ import "@vaadin/vaadin-upload/theme/lumo/vaadin-upload.js";
 import "@vaadin/vaadin-dialog/theme/lumo/vaadin-dialog.js";
 import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-group.js";
 import "@vaadin/vaadin-radio-button/theme/lumo/vaadin-radio-button.js";
-import "./unide-grid.js";
 import "@vaadin/vaadin-icons";
+import "./unide-grid.js";
 
 export const paletteContent = [
   [

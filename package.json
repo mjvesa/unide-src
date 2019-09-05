@@ -12,9 +12,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@vaadin/vaadin-core": "^13.0.1",
-    "@vaadin/vaadin-grid": "^5.3.3",
-    "@vaadin/vaadin-tabs": "^2.1.2",
+    "@vaadin/vaadin-core": "^14.0.3",
+    "@vaadin/vaadin-grid": "^5.4.8",
+    "@vaadin/vaadin-tabs": "^3.0.4",
     "codemirror": "^5.44.0",
     "file-saver": "^2.0.0-rc.4",
     "jszip": "^3.1.5",
