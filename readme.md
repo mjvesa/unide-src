@@ -1,24 +1,18 @@
-UniDe
-=========
-Univesal Designer for UI templates.
+# Unide
+
+Remember when Vaadin was "Thinking of U and I"? That was the time
+when pure Java was king and no declarative formats were to be seen.
+
+Unide is a "U and I Designer" from the days of old. It exports the
+designs into a Java project that can be built with maven. It is also
+free as it is released under the MIT license.
 
 To run the project, clone the repository, `npm install` the damned thing and
 finally recite this ancient spell: `polymer serve --npm`
 
-The current lofty goal
-----------------------
-UniDe is an universal UI designer that is targeted as a prototyping tool to 
-lower the bar for using Vaadin Components.
+## Goal of the project
 
-The user should be able to produce UIs, add basic navigation and finally export the
-result to the platform of choice. Exportable platforms should include all
-platforms supported by Vaadin Components and maybe some more exotic ones.
+Currently: the user is able to produce UIs, add basic navigation and finally export the
+result to a maven project as plain Java (and some CSS).
 
-Exporting
----------
-Export will come in two tiers: First tier export will contain a full project
-ready for importing into an IDE. Second tier only exports the views and
-other components as components of the target platform and supplies
-instructions on how to include the views in the project. 
-
-Current tier one platforms: Flow, LitElement and Vanilla JS
+Future: the user should be able to create full applications in Unide without programming.

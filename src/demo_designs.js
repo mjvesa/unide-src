@@ -10,7 +10,7 @@ export const demoDesigns = {
         "h1",
         "(",
         "textContent",
-        " Welcome to Universal Designer!",
+        " Welcome to Unide!",
         "=",
         ")",
         "p",
