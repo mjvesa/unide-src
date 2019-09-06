@@ -1,7 +1,7 @@
 export const demoDesigns = {
-  "designs": {
+  designs: {
     "tour-1": {
-      "tree": [
+      tree: [
         "div",
         "  (",
         "    style",
@@ -16,13 +16,13 @@ export const demoDesigns = {
         "p",
         "(",
         "textContent",
-        " This application is a visual designer that supports multiple export formats. While it uses the Vaadin Components it is not tied in any way to a particular framework.",
+        "This application is a visual designer for Vaadin 14+ that eports to plain Java.",
         "=",
         ")",
         "p",
         "(",
         "textContent",
-        "\tThe things you see here are all part of the design. You can drag and drop them to reorder things. Writing another name to the \"Design name\" box above and pressing \"Save Design\" saves a copy of the design under the new name. It's also possible to insert new elements by dragging and dropping them from the palette on the right. Dragging and dropping is also possible between the outline on the top right and the paper where the design is visible.",
+        '\tThe things you see here are all part of the design. You can drag and drop them to reorder things. Writing another name to the "Design name" box above and pressing "Save Design" saves a copy of the design under the new name. It\'s also possible to insert new elements by dragging and dropping them from the palette on the right. Dragging and dropping is also possible between the outline on the top right and the paper where the design is visible.',
         "=",
         ")",
         "p",
@@ -71,10 +71,10 @@ export const demoDesigns = {
         "\theight:100px;",
         "=",
         "columnCaptions",
-        "\t[{\"name\":\"Question\",\"path\":\"question\"},{\"name\":\"Answer\",\"path\":\"answer\"}]",
+        '\t[{"name":"Question","path":"question"},{"name":"Answer","path":"answer"}]',
         "=",
         "items",
-        "\t[{\"question\":\"Does this make sense?\", \"answer\":\"Maybe.\"}, {\"question\":\"Are you sure?\", \"answer\":\"Time will tell.\"}]",
+        '\t[{"question":"Does this make sense?", "answer":"Maybe."}, {"question":"Are you sure?", "answer":"Time will tell."}]',
         "=",
         ")",
         ")",
@@ -93,10 +93,10 @@ export const demoDesigns = {
         ")",
         "  )"
       ],
-      "css": "h1 {\n  color: black;\n}\n"
+      css: "h1 {\n  color: black;\n}\n"
     },
     "tour-2": {
-      "tree": [
+      tree: [
         "div",
         "  (",
         "    style",
@@ -114,24 +114,24 @@ export const demoDesigns = {
         "span",
         "(",
         "textContent",
-        " Nothing much here yet. Double click on the header text to get back to page 1. Or just select it from the \"Load\" dropdown.",
+        ' Nothing much here yet. Double click on the header text to get back to page 1. Or just select it from the "Load" dropdown.',
         "=",
         ")",
         "p",
         "(",
         "textContent",
-        " Except... Exporting the design can be done by choosing the target platform from the \"Export\" dropdown above, and then clicking on \"Export\". Flow, Vanilla JS (Web Components) and LitElement produce projects that can be built and run straight away. The others require a bit more work, but are already useful. The raw export produces a file that can be imported by first clicking on \"Choose File\" and the \"Import Raw\". That replaces the complete project, so be careful!",
+        ' Except... Exporting the design can be done by choosing the target from the "Export" dropdown above, and then clicking on "Export". Java exports as a Java project that can be built with maven. The raw export produces a file that can be imported by first clicking on "Choose File" and the "Import Raw". That replaces the complete project, so be careful!',
         "=",
         ")",
         "p",
         "(",
         "textContent",
-        " One more thing. When exporting to flow, the project can be built and run with \"mvn package\" followed by \"mvn jetty:run\". So you need Java and maven. For VanillaJS and LitElement \"npm install\" followed by \"polymer serve --npm\" does the trick",
+        ' One more thing. The exported project can be built and run with "mvn package" followed by "mvn jetty:run".',
         "=",
         ")",
         "  )"
       ],
-      "css": ""
+      css: ""
     }
   }
 };
