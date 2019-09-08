@@ -14,6 +14,9 @@ import "@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown.js";
 import "@vaadin/vaadin-combo-box/src/vaadin-combo-box-dropdown-wrapper.js";
 import "@vaadin/vaadin-combo-box/theme/lumo/vaadin-combo-box.js";
 import "@vaadin/vaadin-text-field/theme/lumo/vaadin-text-field.js";
+import "@vaadin/vaadin-text-field/theme/lumo/vaadin-number-field.js";
+import "@vaadin/vaadin-text-field/theme/lumo/vaadin-email-field.js";
+import "@vaadin/vaadin-time-picker/theme/lumo/vaadin-time-picker.js";
 import "@vaadin/vaadin-text-field/theme/lumo/vaadin-password-field.js";
 import "@vaadin/vaadin-text-field/theme/lumo/vaadin-text-area.js";
 import "@vaadin/vaadin-context-menu/theme/lumo/vaadin-context-menu.js";
@@ -106,20 +109,21 @@ export const paletteContent = [
       ["article", ["article", "(", ")"]],
       ["aside", ["aside", "(", ")"]],
       ["div", ["div", "(", ")"]],
-      ["h1", ["h1", "(", ")"]],
-      ["h2", ["h2", "(", ")"]],
-      ["h3", ["h3", "(", ")"]],
-      ["h4", ["h4", "(", ")"]],
-      ["h5", ["h5", "(", ")"]],
-      ["h6", ["h6", "(", ")"]],
-      ["hr", ["hr", "(", ")"]],
+      ["h1", ["h1", "(", "textContent", "h1 header", "=", ")"]],
+      ["h2", ["h2", "(", "textContent", "h2 header", "=", ")"]],
+      ["h3", ["h3", "(", "textContent", "h3 header", "=", ")"]],
+      ["h4", ["h4", "(", "textContent", "h4 header", "=", ")"]],
+      ["h5", ["h5", "(", "textContent", "h5 header", "=", ")"]],
+      ["h6", ["h6", "(", "textContent", "h6 header", "=", ")"]],
+      ["hr", ["hr", "(", "style", "width:100px;", "=", ")"]],
       ["header", ["header", "(", ")"]],
       ["image", ["image", "(", ")"]],
-      ["input", ["input", "(", ")"]],
+      ["input text", ["input", "(", "type", "text", "=", ")"]],
+      ["input range", ["input", "(", "type", "range", "=", ")"]],
       ["label", ["label", "(", ")"]],
       ["li", ["li", "(", ")"]],
-      ["p", ["p", "(", ")"]],
-      ["span", ["span", "(", ")"]],
+      ["p", ["p", "(", "textContent", "Paragraph", "=", ")"]],
+      ["span", ["span", "(", "textContent", "Span", "=", ")"]],
       [
         "ol",
         [
@@ -196,7 +200,26 @@ export const paletteContent = [
           ")"
         ]
       ],
-      ["tabs", ["vaadin-tabs", "(", ")"]],
+      [
+        "tabs",
+        [
+          "vaadin-tabs",
+          "(",
+          "vaadin-tab",
+          "(",
+          "textContent",
+          "Tab1",
+          "=",
+          ")",
+          "vaadin-tab",
+          "(",
+          "textContent",
+          "Tab2",
+          "=",
+          ")",
+          ")"
+        ]
+      ],
       ["tab", ["vaadin-tab", "(", ")"]]
     ]
   ],
@@ -212,7 +235,10 @@ export const paletteContent = [
       ["list-box", ["vaadin-list-box", "(", ")"]],
       ["text-field", ["vaadin-text-field", "(", ")"]],
       ["text-area", ["vaadin-text-area", "(", ")"]],
-      ["password-field", ["vaadin-password-field", "(", ")"]]
+      ["time-picker", ["vaadin-time-picker", "(", ")"]],
+      ["password-field", ["vaadin-password-field", "(", ")"]],
+      ["email-field", ["vaadin-email-field", "(", ")"]],
+      ["number-field", ["vaadin-number-field", "(", ")"]]
     ]
   ],
   [
@@ -222,9 +248,87 @@ export const paletteContent = [
       ["app-layout", ["vaadin-app-layout", "(", ")"]],
       ["form-layout", ["vaadin-form-layout", "(", ")"]],
       ["form-item", ["vaadin-form-item", "(", ")"]],
-      ["horizontal-layout", ["vaadin-horizontal-layout", "(", ")"]],
-      ["vertical-layout", ["vaadin-vertical-layout", "(", ")"]],
-      ["split-layout", ["vaadin-split-layout", "(", ")"]]
+      [
+        "horizontal-layout",
+        [
+          "vaadin-horizontal-layout",
+          "(",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 1",
+          "=",
+          ")",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 2",
+          "=",
+          ")",
+          ")"
+        ]
+      ],
+      [
+        "vertical-layout",
+        [
+          "vaadin-vertical-layout",
+          "(",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 1",
+          "=",
+          ")",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 2",
+          "=",
+          ")",
+          ")"
+        ]
+      ],
+      [
+        "split-layout horizontal",
+        [
+          "vaadin-split-layout",
+          "(",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 1",
+          "=",
+          ")",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 2",
+          "=",
+          ")",
+          ")"
+        ],
+        "split-layout vertical",
+        [
+          "vaadin-split-layout",
+          "(",
+          "orientation",
+          "vertical",
+          "=",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 1",
+          "=",
+          ")",
+          "span",
+          "(",
+          "textContent",
+          "Placeholder 2",
+          "=",
+          ")",
+          ")"
+        ]
+      ]
     ]
   ],
   [

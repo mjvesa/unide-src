@@ -433,6 +433,23 @@ const createAndAppendChildElements = rects => {
   return tree;
 };
 
+const fixZIndexes = rects => {
+  const fixInternal = (rects, zIndex) => {
+    rects.forEach(rect => {
+      if (rect.el) {
+        rect.el.style.zIndex = zIndex;
+        rect.el.style.backgroundColor = `rgb(${255 - zIndex * 32},${255 -
+          zIndex * 32},255)`;
+
+        if (rect.children) {
+          fixInternal(rect.children, zIndex + 1);
+        }
+      }
+    });
+  };
+  fixInternal(rects, 1);
+};
+
 export const enterSketchMode = (targetEl, designCallback) => {
   const rects = [];
   let draggedEl;
@@ -472,7 +489,9 @@ export const enterSketchMode = (targetEl, designCallback) => {
 
   canvas.onmousedown = event => {
     draggedEl = document.createElement("div");
-    draggedRect = {};
+    draggedEl.style.zIndex = 1000;
+    draggedRect = { el: draggedEl };
+
     draggedEl.rect = draggedRect;
     draggedEl.contentEditable = true;
     draggedEl.oninput = event => {
@@ -517,6 +536,7 @@ export const enterSketchMode = (targetEl, designCallback) => {
     rects.push(draggedRect);
     draggedEl = undefined;
     hideCurrentGuess();
+    fixZIndexes(createTreeFromRects(rects));
   };
 
   $("#generate-button").onclick = () => {
