@@ -30,6 +30,7 @@
     height: 100vh;
     overflow: hidden;
   }
+
   body {
     width: 100%;
     height: 100%;
@@ -38,12 +39,14 @@
     color: white;
     overflow: hidden;
   }
+
   #container {
     display: grid;
     grid-template-columns: 15vw auto 15vw 15vw;
     width: 100vw;
     height: calc(100vh - 2rem);
   }
+
   #paper {
     box-sizing: border-box;
     width: 100%;
@@ -155,14 +158,12 @@
   <div id="select-marker-paper"></div>
   <div id="element-preview"></div>
   <span id="design-details">
-    <a href="https://vaadin.com" style="color:white">Learn more about Vaadin</a>
-    |
-    <button id="new-design" theme="primary"> New Design</button>
+    <button id="new-design" theme="primary">New</button>
     <button id="sketch-design" theme="primary">Sketch</button>
     <span>
-      Design name:
+      Name:
       <input id="design-name" type="text"></input>
-      <button id="save-design">Save Design</button>
+      <button id="save-design">Save</button>
     </span>
     <span>
       Load:
@@ -171,7 +172,6 @@
     <span>
       Export:
       <select id="choose-export-format">
-        <option disabled>Choose export format</option>
         <option>Java</option>
         <option>Raw</option>
       </select>

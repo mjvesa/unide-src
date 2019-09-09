@@ -574,14 +574,10 @@ const importRawModel = () => {
  */
 const exportDesign = () => {
   const format = document.getElementById("choose-export-format").value;
-  if (format === "LitElement") {
-    exportToLitElement(storedDesigns);
-  } else if (format === "Java") {
+  if (format === "Java") {
     exportToJava(storedDesigns);
   } else if (format === "Raw") {
     exportToRaw(storedDesigns);
-  } else if (format === "VanillaJS") {
-    exportToVanilla(storedDesigns);
   } else {
     window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
@@ -822,7 +818,7 @@ const setupCssRules = filter => {
   el.innerHTML = "";
   Object.keys(cssProperties).forEach(key => {
     if (!filter || key.includes(filter)) {
-      const header = document.createElement("h1");
+      const header = document.createElement("h2");
       header.textContent = key;
       el.appendChild(header);
       cssProperties[key].forEach(propName => {
