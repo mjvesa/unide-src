@@ -43,9 +43,10 @@ export const modelToJava = (pascalCaseName, tag, code) => {
   let internalClasses = "";
   const stack = [];
   const tree = [];
-  let variableCount = 0;
   const variableStack = [];
   const varNames = {};
+  let fields = "";
+  let variableCount = 0;
 
   let current = document.createElement("div");
   let currentTag = "";
@@ -77,9 +78,11 @@ export const modelToJava = (pascalCaseName, tag, code) => {
         variableCount++;
 
         if (currentTag === "unide-grid") {
-          result += `${elementClass}<${pascalCaseName}GridType> ${newVar} = new ${elementClass}<>();
+          fields += `protected ${elementClass}<${pascalCaseName}GridType> ${newVar};\n`;
+          result += `${newVar} = new ${elementClass}<>();
           ${currentVar}.add(${newVar});\n`;
         } else {
+          fields += `protected ${elementClass} ${newVar};\n`;
           result += `${elementClass} ${newVar} = new ${elementClass}();
           ${currentVar}.add(${newVar});\n`;
         }
@@ -215,6 +218,7 @@ export const modelToJava = (pascalCaseName, tag, code) => {
   @Route("${pascalCaseName}")
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
+    ${fields}
     ${internalClasses}
     public ${pascalCaseName}() {
           ${result}
