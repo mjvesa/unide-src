@@ -430,12 +430,6 @@ const createPaletteSection = (name, tags, palette) => {
   const outer = document.createElement("div");
   outer.className = "palette-section";
   outer.innerHTML = name;
-  outer.onmouseover = () => {
-    outer.style.height = 8 + tags.length + "rem";
-  };
-  outer.onmouseout = () => {
-    outer.style.height = null;
-  };
   palette.appendChild(outer);
   for (const i in tags) {
     const tagAndSnippet = tags[i];
