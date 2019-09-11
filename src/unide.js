@@ -616,6 +616,20 @@ const newDesign = () => {
   showCurrentDesign();
 };
 
+const shareDesigns = () => {
+  const designs = btoa(JSON.stringify(storedDesigns));
+  const shareLink = window.location.href + "?share=" + designs;
+  const ta = document.createElement("textarea");
+  ta.value = shareLink;
+  ta.style.height = "0px";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+  document.body.scroll(0, 0);
+};
+
 /**
  * Installs handlers for mouse events on various parts of the UI
  */
@@ -640,6 +654,7 @@ const installUIEventHandlers = () => {
   $("#sketch-design").onclick = switchToSketchMode;
   $("#delete-design").onclick = deleteDesign;
   $("#new-design").onclick = newDesign;
+  $("#share-designs").onclick = shareDesigns;
 
   $("#css-rule-filter").oninput = () => {
     setupCssRules($("#css-rule-filter").value);
@@ -789,8 +804,14 @@ const installKeyboardHandlers = () => {
 };
 
 const getStoredDesigns = () => {
-  const designsStr = localStorage.getItem("unide.project") || '{"designs": {}}';
-  storedDesigns = JSON.parse(designsStr);
+  const shared = window.location.href.split("share=")[1];
+  if (shared) {
+    storedDesigns = JSON.parse(atob(shared));
+  } else {
+    const designsStr =
+      localStorage.getItem("unide.project") || '{"designs": {}}';
+    storedDesigns = JSON.parse(designsStr);
+  }
 };
 
 const setDemoDesigns = () => {
