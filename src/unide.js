@@ -273,7 +273,7 @@ const updateAttributes = () => {
   const targetRoute = $("#target-route").value;
 
   if (targetRoute.trim() !== "") {
-    attributes.push("targeRoute");
+    attributes.push("targetRoute");
     attributes.push(targetRoute);
     attributes.push("=");
   }
