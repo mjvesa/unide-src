@@ -220,7 +220,7 @@ const selectElement = e => {
     selectedElement = Number(designId);
     // Mini interpreter for extracting property values
     const stack = [];
-    let props = "";
+    let props = "<table>";
     let ip = Number(designId) + 1;
     let value = currentDesign.tree[ip].trim();
     $("#target-route").value = "";
@@ -231,7 +231,9 @@ const selectElement = e => {
         if (nos.trim() === "targetRoute") {
           $("#target-route").value = tos;
         } else {
-          props = props + `${nos}\t${tos}\n`;
+          props =
+            props +
+            `<tr><td contenteditable>${nos}</td><td contenteditable>${tos}</td></tr>`;
         }
       } else {
         stack.push(value);
@@ -239,7 +241,14 @@ const selectElement = e => {
       ip++;
       value = currentDesign.tree[ip].trim();
     }
-    document.getElementById("attributes").value = props;
+
+    // Add ten lines for new props
+    for (let i = 0; i < 10; i++) {
+      props =
+        props + `<tr><td contenteditable></td><td contenteditable></td></tr>`;
+    }
+
+    document.getElementById("attributes").innerHTML = props + "</table>";
     e.preventDefault();
     e.stopPropagation();
   }
@@ -250,15 +259,27 @@ const selectElement = e => {
  * the previous ones and replacing them with new attributes.
  */
 const updateAttributes = () => {
-  let attributeString = $("#attributes").value;
+  let attributes = [];
+  const table = $("#attributes").firstChild.firstChild;
+  table.childNodes.forEach(tr => {
+    let key = tr.firstChild.textContent;
+    let value = tr.lastChild.textContent;
+    if (!(key.trim() === "")) {
+      attributes.push(key);
+      attributes.push(value);
+      attributes.push("=");
+    }
+  });
   const targetRoute = $("#target-route").value;
 
   if (targetRoute.trim() !== "") {
-    attributeString = attributeString.concat(`\ntargetRoute\t${targetRoute}\n`);
+    attributes.push("targeRoute");
+    attributes.push(targetRoute);
+    attributes.push("=");
   }
   const newDesign = {
     tree: Model.updateSubtreeAttributes(
-      attributeString,
+      attributes,
       selectedElement,
       currentDesign.tree
     ),
@@ -472,8 +493,8 @@ const getStoredDesignsForPalette = () => {
   const parsedDesigns = [];
   const keys = Object.keys(project.designs);
   keys.forEach(key => {
-    parsedDesigns.push(["#" + key, [key, "(", ")"]]);
-    parsedDesigns.push([key, project.designs[key].tree]);
+    parsedDesigns.push([key, [key, "(", ")"]]);
+    parsedDesigns.push(["expanded " + key, project.designs[key].tree]);
   });
   return parsedDesigns;
 };
@@ -644,7 +665,7 @@ const installUIEventHandlers = () => {
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
   const attributes = $("#attributes");
-  attributes.onblur = updateAttributes;
+  attributes.oninput = updateAttributes;
   $("#target-route").onchange = updateAttributes;
 
   $("#save-design").onclick = saveDesign;

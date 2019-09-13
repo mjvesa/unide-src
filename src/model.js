@@ -74,27 +74,7 @@ export const deleteSubtree = (elementIndex, tree) => {
   return newTree;
 };
 
-export const updateSubtreeAttributes = (
-  attributeString,
-  elementIndex,
-  tree
-) => {
-  const attributesAsStrings = attributeString.split("\n");
-  const attributes = [];
-  for (const i in attributesAsStrings) {
-    const str = attributesAsStrings[i].trim();
-    if (str !== "") {
-      let index = str.indexOf("\t");
-      if (index === -1) {
-        index = str.indexOf(" ");
-      }
-      const key = str.substring(0, index);
-      const value = str.substring(index);
-      attributes.push(key.trim());
-      attributes.push(value.trim());
-      attributes.push("=");
-    }
-  }
+export const updateSubtreeAttributes = (attributes, elementIndex, tree) => {
   // Find range of previous attributes
   let index = elementIndex + 1;
   do {

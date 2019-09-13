@@ -83,17 +83,34 @@
   #attribute-panel {
     border-top: 1px solid gray;
     height: 50%;
+    width: 100%;
   }
   
   #attributes {
     width: 100%;
-    height: 50%;
+    height: 100%;
     border: none;
     width: 15vw;
     background-color: #223;
     color: white;
     border-top: 1px solid gray;
+    overflow: auto;
   }
+
+  #attributes td {
+    border: 1px solid gray;  
+    word-wrap: break-word;
+    width: 50%;
+    max-width:50%;
+  }
+
+  #attributes > table {
+    max-width: 100%;
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+
 
   #marker {
     display: none;
@@ -189,7 +206,7 @@
   </span>
 
   <!-- Designer UI panels-->
-  <vaadin-split-panel id="container">
+  <div id="container">
     <div id="editor-panel">
       <div id="text-editor"></div>
       <div>
@@ -201,16 +218,16 @@
     <div id="palette-wrapper">
         <div id="palette">&nbsp;</div>
     </div>
-    <div>
+    <div id="outline-attributes">
       <div id="outline">outline</div>
       <div id="attribute-panel"> 
         <table>
             <tr><td>Target Route</td><td><select id="target-route"></select></td></tr>
           </table>
-        <textarea id="attributes" wrap="soft">attributes</textarea>
+        <div id="attributes"></div>
       </div>
     </div>
-  </vaadin-split-panel>
+  </div>
     <script type="module">
         import initDesigner from "./src/unide.js";
         initDesigner();
