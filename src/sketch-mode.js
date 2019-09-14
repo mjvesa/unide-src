@@ -395,7 +395,7 @@ const createAndAppendChildElements = rects => {
         });
         setAttribute("columnCaptions", JSON.stringify(columnCaptions));
         const items = [];
-        for (let i = 0; i < 200; i++) {
+        for (let i = 0; i < 10; i++) {
           const item = {};
           columns.forEach(column => {
             item[column] = ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
