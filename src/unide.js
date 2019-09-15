@@ -1,5 +1,10 @@
 // Visual designer for pure Java and Vaadin
 import CodeMirror from "codemirror";
+import "codemirror/mode/css/css.js";
+import "codemirror/addon/hint/show-hint.js";
+import "codemirror/addon/hint/css-hint.js";
+import "codemirror/lib/codemirror.css";
+import "codemirror/theme/tomorrow-night-eighties.css";
 
 import { exportToJava } from "./export/java";
 import { exportToRaw } from "./export/raw";
