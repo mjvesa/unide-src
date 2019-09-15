@@ -1,6 +1,5 @@
 import resolve from "rollup-plugin-node-resolve";
 import commonjs from "rollup-plugin-commonjs";
-import legacy from "rollup-plugin-legacy";
 import { terser } from "rollup-plugin-terser";
 import css from "rollup-plugin-css-only";
 
@@ -20,9 +19,6 @@ export default {
     css({ output: "public/bundle.css" }),
     resolve(), // tells Rollup how to find date-fns in node_modules
     commonjs(), // converts date-fns to ES modules
-    legacy({
-      "node_modules/jszip/dist/jszip.min.js": "JSZip"
-    }),
     production && terser() // minify, but only in production
   ]
 };
