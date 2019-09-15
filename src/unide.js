@@ -6,6 +6,14 @@ import "codemirror/addon/hint/css-hint.js";
 import "codemirror/lib/codemirror.css";
 import "codemirror/theme/tomorrow-night-eighties.css";
 
+import "@vaadin/vaadin-lumo-styles/color.js";
+import "@vaadin/vaadin-lumo-styles/sizing.js";
+import "@vaadin/vaadin-lumo-styles/spacing.js";
+import "@vaadin/vaadin-lumo-styles/style.js";
+import "@vaadin/vaadin-lumo-styles/typography.js";
+
+import "file-saver/dist/FileSaver.js";
+
 import { exportToJava } from "./export/java";
 import { exportToRaw } from "./export/raw";
 import { paletteContent } from "./curated_header.js";
