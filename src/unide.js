@@ -1,4 +1,19 @@
 // Visual designer for pure Java and Vaadin
+import CodeMirror from "codemirror";
+import "codemirror/mode/css/css.js";
+import "codemirror/addon/hint/show-hint.js";
+import "codemirror/addon/hint/css-hint.js";
+import "codemirror/lib/codemirror.css";
+import "codemirror/theme/tomorrow-night-eighties.css";
+
+import "@vaadin/vaadin-lumo-styles/color.js";
+import "@vaadin/vaadin-lumo-styles/sizing.js";
+import "@vaadin/vaadin-lumo-styles/spacing.js";
+import "@vaadin/vaadin-lumo-styles/style.js";
+import "@vaadin/vaadin-lumo-styles/typography.js";
+
+import "file-saver/dist/FileSaver.js";
+
 import { exportToJava } from "./export/java";
 import { exportToRaw } from "./export/raw";
 import { paletteContent } from "./curated_header.js";
@@ -298,48 +313,6 @@ const navigateTo = event => {
   }
 };
 
-/**
- * Creates an interpreter for the Attribute Tree Intermediate Representation
- * that is the UniDe model. The provided functions (in string form) each
- * handle one of the three words in ATIR: ()=
- *
- * @param {*} lparenfnStr
- * @param {*} rparenfnStr
- * @param {*} eqfnStr
- * @param {*} valuefnStr
- */
-const makeATIRInterpreter = (lparenfnStr, rparenfnStr, eqfnStr, valuefnStr) => {
-  // eslint-disable-next-line
-  let stack = [];
-  // eslint-disable-next-line
-  let tree = [];
-  let current;
-  const lparenfn = eval(lparenfnStr);
-  const rparenfn = eval(rparenfnStr);
-  const eqfn = eval(eqfnStr);
-  const valuefn = eval(valuefnStr);
-  return (code, target, inert = false) => {
-    current = target;
-    code.forEach((str, index) => {
-      const trimmed = str.trim();
-      switch (trimmed) {
-        case "(":
-          lparenfn(index, inert);
-          break;
-        case ")":
-          rparenfn();
-          break;
-        case "=":
-          eqfn();
-          break;
-        default:
-          valuefn(trimmed);
-      }
-    });
-    return current;
-  };
-};
-
 const insertCssRule = el => {
   let selector = "";
   let current = el;
@@ -424,21 +397,37 @@ const modelToDOM = (code, target, inert = false) => {
   return current;
 };
 
-const modelToOutline = makeATIRInterpreter(
-  `(index, inert) => {
-      let old = current;
-      tree.push(current);
-      current = document.createElement('div');
-      current.textContent=stack.pop();
-      current.setAttribute('data-design-id', index);
-      current.ondragstart = (event) => {startDragFromModel(index, event)};
-      current.draggable = true;
-      old.appendChild(current);
-    }`,
-  "() => {current = tree.pop()}",
-  "() => {}",
-  "str => {stack.push(str)}"
-);
+const modelToOutline = (code, target, inert = false) => {
+  let stack = [];
+  let tree = [];
+  let current;
+  current = target;
+  code.forEach((str, index) => {
+    const trimmed = str.trim();
+    switch (trimmed) {
+      case "(":
+        let old = current;
+        tree.push(current);
+        current = document.createElement("div");
+        current.textContent = stack.pop();
+        current.setAttribute("data-design-id", index);
+        current.ondragstart = event => {
+          startDragFromModel(index, event);
+        };
+        current.draggable = true;
+        old.appendChild(current);
+        break;
+      case ")":
+        current = tree.pop();
+        break;
+      case "=":
+        break;
+      default:
+        stack.push(trimmed);
+    }
+  });
+  return current;
+};
 
 /**
  * Creates a section in the palette. Features a title of
@@ -901,4 +890,4 @@ const initDesigner = () => {
   showCurrentDesign();
 };
 
-export default initDesigner;
+initDesigner();

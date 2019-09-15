@@ -4,25 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>UniDe - Universal Desiger</title>
+  <title>Unide</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/png" href="images/unide.png" sizes="256x256">
-  <link rel="stylesheet" href="./node_modules/codemirror/lib/codemirror.css">
-  <link rel="stylesheet" href="./node_modules/codemirror/theme/tomorrow-night-eighties.css">
-  <script src="./node_modules/prettier/standalone.js"></script>
-  <script src="./node_modules/prettier/parser-babylon.js"></script>
-  <script src="./node_modules/jszip/dist/jszip.js"></script>
-  <script src="./node_modules/file-saver/dist/FileSaver.js"></script>
-  <script src="./node_modules/codemirror/lib/codemirror.js"></script>
-  <script src="./node_modules/codemirror/mode/css/css.js"></script>
-  <script src="./node_modules/codemirror/addon/hint/show-hint.js"></script>
-  <script src="./node_modules/codemirror/addon/hint/css-hint.js"></script>
+  <link rel="stylesheet" href="./bundle.css">
 
-  <script src="./node_modules/@vaadin/vaadin-lumo-styles/color.js" type="module"></script>
-  <script src="./node_modules/@vaadin/vaadin-lumo-styles/sizing.js" type="module"></script>
-  <script src="./node_modules/@vaadin/vaadin-lumo-styles/spacing.js" type="module"></script>
-  <script src="./node_modules/@vaadin/vaadin-lumo-styles/style.js" type="module"></script>
-  <script src="./node_modules/@vaadin/vaadin-lumo-styles/typography.js" type="module"></script>
+  <!--
+  <script src="../node_modules/prettier/standalone.js"></script>
+  <script src="../node_modules/prettier/parser-babylon.js"></script>
+  <script src="../node_modules/jszip/dist/jszip.js"></script>
+  <script src="../node_modules/file-saver/dist/FileSaver.js"></script>
+-->
   
   <style>
   html {
@@ -228,9 +220,8 @@
       </div>
     </div>
   </div>
-    <script type="module">
-        import initDesigner from "./src/unide.js";
-        initDesigner();
-    </script>
+  <script src="lib/jszip.min.js"></script>
+  <script src="./bundle.js"></script>
+
   </body>
 </html>
