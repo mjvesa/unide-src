@@ -1,4 +1,6 @@
 // Visual designer for pure Java and Vaadin
+import CodeMirror from "codemirror";
+
 import { exportToJava } from "./export/java";
 import { exportToRaw } from "./export/raw";
 import { paletteContent } from "./curated_header.js";
@@ -901,4 +903,4 @@ const initDesigner = () => {
   showCurrentDesign();
 };
 
-export default initDesigner;
+initDesigner();

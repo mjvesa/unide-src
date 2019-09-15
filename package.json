@@ -1,12 +1,14 @@
 {
   "name": "UniDe",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Universal Designer for templates using Vaadin Components",
   "repository": "https://github.com/mjvesa/UniDe",
   "main": "unide.js",
   "scripts": {
-    "dev": "polymer serve --npm",
-    "build": "polymer build --preset es6-bundled",
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "dev": "npm-run-all --parallel start watch",
+    "start": "serve public",
     "test": "jest"
   },
   "author": "",
@@ -23,6 +25,12 @@
   },
   "devDependencies": {
     "eslint": "^5.15.3",
-    "jest": "^24.5.0"
+    "jest": "^24.5.0",
+    "npm-run-all": "^4.1.5",
+    "rollup": "^1.16.2",
+    "rollup-plugin-commonjs": "^10.0.0",
+    "rollup-plugin-node-resolve": "^5.1.0",
+    "rollup-plugin-terser": "^5.0.0",
+    "serve": "^11.0.2"
   }
 }
