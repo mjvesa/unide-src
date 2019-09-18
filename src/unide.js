@@ -14,7 +14,7 @@ import "@vaadin/vaadin-lumo-styles/typography.js";
 
 import "file-saver/dist/FileSaver.js";
 
-import { exportToJava } from "./export/java";
+import { exportToJava, modelToJava, kebabToPascalCase } from "./export/java";
 import { exportToRaw } from "./export/raw";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
@@ -538,8 +538,23 @@ const populateDesignSelectors = () => {
 const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
-  localStorage.setItem("unide.project", JSON.stringify(storedDesigns));
+  const storedDesignsString = JSON.stringify(storedDesigns);
+  localStorage.setItem("unide.project", storedDesignsString);
   populateDesignSelectors();
+
+  if (window.Unide && window.Unide.inElectron) {
+    window.Unide.saveState(storedDesignsString);
+    const javaName = kebabToPascalCase(designName);
+    let content = modelToJava(javaName, designName, currentDesign.tree);
+    window.Unide.saveFile(
+      `./src/main/java/unide/app/${javaName}.java`,
+      content
+    );
+    window.Unide.saveFile(
+      `./frontend/styles/${designName}.css`,
+      currentDesign.css
+    );
+  }
 };
 
 /**
@@ -817,6 +832,9 @@ const getStoredDesigns = () => {
   const shared = window.location.href.split("share=")[1];
   if (shared) {
     storedDesigns = JSON.parse(atob(shared));
+  } else if (window.Unide && window.Unide.inElectron) {
+    storedDesigns = JSON.parse(window.Unide.loadState());
+    console.log(storedDesigns);
   } else {
     const designsStr =
       localStorage.getItem("unide.project") || '{"designs": {}}';

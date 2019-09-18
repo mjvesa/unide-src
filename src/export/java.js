@@ -3,7 +3,7 @@
  */
 import flowImports from "./flow_imports.js";
 
-const kebabToPascalCase = str => {
+export const kebabToPascalCase = str => {
   const parts = str.split("-");
   let result = "";
   for (const i in parts) {
@@ -24,6 +24,7 @@ export const exportToJava = project => {
   for (const i in keys) {
     const key = keys[i];
     const pascalCaseName = kebabToPascalCase(key);
+    zip.file("src/main/resources/unide_state.json", JSON.stringify(project));
     zip.file(
       "src/main/java/unide/app/" + pascalCaseName + ".java",
       modelToJava(pascalCaseName, key, designs[key].tree)
@@ -129,9 +130,7 @@ export const modelToJava = (pascalCaseName, tag, code) => {
             let creation = "";
             obj.forEach(pair => {
               creation = creation.concat(
-                `${currentVar}.addColumn(${pascalCaseName}GridType::get${
-                  pair.path
-                }).setHeader("${pair.name}");\n`
+                `${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
               );
               fields = fields.concat(`private String ${pair.path};\n`);
               methods = methods.concat(`public String get${pair.path}() {
