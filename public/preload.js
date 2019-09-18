@@ -16,17 +16,23 @@ window.addEventListener("DOMContentLoaded", () => {
 window.Unide = {};
 window.Unide.inElectron = true;
 window.Unide.saveFile = (fileName, content) => {
+  const directory = fileName.substring(0, fileName.lastIndexOf("/"));
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
   fs.writeFileSync(fileName, content);
 };
 window.Unide.loadState = () => {
-  const state = fs.readFileSync(
-    "./src/main/resources/unide_state.json",
-    "utf8"
-  );
-  console.log(state);
+  let state = '{"designs": [] }';
+  if (fs.existsSync("./src/main/resources/unide_state.json")) {
+    state = fs.readFileSync("./src/main/resources/unide_state.json", "utf8");
+  }
   return state;
 };
 
 window.Unide.saveState = state => {
+  if (!fs.existsSync("./src/main/resources")) {
+    fs.mkdirSync("./src/main/resources", { recursive: true });
+  }
   fs.writeFileSync("./src/main/resources/unide_state.json", state);
 };
