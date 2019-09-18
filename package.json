@@ -1,9 +1,10 @@
 {
-  "name": "UniDe",
+  "name": "unide",
   "version": "0.0.1",
-  "description": "Universal Designer for templates using Vaadin Components",
-  "repository": "https://github.com/mjvesa/UniDe",
+  "description": "Visual designer for Vaadin 14+ views in pure Java",
+  "repository": "https://github.com/mjvesa/unide-src",
   "main": "public/index.js",
+  "bin": "./cli.js",
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
@@ -11,7 +12,7 @@
     "start": "serve public",
     "test": "jest"
   },
-  "author": "",
+  "author": "Matti Vesa",
   "license": "MIT",
   "dependencies": {
     "@vaadin/vaadin-core": "^14.0.3",
