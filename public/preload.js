@@ -23,7 +23,7 @@ window.Unide.saveFile = (fileName, content) => {
   fs.writeFileSync(fileName, content);
 };
 window.Unide.loadState = () => {
-  let state = '{"designs": [] }';
+  let state = '{"designs": {} }';
   if (fs.existsSync("./src/main/resources/unide_state.json")) {
     state = fs.readFileSync("./src/main/resources/unide_state.json", "utf8");
   }

@@ -834,7 +834,6 @@ const getStoredDesigns = () => {
     storedDesigns = JSON.parse(atob(shared));
   } else if (window.Unide && window.Unide.inElectron) {
     storedDesigns = JSON.parse(window.Unide.loadState());
-    console.log(storedDesigns);
   } else {
     const designsStr =
       localStorage.getItem("unide.project") || '{"designs": {}}';
