@@ -7,8 +7,10 @@ Unide is a "U and I Designer" from the days of old. It exports the
 designs into a Java project that can be built with maven. It is also
 free as it is released under the MIT license.
 
-To run the project, clone the repository, `npm install` the damned thing and
-finally recite this ancient spell: `polymer serve --npm`
+To run Unide locally, install it via npm `npm install -g unide` and then
+invoke `unide` at the root of your Vaadin project.
+
+[Unide can be accessed online](https://mjvesa.github.io/unide/)
 
 ## Goal of the project
 
