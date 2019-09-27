@@ -13,30 +13,34 @@
   html {
     width: 100vw;
     height: 100vh;
-    overflow: hidden;
   }
 
   body {
-    width: 100%;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     margin: 0px;
     background-color: #223;
     color: white;
     overflow: hidden;
   }
 
+
+  #design-details {
+    height: 1.5rem;
+    display: inline-block;
+  }
   #container {
     display: grid;
     grid-template-columns: 15vw auto 15vw 15vw;
     width: 100vw;
-    height: calc(100vh - 2rem);
+    height: calc(100% - 1.5rem);
   }
 
   #paper {
-    box-sizing: border-box;
+    /*box-sizing: border-box;*/
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    overflow: auto;
     background-color: white;
     color:black;
   }
@@ -59,6 +63,11 @@
     width: 15vw;
     border-top: 1px solid gray;
     overflow: auto;
+  }
+
+
+  #outline-attributes {
+    overflow: hidden;
   }
 
   #outline div {
@@ -129,24 +138,25 @@
       color: white;
   }
 
+  #editor-panel {
+    height: 100%;
+    overflow: hidden;
+  }
   #text-editor {
-    height: calc(100% - 20rem);
+    height: 50%;
   }
   
   #css-rule-filter {
     width: 100%;
+    height: 1rem;
   }
 
   #css-rules {
     display: block;
-    height: 20rem;
+    height: calc(50% - 1rem);
     overflow: auto;
   }
   .CodeMirror { height: 100%; }
-
-  #design-details {
-    height: 2rem;
-  }
 
   #delete-design {
     background-color: salmon;
@@ -154,16 +164,54 @@
 
   </style>
 </head>
-<body theme="dark">
+<body>
+  <!-- Various markes and overlays -->
   <div id="marker"></div>
   <div id="select-marker-outline"></div>
   <div id="select-marker-paper"></div>
   <div id="element-preview"></div>
 
+  <!-- Settings page template -->
+  <template id="settings-template">
+    <style>
+      .settings-page {
+        display: flex;
+        box-sizing:border-box;
+        height: 100%;
+        padding: 1rem;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: space-between;
+      }
+
+      .button-bar {
+        display: flex;
+        justify-content: space-between;
+      }
+      #target-folder {
+        width: 40rem;
+      }
+
+    </style>
+    <div class="settings-page">
+      <span>
+        Target folder
+        <input id="target-folder" type="text"></input>
+        <!-- Button only visible on Electron -->
+        <button  id="select-folder" hidden>Select</button>      
+      </span>
+      <span class="button-bar">
+          <button id="settings-cancel">Cancel</button>
+          <button id="settings-save">Save</button>
+      </span>
+    </div>
+  </template>
+
   <!-- Header fields and buttons-->
-  <span id="design-details">
-    <button id="new-design" theme="primary">New</button>
-    <button id="sketch-design" theme="primary">Sketch</button>
+  <div id="design-details">
+    <button id="project-settings">Settings</button>
+    <button id="new-design">New</button>
+    <button id="sketch-design">Sketch</button>
     <span>
       Name:
       <input id="design-name" type="text"></input>
@@ -188,16 +236,14 @@
     </span>
     <button id="share-designs">Share</button>
     <button id="delete-design">Delete design</button>
-  </span>
+  </div>
 
   <!-- Designer UI panels-->
   <div id="container">
     <div id="editor-panel">
       <div id="text-editor"></div>
-      <div>
-        <input id="css-rule-filter" type="text"></input>
-        <div id="css-rules"></div>
-      </div>
+      <input id="css-rule-filter" type="text"></input>
+      <div id="css-rules"></div>
     </div>
     <div id="paper">paper</div>
     <div id="palette-wrapper">
