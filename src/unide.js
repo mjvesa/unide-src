@@ -300,9 +300,7 @@ const updateAttributes = () => {
     ),
     css: currentDesign.css
   };
-  designStack.push(currentDesign);
-  currentDesign = newDesign;
-  showCurrentDesign();
+  showNewDesign(newDesign);
 };
 
 // eslint-disable-next-line
@@ -477,7 +475,7 @@ const createPaletteSection = (name, tags, palette) => {
  */
 const getStoredDesignsForPalette = () => {
   const project = JSON.parse(
-    window.localStorage.getItem("unide.project") || "{designs:{}}"
+    window.localStorage.getItem("unide.project") || "{settings: {}, designs:{}}"
   );
   const parsedDesigns = [];
   const keys = Object.keys(project.designs);
@@ -530,6 +528,16 @@ const populateDesignSelectors = () => {
   populateDesignSelector($("#target-route"));
 };
 
+const storeProject = () => {
+  const storedDesignsString = JSON.stringify(storedDesigns);
+  localStorage.setItem("unide.project", storedDesignsString);
+  populateDesignSelectors();
+
+  if (window.Unide && window.Unide.inElectron) {
+    window.Unide.saveState(storedDesignsString);
+  }
+};
+
 /**
  * Saves the current design into local storage.
  *
@@ -538,16 +546,12 @@ const populateDesignSelectors = () => {
 const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
-  const storedDesignsString = JSON.stringify(storedDesigns);
-  localStorage.setItem("unide.project", storedDesignsString);
-  populateDesignSelectors();
-
+  storeProject();
   if (window.Unide && window.Unide.inElectron) {
-    window.Unide.saveState(storedDesignsString);
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(javaName, designName, currentDesign.tree);
     window.Unide.saveFile(
-      `./src/main/java/unide/app/${javaName}.java`,
+      `${storedDesigns.settings.folder}${javaName}.java`,
       content
     );
     window.Unide.saveFile(
@@ -655,6 +659,27 @@ const shareDesigns = () => {
   document.body.scroll(0, 0);
 };
 
+const showProjectSettings = event => {
+  const el = $("#paper");
+  const node = document.importNode($("#settings-template").content, true);
+  el.shadowRoot.innerHTML = "";
+  el.shadowRoot.appendChild(node);
+
+  el.shadowRoot.querySelector("#target-folder").value =
+    storedDesigns.settings.folder || "./src/main/java/unide/app/";
+  el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
+    showCurrentDesign();
+  };
+  el.shadowRoot.querySelector("#settings-save").onclick = () => {
+    const designFolder = el.shadowRoot.querySelector("#target-folder").value;
+    const settings = storedDesigns.settings || {};
+    settings.folder = designFolder;
+    storedDesigns.settings = settings;
+    storeProject();
+    showCurrentDesign();
+  };
+};
+
 /**
  * Installs handlers for mouse events on various parts of the UI
  */
@@ -680,6 +705,7 @@ const installUIEventHandlers = () => {
   $("#delete-design").onclick = deleteDesign;
   $("#new-design").onclick = newDesign;
   $("#share-designs").onclick = shareDesigns;
+  $("#project-settings").onclick = showProjectSettings;
 
   $("#css-rule-filter").oninput = () => {
     setupCssRules($("#css-rule-filter").value);

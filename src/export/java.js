@@ -26,7 +26,7 @@ export const exportToJava = project => {
     const pascalCaseName = kebabToPascalCase(key);
     zip.file("src/main/resources/unide_state.json", JSON.stringify(project));
     zip.file(
-      "src/main/java/unide/app/" + pascalCaseName + ".java",
+      project.settings.folder + pascalCaseName + ".java",
       modelToJava(pascalCaseName, key, designs[key].tree)
     );
     zip.file(`frontend/styles/${key}.css`, designs[key].css);
@@ -35,7 +35,7 @@ export const exportToJava = project => {
   zip.file("pom.xml", pomXML);
 
   zip.generateAsync({ type: "blob" }).then(content => {
-    saveAs(content, "flow-designs.zip");
+    saveAs(content, "unide-java-designs.zip");
   });
 };
 
