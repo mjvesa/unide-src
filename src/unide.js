@@ -475,7 +475,7 @@ const createPaletteSection = (name, tags, palette) => {
  */
 const getStoredDesignsForPalette = () => {
   const project = JSON.parse(
-    window.localStorage.getItem("unide.project") || "{designs:{}}"
+    window.localStorage.getItem("unide.project") || "{settings: {}, designs:{}}"
   );
   const parsedDesigns = [];
   const keys = Object.keys(project.designs);

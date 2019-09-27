@@ -13042,7 +13042,7 @@
 	    const pascalCaseName = kebabToPascalCase(key);
 	    zip.file("src/main/resources/unide_state.json", JSON.stringify(project));
 	    zip.file(
-	      "src/main/java/unide/app/" + pascalCaseName + ".java",
+	      project.settings.folder + pascalCaseName + ".java",
 	      modelToJava(pascalCaseName, key, designs[key].tree)
 	    );
 	    zip.file(`frontend/styles/${key}.css`, designs[key].css);
@@ -64406,7 +64406,7 @@ public class UnideSplitLayout extends SplitLayout {
 	 */
 	const getStoredDesignsForPalette = () => {
 	  const project = JSON.parse(
-	    window.localStorage.getItem("unide.project") || "{designs:{}}"
+	    window.localStorage.getItem("unide.project") || "{settings: {}, designs:{}}"
 	  );
 	  const parsedDesigns = [];
 	  const keys = Object.keys(project.designs);
