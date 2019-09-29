@@ -14,7 +14,12 @@ import "@vaadin/vaadin-lumo-styles/typography.js";
 
 import "file-saver/dist/FileSaver.js";
 
-import { exportToJava, modelToJava, kebabToPascalCase } from "./export/java";
+import {
+  exportToJava,
+  modelToJava,
+  kebabToPascalCase,
+  packageToFolder
+} from "./export/java";
 import { exportToRaw } from "./export/raw";
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
@@ -549,9 +554,14 @@ const saveDesign = () => {
   storeProject();
   if (window.Unide && window.Unide.inElectron) {
     const javaName = kebabToPascalCase(designName);
-    let content = modelToJava(javaName, designName, currentDesign.tree);
+    let content = modelToJava(
+      javaName,
+      designName,
+      storedDesigns.settings.packageName,
+      currentDesign.tree
+    );
     window.Unide.saveFile(
-      `${storedDesigns.settings.folder}${javaName}.java`,
+      `${packageToFolder(storedDesigns.settings.packageName)}${javaName}.java`,
       content
     );
     window.Unide.saveFile(
@@ -661,19 +671,19 @@ const shareDesigns = () => {
 
 const showProjectSettings = event => {
   const el = $("#paper");
+  const settings = storedDesigns.settings || {};
   const node = document.importNode($("#settings-template").content, true);
   el.shadowRoot.innerHTML = "";
   el.shadowRoot.appendChild(node);
 
   el.shadowRoot.querySelector("#target-folder").value =
-    storedDesigns.settings.folder || "./src/main/java/unide/app/";
+    settings.packageName || "unide.app";
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
   el.shadowRoot.querySelector("#settings-save").onclick = () => {
-    const designFolder = el.shadowRoot.querySelector("#target-folder").value;
-    const settings = storedDesigns.settings || {};
-    settings.folder = designFolder;
+    const packageName = el.shadowRoot.querySelector("#target-folder").value;
+    settings.packageName = packageName;
     storedDesigns.settings = settings;
     storeProject();
     showCurrentDesign();
