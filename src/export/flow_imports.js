@@ -1,103 +1,103 @@
 const flowImports = {
   a: {
     name: "Anchor",
-    import: "import com.vaadin.flow.component.html.Anchor;"
+    import: "com.vaadin.flow.component.html.Anchor"
   },
   article: {
     name: "Article",
-    import: "import com.vaadin.flow.component.html.Article;"
+    import: "com.vaadin.flow.component.html.Article"
   },
   aside: {
     name: "Aside",
-    import: "import com.vaadin.flow.component.html.Aside;"
+    import: "com.vaadin.flow.component.html.Aside"
   },
-  div: { name: "Div", import: "import com.vaadin.flow.component.html.Div;" },
+  div: { name: "Div", import: "com.vaadin.flow.component.html.Div" },
   emp: {
     name: "Emphasis",
-    import: "import com.vaadin.flow.component.html.Emphasis;"
+    import: "com.vaadin.flow.component.html.Emphasis"
   },
   footer: {
     name: "Footer",
-    import: "import com.vaadin.flow.component.html.Footer;"
+    import: "com.vaadin.flow.component.html.Footer"
   },
-  h1: { name: "H1", import: "import com.vaadin.flow.component.html.H1;" },
-  h2: { name: "H2", import: "import com.vaadin.flow.component.html.H2;" },
-  h3: { name: "H3", import: "import com.vaadin.flow.component.html.H3;" },
-  h4: { name: "H4", import: "import com.vaadin.flow.component.html.H4;" },
-  h5: { name: "H5", import: "import com.vaadin.flow.component.html.H5;" },
-  h6: { name: "H6", import: "import com.vaadin.flow.component.html.H6;" },
+  h1: { name: "H1", import: "com.vaadin.flow.component.html.H1" },
+  h2: { name: "H2", import: "com.vaadin.flow.component.html.H2" },
+  h3: { name: "H3", import: "com.vaadin.flow.component.html.H3" },
+  h4: { name: "H4", import: "com.vaadin.flow.component.html.H4" },
+  h5: { name: "H5", import: "com.vaadin.flow.component.html.H5" },
+  h6: { name: "H6", import: "com.vaadin.flow.component.html.H6" },
   header: {
     name: "Header",
-    import: "import com.vaadin.flow.component.html.Header;"
+    import: "com.vaadin.flow.component.html.Header"
   },
-  hr: { name: "Hr", import: "import com.vaadin.flow.component.html.Hr;" },
+  hr: { name: "Hr", import: "com.vaadin.flow.component.html.Hr" },
   image: {
     name: "Image",
-    import: "import com.vaadin.flow.component.html.Image;"
+    import: "com.vaadin.flow.component.html.Image"
   },
   input: {
     name: "Input",
-    import: "import com.vaadin.flow.component.html.Input;"
+    import: "com.vaadin.flow.component.html.Input"
   },
   label: {
     name: "Label",
-    import: "import com.vaadin.flow.component.html.Label;"
+    import: "com.vaadin.flow.component.html.Label"
   },
   li: {
     name: "ListItem",
-    import: "import com.vaadin.flow.component.html.ListItem;"
+    import: "com.vaadin.flow.component.html.ListItem"
   },
-  main: { name: "Main", import: "import com.vaadin.flow.component.html.Main;" },
+  main: { name: "Main", import: "com.vaadin.flow.component.html.Main" },
   button: {
     name: "NativeButton",
-    import: "import com.vaadin.flow.component.html.NativeButton;"
+    import: "com.vaadin.flow.component.html.NativeButton"
   },
-  nav: { name: "Nav", import: "import com.vaadin.flow.component.html.Nav;" },
+  nav: { name: "Nav", import: "com.vaadin.flow.component.html.Nav" },
   ol: {
     name: "OrderedList",
-    import: "import com.vaadin.flow.component.html.OrderedList;"
+    import: "com.vaadin.flow.component.html.OrderedList"
   },
   p: {
     name: "Paragraph",
-    import: "import com.vaadin.flow.component.html.Paragraph;"
+    import: "com.vaadin.flow.component.html.Paragraph"
   },
   section: {
     name: "Section",
-    import: "import com.vaadin.flow.component.html.Section;"
+    import: "com.vaadin.flow.component.html.Section"
   },
-  span: { name: "Span", import: "import com.vaadin.flow.component.html.Span;" },
+  span: { name: "Span", import: "com.vaadin.flow.component.html.Span" },
   ul: {
     name: "UnorderedList",
-    import: "import com.vaadin.flow.component.html.UnorderedList;"
+    import: "com.vaadin.flow.component.html.UnorderedList"
   },
   "vaadin-notification": {
     name: "Notification",
-    import: "import com.vaadin.flow.component.notification.Notification;"
+    import: "com.vaadin.flow.component.notification.Notification"
   },
   "vaadin-checkbox": {
     name: "Checkbox",
-    import: "import com.vaadin.flow.component.checkbox.CheckBox;"
+    import: "com.vaadin.flow.component.checkbox.CheckBox"
   },
   "vaadin-checkbox-group": {
     name: "CheckboxGroup",
-    import: "import com.vaadin.flow.component.checkbox.CheckBoxGroup;"
+    import: "com.vaadin.flow.component.checkbox.CheckBoxGroup"
   },
   "vaadin-radio-group": {
     name: "RadioButtonGroup",
-    import: "import com.vaadin.flow.component.radiobutton.RadioButtonGroup;"
+    import: "com.vaadin.flow.component.radiobutton.RadioButtonGroup"
   },
   "vaadin-radio-button": {
     name: "RadioButton",
-    import: "import com.vaadin.flow.component.radiobutton.RadioButton;"
+    import: "com.vaadin.flow.component.radiobutton.RadioButton"
   },
   "vaadin-button": {
     name: "Button",
-    import: "import com.vaadin.flow.component.button.Button;"
+    import: "com.vaadin.flow.component.button.Button"
   },
 
   "vaadin-date-picker": {
     name: "DatePicker",
-    import: "import com.vaadin.flow.component.datepicker.DatePicker;"
+    import: "com.vaadin.flow.component.datepicker.DatePicker"
   },
 
   "vaadin-split-layout": {
@@ -107,83 +107,81 @@ const flowImports = {
   "vaadin-progress-bar": {
     name: "VaadinProgressBar",
     import:
-      "import /node_modules/@vaadin/vaadin-progress-bar/theme/lumo/vaadin-progress-bar.js;"
+      "/node_modules/@vaadin/vaadin-progress-bar/theme/lumo/vaadin-progress-bar.js"
   },
   "vaadin-combo-box": {
     name: "ComboBox",
-    import: "import com.vaadin.flow.component.combobox.ComboBox;"
+    import: "com.vaadin.flow.component.combobox.ComboBox"
   },
   "vaadin-text-field": {
     name: "TextField",
-    import: "import com.vaadin.flow.component.textfield.TextField;"
+    import: "com.vaadin.flow.component.textfield.TextField"
   },
   "vaadin-password-field": {
     name: "PasswordField",
-    import: "import com.vaadin.flow.component.textfield.PasswordField;"
+    import: "com.vaadin.flow.component.textfield.PasswordField"
   },
   "vaadin-text-area": {
     name: "TextArea",
-    import: "import com.vaadin.flow.component.textfield.TextArea;"
+    import: "com.vaadin.flow.component.textfield.TextArea"
   },
   "vaadin-context-menu": {
     name: "ContextMenu",
-    import: "import com.vaadin.flow.component.contextmenu.ContextMenu;"
+    import: "com.vaadin.flow.component.contextmenu.ContextMenu"
   },
   "vaadin-tabs": {
     name: "Tabs",
-    import: "import com.vaadin.flow.component.tabs.Tabs;"
+    import: "com.vaadin.flow.component.tabs.Tabs"
   },
   "vaadin-tab": {
     name: "Tab",
-    import: "import com.vaadin.flow.component.tabs.Tab;"
+    import: "com.vaadin.flow.component.tabs.Tab"
   },
   "vaadin-item": {
     name: "MenuItem",
-    import: "import com.vaadin.flow.component.contextmenu.MenuItem;"
+    import: "com.vaadin.flow.component.contextmenu.MenuItem"
   },
   "vaadin-horizontal-layout": {
     name: "HorizontalLayout",
-    import: "import com.vaadin.flow.component.orderedlayout.HorizontalLayout;"
+    import: "com.vaadin.flow.component.orderedlayout.HorizontalLayout"
   },
   "vaadin-vertical-layout": {
     name: "VerticalLayout",
-    import: "import com.vaadin.flow.component.orderedlayout.VerticalLayout;"
+    import: "com.vaadin.flow.component.orderedlayout.VerticalLayout"
   },
   "vaadin-form-layout": {
     name: "FormLayout",
-    import: "import com.vaadin.flow.component.formlayout.FormLayout;"
+    import: "com.vaadin.flow.component.formlayout.FormLayout"
   },
   "vaadin-form-item": {
     name: "FormItem",
-    import:
-      "import import com.vaadin.flow.component.formlayout.FormLayout.FormItem;"
+    import: "com.vaadin.flow.component.formlayout.FormLayout.FormItem"
   },
   "unide-grid": {
     name: "Grid",
-    import: "import com.vaadin.flow.component.grid.Grid;"
+    import: "com.vaadin.flow.component.grid.Grid"
   },
   "vaadin-list-box": {
     name: "VaadinListBox",
     import:
-      "import /node_modules/@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js;"
+      "/node_modules/@vaadin/vaadin-list-box/theme/lumo/vaadin-list-box.js"
   },
   "vaadin-select": {
     name: "Select",
     import:
-      "import /node_modules/@vaadin/vaadin-dropdown-menu/theme/lumo/vaadin-dropdown-menu.js;"
+      "/node_modules/@vaadin/vaadin-dropdown-menu/theme/lumo/vaadin-dropdown-menu.js"
   },
   "vaadin-upload-file": {
     name: "VaadinUploadFile",
-    import:
-      "import /node_modules/@vaadin/vaadin-upload/src/vaadin-upload-file.js;"
+    import: "/node_modules/@vaadin/vaadin-upload/src/vaadin-upload-file.js"
   },
   "vaadin-upload": {
     name: "Upload",
-    import: "import com.vaadin.flow.component.upload.Upload;"
+    import: "com.vaadin.flow.component.upload.Upload"
   },
   "vaadin-dialog": {
     name: "Dialog",
-    import: "import com.vaadin.flow.component.dialog.Dialog;"
+    import: "com.vaadin.flow.component.dialog.Dialog"
   }
 };
 

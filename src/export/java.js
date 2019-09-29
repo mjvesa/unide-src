@@ -205,7 +205,9 @@ export const modelToJava = (pascalCaseName, tag, code) => {
   let importStrings = "";
 
   importedTags.forEach(tag => {
-    importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
+    importStrings = importStrings.concat(
+      `import ${flowImports[tag].import};\n`
+    );
   });
 
   return `package unide.app;
@@ -259,7 +261,7 @@ const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <failOnMissingWebXml>false</failOnMissingWebXml>
         
-        <vaadin.version>14.0.4</vaadin.version>
+        <vaadin.version>14.0.5</vaadin.version>
     </properties>
 
     <repositories>
