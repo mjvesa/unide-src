@@ -133,5 +133,6 @@ export const demoDesigns = {
       ],
       css: ""
     }
-  }
+  },
+  settings: { packageName: "unide.app" }
 };
