@@ -62,6 +62,7 @@ const getOutlineElement = () => {
 };
 
 const showCurrentDesign = () => {
+  hideMarkers();
   checkModel(currentDesign.tree);
   const paper = getPaperElement();
   paper.shadowRoot.innerHTML = "";
