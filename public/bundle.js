@@ -13294,7 +13294,7 @@ public class UnideSplitLayout extends SplitLayout {
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <failOnMissingWebXml>false</failOnMissingWebXml>
         
-        <vaadin.version>14.0.5</vaadin.version>
+        <vaadin.version>14.0.7</vaadin.version>
     </properties>
 
     <repositories>
