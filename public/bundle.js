@@ -64009,6 +64009,7 @@ public class UnideSplitLayout extends SplitLayout {
 	};
 
 	const showCurrentDesign = () => {
+	  hideMarkers();
 	  checkModel(currentDesign.tree);
 	  const paper = getPaperElement();
 	  paper.shadowRoot.innerHTML = "";
