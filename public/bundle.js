@@ -13033,21 +13033,31 @@
 	  return pascal.charAt(0).toLowerCase() + pascal.substring(1);
 	};
 
+	const packageToFolder = packageName => {
+	  return "src/main/java/" + packageName.replace(/\./g, "/") + "/";
+	};
+
 	const exportToJava = project => {
 	  const zip = new JSZip();
 	  const designs = project.designs;
 	  const keys = Object.keys(designs);
+	  const packageName = project.settings.packageName;
+	  const javaFolder = packageToFolder(packageName);
 	  for (const i in keys) {
 	    const key = keys[i];
 	    const pascalCaseName = kebabToPascalCase(key);
 	    zip.file("src/main/resources/unide_state.json", JSON.stringify(project));
 	    zip.file(
-	      project.settings.folder + pascalCaseName + ".java",
-	      modelToJava(pascalCaseName, key, designs[key].tree)
+	      javaFolder + pascalCaseName + ".java",
+	      modelToJava(pascalCaseName, key, packageName, designs[key].tree)
+	    );
+	    zip.file(
+	      javaFolder + pascalCaseName + "Aux.java",
+	      generateAuxClass(pascalCaseName, packageName)
 	    );
 	    zip.file(`frontend/styles/${key}.css`, designs[key].css);
 	  }
-	  zip.file("src/main/java/unide/app/UnideSplitLayout.java", unideSplitLayout);
+	  zip.file(javaFolder + "UnideSplitLayout.java", unideSplitLayout(packageName));
 	  zip.file("pom.xml", pomXML);
 
 	  zip.generateAsync({ type: "blob" }).then(content => {
@@ -13055,7 +13065,15 @@
 	  });
 	};
 
-	const modelToJava = (pascalCaseName, tag, code) => {
+	const generateAuxClass = (pascalCaseName, packageName) => {
+	  return `package ${packageName};
+  public class ${pascalCaseName}Aux {
+    public ${pascalCaseName}Aux(${pascalCaseName} design) {
+    }
+  }`;
+	};
+
+	const modelToJava = (pascalCaseName, tag, packageName, code) => {
 	  const importedTags = new Set();
 	  let internalClasses = "";
 	  const stack = [];
@@ -13098,7 +13116,7 @@
           ${currentVar}.add(${newVar});\n`;
 	        } else {
 	          fields += `protected ${elementClass} ${newVar};\n`;
-	          result += `${elementClass} ${newVar} = new ${elementClass}();
+	          result += `${newVar} = new ${elementClass}();
           ${currentVar}.add(${newVar});\n`;
 	        }
 	        variableStack.push(currentVar);
@@ -13222,7 +13240,7 @@
 	    importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
 	  });
 
-	  return `package unide.app;
+	  return `package ${packageName};
   ${importStrings}
   import java.util.ArrayList;
   import com.vaadin.flow.component.dependency.CssImport;
@@ -13235,12 +13253,14 @@
     ${internalClasses}
     public ${pascalCaseName}() {
           ${result}
+          new ${pascalCaseName}Aux(this);
       }
     }
   `;
 	};
 
-	const unideSplitLayout = `package unide.app;
+	const unideSplitLayout = packageName => {
+	  return `package ${packageName};
 import com.vaadin.flow.component.splitlayout.SplitLayout;
 import com.vaadin.flow.component.Component;
 
@@ -13257,6 +13277,7 @@ public class UnideSplitLayout extends SplitLayout {
   }
 }
 `;
+	};
 
 	const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -13273,7 +13294,7 @@ public class UnideSplitLayout extends SplitLayout {
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <failOnMissingWebXml>false</failOnMissingWebXml>
         
-        <vaadin.version>14.0.4</vaadin.version>
+        <vaadin.version>14.0.5</vaadin.version>
     </properties>
 
     <repositories>
@@ -64480,9 +64501,14 @@ public class UnideSplitLayout extends SplitLayout {
 	  storeProject();
 	  if (window.Unide && window.Unide.inElectron) {
 	    const javaName = kebabToPascalCase(designName);
-	    let content = modelToJava(javaName, designName, currentDesign.tree);
+	    let content = modelToJava(
+	      javaName,
+	      designName,
+	      storedDesigns.settings.packageName,
+	      currentDesign.tree
+	    );
 	    window.Unide.saveFile(
-	      `${storedDesigns.settings.folder}${javaName}.java`,
+	      `${packageToFolder(storedDesigns.settings.packageName)}${javaName}.java`,
 	      content
 	    );
 	    window.Unide.saveFile(
@@ -64592,19 +64618,19 @@ public class UnideSplitLayout extends SplitLayout {
 
 	const showProjectSettings = event => {
 	  const el = $$2("#paper");
+	  const settings = storedDesigns.settings || {};
 	  const node = document.importNode($$2("#settings-template").content, true);
 	  el.shadowRoot.innerHTML = "";
 	  el.shadowRoot.appendChild(node);
 
 	  el.shadowRoot.querySelector("#target-folder").value =
-	    storedDesigns.settings.folder || "./src/main/java/unide/app/";
+	    settings.packageName || "unide.app";
 	  el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
 	    showCurrentDesign();
 	  };
 	  el.shadowRoot.querySelector("#settings-save").onclick = () => {
-	    const designFolder = el.shadowRoot.querySelector("#target-folder").value;
-	    const settings = storedDesigns.settings || {};
-	    settings.folder = designFolder;
+	    const packageName = el.shadowRoot.querySelector("#target-folder").value;
+	    settings.packageName = packageName;
 	    storedDesigns.settings = settings;
 	    storeProject();
 	    showCurrentDesign();
