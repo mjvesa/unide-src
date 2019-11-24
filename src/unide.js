@@ -21,6 +21,14 @@ import {
   packageToFolder
 } from "./export/java";
 import { exportToRaw } from "./export/raw";
+import { exportToAngular } from "./export/angular";
+import { exportToLitElement } from "./export/lit";
+import { exportToPreact } from "./export/preact";
+import { exportToReact } from "./export/react";
+import { exportToSvelte } from "./export/svelte";
+import { exportToVanilla } from "./export/vanilla";
+import { exportToVue } from "./export/vue";
+
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
 import { demoDesigns } from "./demo_designs";
@@ -245,12 +253,15 @@ const selectElement = e => {
     let ip = Number(designId) + 1;
     let value = currentDesign.tree[ip].trim();
     $("#target-route").value = "";
+    $("#field-name").value = "";
     while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
       if (value === "=") {
         const tos = stack.pop();
         const nos = stack.pop();
         if (nos.trim() === "targetRoute") {
           $("#target-route").value = tos;
+        } else if (nos.trim() === "fieldName") {
+          $("#field-name").value = tos;
         } else {
           props =
             props +
@@ -292,12 +303,19 @@ const updateAttributes = () => {
     }
   });
   const targetRoute = $("#target-route").value;
-
   if (targetRoute.trim() !== "") {
     attributes.push("targetRoute");
     attributes.push(targetRoute);
     attributes.push("=");
   }
+
+  const fieldName = $("#field-name").value;
+  if (fieldName.trim() !== "") {
+    attributes.push("fieldName");
+    attributes.push(fieldName);
+    attributes.push("=");
+  }
+
   const newDesign = {
     tree: Model.updateSubtreeAttributes(
       attributes,
@@ -614,10 +632,25 @@ const importRawModel = () => {
  */
 const exportDesign = () => {
   const format = document.getElementById("choose-export-format").value;
-  if (format === "Java") {
-    exportToJava(storedDesigns);
+
+  if (format === "LitElement") {
+    exportToLitElement(storedDesigns);
+  } else if (format === "Angular") {
+    exportToAngular(storedDesigns);
+  } else if (format === "Preact") {
+    exportToPreact(storedDesigns);
   } else if (format === "Raw") {
     exportToRaw(storedDesigns);
+  } else if (format === "React") {
+    exportToReact(storedDesigns);
+  } else if (format === "Svelte") {
+    exportToSvelte(storedDesigns);
+  } else if (format === "VanillaJS") {
+    exportToVanilla(storedDesigns);
+  } else if (format === "Vue") {
+    exportToVue(storedDesigns);
+  } else if (format === "Java") {
+    exportToJava(storedDesigns);
   } else {
     window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
@@ -707,6 +740,7 @@ const installUIEventHandlers = () => {
   const attributes = $("#attributes");
   attributes.oninput = updateAttributes;
   $("#target-route").onchange = updateAttributes;
+  $("#field-name").oninput = updateAttributes;
 
   $("#save-design").onclick = saveDesign;
   $("#choose-design").onchange = loadSelectedDesign;

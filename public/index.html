@@ -226,6 +226,15 @@
       Export:
       <select id="choose-export-format">
         <option>Java</option>
+        <option>LitElement</option>
+        <option>VanillaJS</option>
+        <option disabled>--------</option>            
+        <option>Angular</option>
+        <option>Preact</option>
+        <option>React</option>
+        <option>Svelte</option>
+        <option>Vue</option>
+        <option disabled>--------</option>            
         <option>Raw</option>
       </select>
       <button id="export-design">Export</button>
@@ -255,13 +264,15 @@
       <div id="outline">outline</div>
       <div id="attribute-panel"> 
         <table>
-            <tr><td>Target Route</td><td><select id="target-route"></select></td></tr>
-          </table>
+          <tr><td>Route</td><td><select id="target-route"></select></td></tr>
+          <tr><td>Field</td><td><input id="field-name" type="text"></input></td></tr>
+        </table>
         <div id="attributes"></div>
       </div>
     </div>
   </div>
   <script src="lib/jszip.min.js"></script>
+
   <script src="./bundle.js"></script>
 
   </body>

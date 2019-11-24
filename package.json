@@ -22,7 +22,8 @@
     "electron": "^6.0.9",
     "file-saver": "^2.0.0-rc.4",
     "jszip": "^3.1.5",
-    "vanilla-picker": "^2.7.2"
+    "vanilla-picker": "^2.7.2",
+    "prettier": "^1.16.4"
   },
   "devDependencies": {
     "eslint": "^5.15.3",
