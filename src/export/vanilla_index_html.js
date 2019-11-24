@@ -5,7 +5,7 @@ export const getIndexHTML = views => {
     imports = imports.concat(`import './${viewName}';`);
   });
 
-  return `<DOCTYPE html>
+  return `<!DOCTYPE html>
 
   <html>
 <head>
