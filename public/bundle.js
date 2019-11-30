@@ -13573,7 +13573,7 @@ public class UnideSplitLayout extends SplitLayout {
 	    imports = imports.concat(`import './${viewName}';`);
 	  });
 
-	  return `<DOCTYPE html>
+	  return `<!DOCTYPE html>
 
   <html>
 <head>
@@ -97646,7 +97646,8 @@ customElements.define("unide-grid", UnideGridElement);`;
 	const switchToSketchMode = () => {
 	  hideMarkers();
 	  enterSketchMode(getPaperElement(), design => {
-	    showNewDesign({ css: "", tree: design });
+	    const newTree = currentDesign.tree.slice().concat(design);
+	    showNewDesign({ css: currentDesign.css.slice(), tree: newTree });
 	  });
 	};
 

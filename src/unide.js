@@ -659,7 +659,8 @@ const exportDesign = () => {
 const switchToSketchMode = () => {
   hideMarkers();
   enterSketchMode(getPaperElement(), design => {
-    showNewDesign({ css: "", tree: design });
+    const newTree = currentDesign.tree.slice().concat(design);
+    showNewDesign({ css: currentDesign.css.slice(), tree: newTree });
   });
 };
 
