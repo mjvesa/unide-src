@@ -194,17 +194,35 @@
 
     </style>
     <div class="settings-page">
-      <span>
-        Target package
-        <input id="target-folder" type="text"></input>
-        <!-- Button only visible on Electron -->
-        <button  id="select-folder" hidden>Select</button>      
-      </span>
+      <div>
+        <span>
+          Target package
+          <input id="target-folder" type="text"></input>
+          <!-- Button only visible on Electron -->
+          <button  id="select-folder" hidden>Select</button>      
+        </span>
+        <span>
+          Project format
+          <select id="choose-export-format">
+            <option>Java</option>
+            <option>LitElement</option>
+            <option>VanillaJS</option>
+            <option disabled>--------</option>            
+            <option>Angular</option>
+            <option>Preact</option>
+            <option>React</option>
+            <option>Svelte</option>
+            <option>Vue</option>
+            <option disabled>--------</option>            
+            <option>Raw</option>
+          </select>
+        </span>
+      </div>
       <span class="button-bar">
           <button id="settings-cancel">Cancel</button>
           <button id="settings-save">Save</button>
       </span>
-    </div>
+  </div>
   </template>
 
   <!-- Header fields and buttons-->
@@ -222,23 +240,7 @@
       Load:
       <select id="choose-design"></select>
     </span>
-    <span>
-      Export:
-      <select id="choose-export-format">
-        <option>Java</option>
-        <option>LitElement</option>
-        <option>VanillaJS</option>
-        <option disabled>--------</option>            
-        <option>Angular</option>
-        <option>Preact</option>
-        <option>React</option>
-        <option>Svelte</option>
-        <option>Vue</option>
-        <option disabled>--------</option>            
-        <option>Raw</option>
-      </select>
-      <button id="export-design">Export</button>
-    </span>
+    <button id="export-design">Export</button>
     <span>
       Import:
       <input type="file" id="import-file-input"></input>

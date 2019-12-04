@@ -134,5 +134,5 @@ export const demoDesigns = {
       css: ""
     }
   },
-  settings: { packageName: "unide.app" }
+  settings: { packageName: "unide.app", exportFormat: "Java" }
 };

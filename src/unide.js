@@ -70,8 +70,8 @@ const getOutlineElement = () => {
 };
 
 const showCurrentDesign = () => {
-  hideMarkers();
   checkModel(currentDesign.tree);
+  hideMarkers();
   const paper = getPaperElement();
   paper.shadowRoot.innerHTML = "";
   const style = document.createElement("style");
@@ -631,7 +631,7 @@ const importRawModel = () => {
  * in local storage based on user selection.
  */
 const exportDesign = () => {
-  const format = document.getElementById("choose-export-format").value;
+  const format = storedDesigns.settings.exportFormat || "Java";
 
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
@@ -713,12 +713,19 @@ const showProjectSettings = event => {
 
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
+  el.shadowRoot.querySelector("#choose-export-format").value =
+    settings.exportFormat || "Java";
+
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
   el.shadowRoot.querySelector("#settings-save").onclick = () => {
     const packageName = el.shadowRoot.querySelector("#target-folder").value;
+    const exportFormat = el.shadowRoot.querySelector("#choose-export-format")
+      .value;
     settings.packageName = packageName;
+    settings.exportFormat = exportFormat;
+    2;
     storedDesigns.settings = settings;
     storeProject();
     showCurrentDesign();
