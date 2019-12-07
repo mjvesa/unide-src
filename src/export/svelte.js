@@ -55,7 +55,7 @@ export let modelToSvelte = (tagName, code) => {
     switch (trimmed) {
       case "(":
         if (!currentClosed) {
-          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
+          result = result.concat(`>${hasTextContent ? textContent : ""}`);
           currentClosed = true;
         }
         let old = current;
@@ -75,7 +75,7 @@ export let modelToSvelte = (tagName, code) => {
         break;
       case ")":
         if (!currentClosed) {
-          result = result.concat(`>${hasTextContent ? textContent : ""}\n`);
+          result = result.concat(`>${hasTextContent ? textContent : ""}`);
           currentClosed = true;
         }
         current = tree.pop();

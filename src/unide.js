@@ -1,6 +1,7 @@
 // Visual designer for pure Java and Vaadin
 import CodeMirror from "codemirror";
 import "codemirror/mode/css/css.js";
+import "codemirror/mode/xml/xml.js";
 import "codemirror/addon/hint/show-hint.js";
 import "codemirror/addon/hint/css-hint.js";
 import "codemirror/lib/codemirror.css";
@@ -37,6 +38,7 @@ import * as Model from "./model";
 import { cssPropertyTypes } from "./css-proprety-types";
 import { cssProperties } from "./css-properties.js";
 import { enterSketchMode } from "./sketch-mode";
+import { ATIRToXML, XMLToATIR } from "./xml";
 
 const $ = document.querySelector.bind(document);
 
@@ -59,9 +61,11 @@ let designStack = [];
 let redoStack = [];
 
 let textEditor;
+let htmlEditor;
+let currentMode = "Visual";
 
 const getPaperElement = () => {
-  const el = document.getElementById("paper");
+  const el = document.getElementById("visual-editor");
   return el;
 };
 
@@ -611,7 +615,6 @@ const loadSelectedDesign = () => {
 
 /**
  * Imports a raw model, that is a plain JSON representation of what is in local storage.
- * @param {*} event
  */
 const importRawModel = () => {
   const upload = document.getElementById("import-file-input");
@@ -705,7 +708,7 @@ const shareDesigns = () => {
 };
 
 const showProjectSettings = event => {
-  const el = $("#paper");
+  const el = $("#visual-editor");
   const settings = storedDesigns.settings || {};
   const node = document.importNode($("#settings-template").content, true);
   el.shadowRoot.innerHTML = "";
@@ -730,6 +733,38 @@ const showProjectSettings = event => {
     storeProject();
     showCurrentDesign();
   };
+};
+
+const toggleXMLMode = () => {
+  const editorEl = $("#xml-editor");
+  if (currentMode !== "XML") {
+    currentMode = "XML";
+    editorEl.style.display = "block";
+    editorEl.innerHTML = "";
+    // eslint-disable-next-line no-undef
+    const ta = document.createElement("text-area");
+
+    editorEl.appendChild(ta);
+    htmlEditor = CodeMirror(ta, {
+      mode: "text/xml",
+      theme: "tomorrow-night-eighties",
+      extraKeys: { "Ctrl-Space": "autocomplete" },
+      lineNumbers: true
+    });
+    htmlEditor.getDoc().setValue(ATIRToXML(currentDesign.tree));
+    htmlEditor.on("change", () => {
+      window.requestAnimationFrame(() => {
+        const newDesign = {
+          css: currentDesign.css,
+          tree: XMLToATIR(htmlEditor.getDoc().getValue())
+        };
+        showNewDesign(newDesign);
+      });
+    });
+  } else {
+    currentMode = "Visual";
+    editorEl.style.display = "none";
+  }
 };
 
 /**
@@ -759,6 +794,7 @@ const installUIEventHandlers = () => {
   $("#new-design").onclick = newDesign;
   $("#share-designs").onclick = shareDesigns;
   $("#project-settings").onclick = showProjectSettings;
+  $("#html-mode").onclick = toggleXMLMode;
 
   $("#css-rule-filter").oninput = () => {
     setupCssRules($("#css-rule-filter").value);
