@@ -1,6 +1,6 @@
 {
   "name": "unide",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Visual designer for Vaadin 14+ views in pure Java",
   "repository": "https://github.com/mjvesa/unide-src",
   "main": "public/index.js",

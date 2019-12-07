@@ -243,7 +243,9 @@ const selectElement = e => {
   const designId = target.getAttribute("data-design-id");
   if (designId) {
     placeSelectMarker(
-      $("#paper").shadowRoot.querySelector(`[data-design-id="${designId}"]`),
+      $("#visual-editor").shadowRoot.querySelector(
+        `[data-design-id="${designId}"]`
+      ),
       document.getElementById("select-marker-paper")
     );
     placeSelectMarker(
