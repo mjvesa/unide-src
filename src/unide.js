@@ -21,6 +21,7 @@ import {
   kebabToPascalCase,
   packageToFolder
 } from "./export/java";
+import { exportToVaadinTypescript } from "./export/vaadin_typescript";
 import { exportToRaw } from "./export/raw";
 import { exportToAngular } from "./export/angular";
 import { exportToLitElement } from "./export/lit";
@@ -654,8 +655,10 @@ const exportDesign = () => {
     exportToVanilla(storedDesigns);
   } else if (format === "Vue") {
     exportToVue(storedDesigns);
-  } else if (format === "Java") {
+  } else if (format === "Vaadin Java") {
     exportToJava(storedDesigns);
+  } else if (format === "Vaadin TypeScript") {
+    exportToVaadinTypescript(storedDesigns);
   } else {
     window.alert(`Export to ${format} is not implemented yet, sorry.`);
   }
