@@ -54,8 +54,15 @@ function activate(context) {
       context.subscriptions
     );
 
-    workspacePath = vscode.workspace.workspaceFolders[0].uri.path;
-
+    const folders = vscode.workspace.workspaceFolders;
+    for (let folder of folders) {
+      if (
+        fs.existsSync(folder.uri.path + "/src/main/resources/unide_state.json")
+      ) {
+        workspacePath = folder.uri.path;
+        break;
+      }
+    }
     let state = '{"designs": {} }';
     const statePath = workspacePath + "/src/main/resources/unide_state.json";
     vscode.workspace.openTextDocument(statePath).then(textFile => {
