@@ -1,9 +1,10 @@
 {
   "name": "unide",
   "version": "0.2.1",
-  "description": "Visual designer for Vaadin 14+ views in pure Java",
+  "description": "Universal visual designer for Vaadin and Vaadin Components",
   "repository": "https://github.com/mjvesa/unide-src",
-  "main": "public/index.js",
+  "publisher": "mjvesa",
+  "main": "public/extension.js",
   "bin": "./cli.js",
   "scripts": {
     "build": "rollup -c",
@@ -14,6 +15,20 @@
   },
   "author": "Matti Vesa",
   "license": "MIT",
+  "engines": {
+    "vscode": "^1.32.0"
+  },
+  "activationEvents": [
+    "onCommand:extension.unide"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "extension.unide",
+        "title": "Unide"
+      }
+    ]
+  },
   "dependencies": {
     "@vaadin/vaadin-core": "^14.0.3",
     "@vaadin/vaadin-grid": "^5.4.8",
@@ -36,6 +51,7 @@
     "rollup-plugin-node-builtins": "^2.1.2",
     "rollup-plugin-node-resolve": "^5.1.0",
     "rollup-plugin-terser": "^5.0.0",
-    "serve": "^11.0.2"
+    "serve": "^11.0.2",
+    "@types/vscode": "^1.32.0"
   }
 }

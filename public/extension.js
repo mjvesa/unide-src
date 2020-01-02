@@ -1,4 +1,75 @@
-<!DOCTYPE html>
+const vscode = require("vscode");
+const path = require("path");
+const fs = require("fs");
+
+let workspacePath = "";
+
+/**
+ * @param {vscode.ExtensionContext} context
+ */
+function activate(context) {
+  let disposable = vscode.commands.registerCommand("extension.unide", () => {
+    const panel = vscode.window.createWebviewPanel(
+      "unideView",
+      "Unide",
+      vscode.ViewColumn.One,
+      {
+        enableScripts: true
+      }
+    );
+
+    const onDiskPath = vscode.Uri.file(
+      path.join(context.extensionPath, "public")
+    );
+
+    const folder = panel.webview.asWebviewUri(onDiskPath);
+
+    panel.webview.onDidReceiveMessage(
+      message => {
+        switch (message.command) {
+          case "saveFile":
+            const fileName = workspacePath + "/" + message.fileName;
+            const content = message.content;
+            const directory = fileName.substring(0, fileName.lastIndexOf("/"));
+            if (!fs.existsSync(directory)) {
+              fs.mkdirSync(directory, { recursive: true });
+            }
+            fs.writeFileSync(fileName, content);
+            return;
+          case "saveState":
+            const state = message.state;
+            if (!fs.existsSync(workspacePath + "/" + "./src/main/resources")) {
+              fs.mkdirSyncworkspacePath +
+                "/" +
+                ("./src/main/resources", { recursive: true });
+            }
+            fs.writeFileSync(
+              workspacePath + "/" + "./src/main/resources/unide_state.json",
+              state
+            );
+            return;
+        }
+      },
+      undefined,
+      context.subscriptions
+    );
+
+    workspacePath = vscode.workspace.workspaceFolders[0].uri.path;
+
+    let state = '{"designs": {} }';
+    const statePath = workspacePath + "/src/main/resources/unide_state.json";
+    vscode.workspace.openTextDocument(statePath).then(textFile => {
+      const state = textFile.getText();
+      panel.webview.html = getHTML(folder, state);
+    });
+  });
+
+  context.subscriptions.push(disposable);
+}
+
+const getHTML = (folder, state) => {
+  return `
+	<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7,7 +78,7 @@
   <title>Unide</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/png" href="images/unide.png" sizes="256x256">
-  <link rel="stylesheet" href="./bundle.css">
+  <link rel="stylesheet" href="${folder}/bundle.css">
   
   <style>
   html {
@@ -19,7 +90,7 @@
     width: 100vw;
     height: 100vh;
     margin: 0px;
-    background-color: #223;
+    background-color: #222;
     color: white;
     overflow: hidden;
   }
@@ -101,7 +172,7 @@
     height: 100%;
     border: none;
     width: 15vw;
-    background-color: #223;
+    background-color: #222;
     color: white;
     border-top: 1px solid gray;
     overflow: auto;
@@ -300,13 +371,37 @@
     </div>
   </div>
   <script>
-      window.Unide = {};
-      window.Unide.inWeb = true;
-  </script>
-  <script src="lib/jszip.min.js"></script>
-  <script src="lib/jszip-utils.min.js"></script>
+    const vscode = acquireVsCodeApi();
+    window.Unide = {};
+    window.Unide.inVSCode = true;
+    window.Unide.state = "${Buffer.from(state).toString("base64")}";
 
-  <script src="./bundle.js"></script>
+    window.Unide.saveFile = (fileName, content) => {
+      vscode.postMessage({command:"saveFile", fileName: fileName, content: content});
+    };
+    
+    
+    window.Unide.saveState = state => {
+      vscode.postMessage({command: "saveState", state:state});
+    };
+    
+  </script>
+  <script src="${folder}/lib/jszip.min.js"></script>
+  <script src="${folder}/lib/jszip-utils.min.js"></script>
+
+  <script src="${folder}/bundle.js"></script>
+
 
   </body>
 </html>
+	
+  `;
+};
+
+// this method is called when your extension is deactivated
+function deactivate() {}
+
+module.exports = {
+  activate,
+  deactivate
+};

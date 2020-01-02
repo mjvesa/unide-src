@@ -41,6 +41,7 @@ import { cssProperties } from "./css-properties.js";
 import { enterSketchMode } from "./sketch-mode";
 import { ATIRToXML, XMLToATIR } from "./xml";
 
+// Global variables
 const $ = document.querySelector.bind(document);
 
 const initialDesign = `div
@@ -104,7 +105,6 @@ const showNewDesign = newDesign => {
 const startDragFromModel = (elementId, event) => {
   previousBegin = elementId - 1;
   previousEnd = Model.findDanglingParen(currentDesign.tree, elementId + 1);
-  //event.dataTransfer.setData("text", JSON.stringify(elementTree));
   event.stopPropagation();
 };
 
@@ -505,14 +505,11 @@ const createPaletteSection = (name, tags, palette) => {
  * in the palette.
  */
 const getStoredDesignsForPalette = () => {
-  const project = JSON.parse(
-    window.localStorage.getItem("unide.project") || "{settings: {}, designs:{}}"
-  );
   const parsedDesigns = [];
-  const keys = Object.keys(project.designs);
+  const keys = Object.keys(storedDesigns.designs);
   keys.forEach(key => {
     parsedDesigns.push([key, [key, "(", ")"]]);
-    parsedDesigns.push(["expanded " + key, project.designs[key].tree]);
+    parsedDesigns.push(["expanded " + key, storedDesigns.designs[key].tree]);
   });
   return parsedDesigns;
 };
@@ -561,12 +558,14 @@ const populateDesignSelectors = () => {
 
 const storeProject = () => {
   const storedDesignsString = JSON.stringify(storedDesigns);
-  localStorage.setItem("unide.project", storedDesignsString);
-  populateDesignSelectors();
 
-  if (window.Unide && window.Unide.inElectron) {
+  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     window.Unide.saveState(storedDesignsString);
+  } else {
+    localStorage.setItem("unide.project", storedDesignsString);
   }
+
+  populateDesignSelectors();
 };
 
 /**
@@ -578,7 +577,7 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   storeProject();
-  if (window.Unide && window.Unide.inElectron) {
+  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(
       javaName,
@@ -954,6 +953,8 @@ const getStoredDesigns = () => {
     storedDesigns = JSON.parse(atob(shared));
   } else if (window.Unide && window.Unide.inElectron) {
     storedDesigns = JSON.parse(window.Unide.loadState());
+  } else if (window.Unide && window.Unide.inVSCode) {
+    storedDesigns = JSON.parse(atob(window.Unide.state));
   } else {
     const designsStr =
       localStorage.getItem("unide.project") || '{"designs": {}}';
@@ -1014,7 +1015,7 @@ const initializePaper = () => {
 };
 
 const initDesigner = () => {
-  setDemoDesigns();
+  //setDemoDesigns();
   getStoredDesigns();
   setupTextEditor();
   setupCssRules();
