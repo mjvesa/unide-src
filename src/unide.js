@@ -784,6 +784,7 @@ const installUIEventHandlers = () => {
   const marker = $("#marker");
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
+  document.body.ondragend = hideMarkers;
   const attributes = $("#attributes");
   attributes.oninput = updateAttributes;
   $("#target-route").onchange = updateAttributes;
@@ -963,7 +964,11 @@ const getStoredDesigns = () => {
 };
 
 const setDemoDesigns = () => {
-  if (!localStorage.getItem("unide.project")) {
+  if (
+    window.Unide &&
+    window.Unide.inWeb &&
+    !localStorage.getItem("unide.project")
+  ) {
     localStorage.setItem("unide.project", JSON.stringify(demoDesigns));
   }
 };
@@ -1015,7 +1020,7 @@ const initializePaper = () => {
 };
 
 const initDesigner = () => {
-  //setDemoDesigns();
+  setDemoDesigns();
   getStoredDesigns();
   setupTextEditor();
   setupCssRules();
