@@ -57,7 +57,13 @@ const generateAuxClass = (pascalCaseName, packageName) => {
   }`;
 };
 
+const classForTag = tag => {
+  return flowImports[tag] ? flowImports[tag].name : kebabToPascalCase(tag);
+};
+
 export const modelToJava = (pascalCaseName, tag, packageName, code) => {
+  const singleIndent = "    ";
+  const doubleIndent = singleIndent + singleIndent;
   const importedTags = new Set();
   let internalClasses = "";
   const stack = [];
@@ -65,11 +71,13 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
   const variableStack = [];
   const varNames = {};
   let fields = "";
+
   let variableCount = 0;
 
   let current = document.createElement("div");
   let currentTag = "";
   let currentVar = "this";
+  let currentVarDefinition = "";
 
   importedTags.add("div");
 
@@ -79,9 +87,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
     switch (trimmed) {
       case "(": {
         currentTag = stack.pop();
-        const elementClass = flowImports[currentTag]
-          ? flowImports[currentTag].name
-          : kebabToPascalCase(currentTag);
+        const elementClass = classForTag(currentTag);
 
         //Create an element in the DOM
         const old = current;
@@ -89,7 +95,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
         current = document.createElement(currentTag);
         old.appendChild(current);
 
-        const varName = kebabToCamelCase(elementClass);
+        const varName = "_" + kebabToCamelCase(elementClass);
         let varCount = varNames[varName] || 0;
         varCount++;
         varNames[varName] = varCount;
@@ -97,13 +103,15 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
         variableCount++;
 
         if (currentTag === "unide-grid") {
-          fields += `protected ${elementClass}<${pascalCaseName}GridType> ${newVar};\n`;
-          result += `${newVar} = new ${elementClass}<>();
-          ${currentVar}.add(${newVar});\n`;
+          currentVarDefinition = `${elementClass}<${pascalCaseName}GridType> ${newVar}`;
+          result +=
+            `${doubleIndent}${currentVarDefinition} = new ${elementClass}<>();\n` +
+            `${doubleIndent}${currentVar}.add(${newVar});\n`;
         } else {
-          fields += `protected ${elementClass} ${newVar};\n`;
-          result += `${newVar} = new ${elementClass}();
-          ${currentVar}.add(${newVar});\n`;
+          currentVarDefinition = `${elementClass} ${newVar}`;
+          result +=
+            `${doubleIndent}${currentVarDefinition} = new ${elementClass}();\n` +
+            `${doubleIndent}${currentVar}.add(${newVar});\n`;
         }
         variableStack.push(currentVar);
         currentVar = newVar;
@@ -127,19 +135,22 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
         if (currentTag === "unide-grid") {
           if (nos === "items") {
             const obj = JSON.parse(tos);
-            let gridItems = ` ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();
-                              ${pascalCaseName}GridType item;\n`;
+            let gridItems =
+              `${doubleIndent}ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();\n` +
+              `${doubleIndent}${pascalCaseName}GridType item;\n`;
             obj.forEach(values => {
-              let item = `item = new ${pascalCaseName}GridType();\n`;
+              let item = `${doubleIndent}item = new ${pascalCaseName}GridType();\n`;
               Object.keys(values).forEach(key => {
-                item = item.concat(`item.set${key}("${values[key]}");`);
+                item = item.concat(
+                  `${doubleIndent}item.set${key}("${values[key]}");\n`
+                );
               });
-              item = item.concat(`items.add(item);`);
+              item = item.concat(`${doubleIndent}items.add(item);\n`);
               gridItems = gridItems.concat(item);
             });
             result = result
               .concat(gridItems)
-              .concat(`${currentVar}.setItems(items);\n`);
+              .concat(`${doubleIndent}${currentVar}.setItems(items);\n`);
             return;
           } else if (nos === "columnCaptions") {
             const obj = JSON.parse(tos);
@@ -148,7 +159,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
             let creation = "";
             obj.forEach(pair => {
               creation = creation.concat(
-                `${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
+                `${doubleIndent}${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
               );
               fields = fields.concat(`private String ${pair.path};\n`);
               methods = methods.concat(`public String get${pair.path}() {
@@ -162,7 +173,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
 
             internalClasses =
               internalClasses +
-              `public static class ${pascalCaseName}GridType {
+              `${singleIndent}public static class ${pascalCaseName}GridType {
               ${fields}
               ${methods}
             }`;
@@ -173,22 +184,33 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
 
         if (nos === "targetRoute") {
           result = result.concat(
-            `${currentVar}.getElement().addEventListener("click", e-> {
-              ${currentVar}.getUI().ifPresent(ui -> ui.navigate("${kebabToPascalCase(
-              tos
-            )}"));
-       });`
+            `${doubleIndent}${currentVar}.getElement().addEventListener("click", e-> {\n` +
+              `${doubleIndent}${singleIndent}${currentVar}.getUI().ifPresent(ui -> ui.navigate("${kebabToPascalCase(
+                tos
+              )}"))\n;` +
+              `${doubleIndent}});`
           );
+        } else if (nos === "fieldName") {
+          const fieldName = tos;
+          result = result.replace(currentVarDefinition, fieldName);
+          const re = new RegExp(currentVar, "g");
+          result = result.replace(re, fieldName);
+          fields =
+            fields +
+            `${singleIndent}${
+              currentVarDefinition.split(" ")[0]
+            } ${fieldName};\n`;
+          currentVar = fieldName;
         } else if (nos in current) {
           try {
             JSON.parse(tos);
             if (nos === "textContent") {
               result = result.concat(
-                `${currentVar}.getElement().setText("${tos}");\n`
+                `        ${currentVar}.getElement().setText("${tos}");\n`
               );
             } else {
               result = result.concat(
-                `${currentVar}.getElement().setProperty("${nos}","${tos.replace(
+                `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos.replace(
                   /"/g,
                   "'"
                 )}");\n`
@@ -197,20 +219,20 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
           } catch (e) {
             if (nos === "textContent") {
               result = result.concat(
-                `${currentVar}.getElement().setText("${tos.replace(
+                `${doubleIndent}${currentVar}.getElement().setText("${tos.replace(
                   /"/g,
                   '\\"'
                 )}");\n`
               );
             } else {
               result = result.concat(
-                `${currentVar}.getElement().setProperty("${nos}","${tos}");\n`
+                `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos}");\n`
               );
             }
           }
         } else {
           result = result.concat(
-            `${currentVar}.getElement().setAttribute("${nos}","${tos}");\n`
+            `${doubleIndent}${currentVar}.getElement().setAttribute("${nos}","${tos}");\n`
           );
         }
         break;
@@ -235,9 +257,9 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
   @Route("${pascalCaseName}")
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
-    ${fields}
-    ${internalClasses}
-    public ${pascalCaseName}() {
+      ${fields}
+      ${internalClasses}
+      public ${pascalCaseName}() {
           ${result}
           new ${pascalCaseName}Aux(this);
       }
@@ -280,7 +302,7 @@ const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <failOnMissingWebXml>false</failOnMissingWebXml>
         
-        <vaadin.version>14.0.7</vaadin.version>
+        <vaadin.version>14.1.3</vaadin.version>
     </properties>
 
     <repositories>
