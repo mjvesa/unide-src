@@ -372,9 +372,17 @@ const modelToDOM = (code, target, inert = false) => {
         const old = current;
         tree.push(current);
         const tag = stack.pop();
+        // Nested designs, attach shadow root, append style and content
         if (tag in storedDesigns.designs) {
+          console.log("creating shadow root for nested");
           current = document.createElement("div");
-          modelToDOM(storedDesigns[tag], current, true);
+          const root = document.createElement("div");
+          current.attachShadow({ mode: "open" });
+          current.shadowRoot.appendChild(root);
+          const style = document.createElement("style");
+          style.textContent = storedDesigns.designs[tag].css;
+          current.shadowRoot.appendChild(style);
+          modelToDOM(storedDesigns.designs[tag].tree, root, true);
         } else {
           current = document.createElement(tag);
         }
