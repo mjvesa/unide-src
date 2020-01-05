@@ -1,3 +1,5 @@
+import { brute } from "./brute";
+
 let $;
 
 const ipsumLorem = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum".split(
@@ -236,8 +238,8 @@ const heuristics = [
   [isTextField, "vaadin-text-field"],
   [isGrid, "unide-grid"],
   [isSplitLayout, "vaadin-split-layout"],
-  [isVerticalLayout, "vaadin-vertical-layout"],
-  [isHorizontalLayout, "vaadin-horizontal-layout"]
+  [isVerticalLayout, "div"],
+  [isHorizontalLayout, "div"]
   // [isGridLayout, "grid-layout"]
 ];
 
@@ -310,6 +312,10 @@ const createAndAppendChildElements = rects => {
     const tagName = getTagForRect(rect);
     tree.push(tagName);
     tree.push("(");
+    if (rect.css_props) {
+      styles = rect.css_props;
+    }
+
     if (
       tagName !== "grid-layout" &&
       tagName !== "vaadin-vertical-layout" &&
@@ -416,6 +422,23 @@ const createAndAppendChildElements = rects => {
       } else {
         setAttribute("textContent", rect.text.replace("#", ""));
       }
+    }
+
+    if (rect.children) {
+      if (isVerticalLayout(rect)) {
+        rect.children.sort((rectA, rectB) => {
+          return rectA.top - rectB.top;
+        });
+      } else {
+        rect.children.sort((rectA, rectB) => {
+          return rectA.left - rectB.left;
+        });
+      }
+    }
+
+    // Use brute to determine flexbox properties for div
+    if (tagName === "div" && rect.children) {
+      styles = styles + brute(rect.children, rect);
     }
 
     if (styles.length > 0) {
