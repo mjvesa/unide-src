@@ -978,7 +978,7 @@ const getStoredDesigns = () => {
 };
 
 const inWeb = () => {
-  return window.Unide || !(window.Unide.inVSCode || window.Unide.inElectron);
+  return !window.Unide || !(window.Unide.inVSCode || window.Unide.inElectron);
 };
 
 const setDemoDesigns = () => {
