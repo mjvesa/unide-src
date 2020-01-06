@@ -3,6 +3,7 @@
   "version": "0.3.0",
   "description": "Universal visual designer for Vaadin and Vaadin Components",
   "repository": "https://github.com/mjvesa/unide-src",
+  "icon": "public/images/unide_tiny.png",
   "publisher": "mjvesa",
   "main": "public/extension.js",
   "bin": "./cli.js",
@@ -14,6 +15,9 @@
     "test": "jest"
   },
   "author": "Matti Vesa",
+  "categories": [
+    "Other"
+  ],
   "license": "MIT",
   "engines": {
     "vscode": "^1.32.0"

@@ -585,7 +585,13 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   storeProject();
-  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
+  const format = storedDesigns.settings.exportFormat || "Java";
+
+  if (
+    window.Unide &&
+    (window.Unide.inElectron || window.Unide.inVSCode) &&
+    format == "Java"
+  ) {
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(
       javaName,
@@ -971,12 +977,12 @@ const getStoredDesigns = () => {
   }
 };
 
+const inWeb = () => {
+  return window.Unide || !(window.Unide.inVSCode || window.Unide.inElectron);
+};
+
 const setDemoDesigns = () => {
-  if (
-    window.Unide &&
-    window.Unide.inWeb &&
-    !localStorage.getItem("unide.project")
-  ) {
+  if (inWeb() && !localStorage.getItem("unide.project")) {
     localStorage.setItem("unide.project", JSON.stringify(demoDesigns));
   }
 };
