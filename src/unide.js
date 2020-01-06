@@ -585,12 +585,11 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   storeProject();
-  const format = storedDesigns.settings.exportFormat || "Java";
-
+  const format = storedDesigns.settings.exportFormat || "Vaadin Java";
   if (
     window.Unide &&
     (window.Unide.inElectron || window.Unide.inVSCode) &&
-    format == "Java"
+    format === "Vaadin Java"
   ) {
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(
@@ -650,7 +649,7 @@ const importRawModel = () => {
  * in local storage based on user selection.
  */
 const exportDesign = () => {
-  const format = storedDesigns.settings.exportFormat || "Java";
+  const format = storedDesigns.settings.exportFormat || "Vaadin Java";
 
   if (format === "LitElement") {
     exportToLitElement(storedDesigns);
@@ -735,7 +734,7 @@ const showProjectSettings = event => {
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
   el.shadowRoot.querySelector("#choose-export-format").value =
-    settings.exportFormat || "Java";
+    settings.exportFormat || "Vaadin Java";
 
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
