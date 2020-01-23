@@ -67,7 +67,8 @@ let htmlEditor;
 let currentMode = "Visual";
 
 const getPaperElement = () => {
-  const el = document.getElementById("visual-editor");
+  const el = document.getElementById("visual-editor-frame").contentDocument
+    .body;
   return el;
 };
 
@@ -147,16 +148,22 @@ const hideMarkers = () => {
   $("#marker").style.display = "none";
 };
 
+const getIFrameCoordinates = () => {
+  const bcr = $("#visual-editor-frame").getBoundingClientRect();
+  return [bcr.top, bcr.left];
+};
+
 const placeMarker = e => {
   const marker = document.getElementById("marker");
   marker.style.display = "none";
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target ? target.getAttribute("data-design-id") : null;
   if (target && designId) {
+    const [iframeTop, iframeLeft] = getIFrameCoordinates();
     const bcr = target.getBoundingClientRect();
     marker.style.display = "block";
-    marker.style.top = bcr.top + "px";
-    marker.style.left = bcr.left + "px";
+    marker.style.top = iframeTop + bcr.top + "px";
+    marker.style.left = iframeLeft + bcr.left + "px";
     marker.style.width = bcr.width + "px";
     marker.style.height = bcr.height + "px";
     const position = getPositionOnTarget(target, e.clientX, e.clientY);
@@ -224,11 +231,11 @@ const dropElement = e => {
   e.preventDefault();
 };
 
-const placeSelectMarker = (target, marker) => {
+const placeSelectMarker = (target, marker, parentTop = 0, parentLeft = 0) => {
   const bcr = target.getBoundingClientRect();
   marker.style.display = "block";
-  marker.style.top = bcr.top + "px";
-  marker.style.left = bcr.left + "px";
+  marker.style.top = parentTop + bcr.top + "px";
+  marker.style.left = parentLeft + bcr.left + "px";
   marker.style.width = bcr.width + "px";
   marker.style.height = bcr.height + "px";
 };
@@ -243,11 +250,15 @@ const selectElement = e => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
   if (designId) {
+    const [iframeTop, iframeLeft] = getIFrameCoordinates();
+
     placeSelectMarker(
-      $("#visual-editor").shadowRoot.querySelector(
+      getPaperElement().shadowRoot.querySelector(
         `[data-design-id="${designId}"]`
       ),
-      document.getElementById("select-marker-paper")
+      document.getElementById("select-marker-paper"),
+      iframeTop,
+      iframeLeft
     );
     placeSelectMarker(
       $(`#outline [data-design-id="${designId}"]`),
@@ -798,6 +809,7 @@ const installUIEventHandlers = () => {
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
   document.body.ondragend = hideMarkers;
+  getPaperElement().ondragend = hideMarkers;
   const attributes = $("#attributes");
   attributes.oninput = updateAttributes;
   $("#target-route").onchange = updateAttributes;
