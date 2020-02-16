@@ -7,12 +7,6 @@ import "codemirror/addon/hint/css-hint.js";
 import "codemirror/lib/codemirror.css";
 import "codemirror/theme/tomorrow-night-eighties.css";
 
-import "@vaadin/vaadin-lumo-styles/color.js";
-import "@vaadin/vaadin-lumo-styles/sizing.js";
-import "@vaadin/vaadin-lumo-styles/spacing.js";
-import "@vaadin/vaadin-lumo-styles/style.js";
-import "@vaadin/vaadin-lumo-styles/typography.js";
-
 import "file-saver/dist/FileSaver.js";
 
 import {
@@ -67,9 +61,20 @@ let htmlEditor;
 let currentMode = "Visual";
 
 const getPaperElement = () => {
+  /*
   const el = document.getElementById("visual-editor-frame").contentDocument
     .body;
-  return el;
+  return el;*/
+
+  return document
+    .getElementById("visual-editor-frame")
+    .contentWindow.UnideCP.getPaperElement();
+};
+
+const getDocument = () => {
+  return document
+    .getElementById("visual-editor-frame")
+    .contentWindow.UnideCP.getDocument();
 };
 
 const getOutlineElement = () => {
@@ -80,12 +85,12 @@ const showCurrentDesign = () => {
   checkModel(currentDesign.tree);
   hideMarkers();
   const paper = getPaperElement();
-  paper.shadowRoot.innerHTML = "";
-  const style = document.createElement("style");
-  style.textContent = currentDesign.css; //textEditor.getValue();
+  //paper.shadowRoot.innerHTML = "";
+  // const style = document.createElement("style");
+  //style.textContent = currentDesign.css; //textEditor.getValue();
   textEditor.getDoc().setValue(currentDesign.css);
-  paper.shadowRoot.appendChild(style);
-  modelToDOM(currentDesign.tree, paper.shadowRoot);
+  //paper.shadowRoot.appendChild(style);
+  modelToDOM(currentDesign.tree, paper);
   const outline = getOutlineElement();
   outline.innerHTML = "";
   modelToOutline(currentDesign.tree, outline);
@@ -136,13 +141,20 @@ const getPositionOnTarget = (el, clientX, clientY) => {
   }
 };
 
+const iframeAtPosition = (x, y) => {
+  return getDocument().elementFromPoint(x, y) ? true : false;
+};
+
 const getElementAt = (x, y) => {
-  let el = getPaperElement().shadowRoot.elementFromPoint(x, y);
-  el = el ? el : document.elementFromPoint(x, y);
+  let el = getDocument().elementFromPoint(x, y);
+  if (!el) {
+    el = document.elementFromPoint(x, y);
+  }
   return el;
 };
 
-const hideMarkers = () => {
+const hideMarkers = e => {
+  console.trace("hiding markers " + (e ? e.target : ""));
   $("#select-marker-outline").style.display = "none";
   $("#select-marker-paper").style.display = "none";
   $("#marker").style.display = "none";
@@ -153,17 +165,38 @@ const getIFrameCoordinates = () => {
   return [bcr.top, bcr.left];
 };
 
+const findDesignId = el => {
+  const paper = getPaperElement();
+  console.log("Came with " + el);
+  while (el && el !== paper) {
+    if (el.hasAttribute("data-design-id")) {
+      break;
+    }
+    console.log("Current " + el + " class " + el.className);
+    el = el.parentElement;
+  }
+  console.log("found id " + el.getAttribute("data-design-id"));
+  return el;
+};
+
 const placeMarker = e => {
+  //console.log(" place marker " + e.target);
   const marker = document.getElementById("marker");
   marker.style.display = "none";
-  const target = getElementAt(e.clientX, e.clientY);
+  const target = findDesignId(getElementAt(e.clientX, e.clientY));
   const designId = target ? target.getAttribute("data-design-id") : null;
   if (target && designId) {
-    const [iframeTop, iframeLeft] = getIFrameCoordinates();
     const bcr = target.getBoundingClientRect();
+
+    if (iframeAtPosition(e.clientX, e.clientY)) {
+      const [iframeTop, iframeLeft] = getIFrameCoordinates();
+      marker.style.top = iframeTop + bcr.top + "px";
+      marker.style.left = iframeLeft + bcr.left + "px";
+    } else {
+      marker.style.top = bcr.top + "px";
+      marker.style.left = bcr.left + "px";
+    }
     marker.style.display = "block";
-    marker.style.top = iframeTop + bcr.top + "px";
-    marker.style.left = iframeLeft + bcr.left + "px";
     marker.style.width = bcr.width + "px";
     marker.style.height = bcr.height + "px";
     const position = getPositionOnTarget(target, e.clientX, e.clientY);
@@ -195,6 +228,7 @@ const insertingNewSubtree = () => {
 
 const dropElement = e => {
   hideMarkers();
+  console.log("Droppped");
   // Find position of target
   const target = getElementAt(e.clientX, e.clientY);
   const index = Number(target.getAttribute("data-design-id"));
@@ -253,9 +287,7 @@ const selectElement = e => {
     const [iframeTop, iframeLeft] = getIFrameCoordinates();
 
     placeSelectMarker(
-      getPaperElement().shadowRoot.querySelector(
-        `[data-design-id="${designId}"]`
-      ),
+      getPaperElement().querySelector(`[data-design-id="${designId}"]`),
       document.getElementById("select-marker-paper"),
       iframeTop,
       iframeLeft
@@ -356,7 +388,7 @@ const navigateTo = event => {
 const insertCssRule = el => {
   let selector = "";
   let current = el;
-  const shadowParent = getPaperElement().shadowRoot;
+  const shadowParent = getPaperElement();
   while (current && current != shadowParent) {
     if (current.className != "") {
       selector = `.${current.className} ${selector}`;
@@ -372,6 +404,29 @@ const insertCssRule = el => {
 };
 
 const modelToDOM = (code, target, inert = false) => {
+  return document
+    .getElementById("visual-editor-frame")
+    .contentWindow.UnideCP.modelToDOM(
+      code,
+      target,
+      inert,
+      storedDesigns.designs,
+      {
+        contextMenu: event => {
+          insertCssRule(event.target);
+          event.stopPropagation();
+          event.preventDefault();
+        },
+
+        startDragFromModel: (index, event) => {
+          startDragFromModel(index, event);
+        },
+        doubleClick: event => {
+          navigateTo(event);
+        }
+      }
+    );
+  /*
   const stack = [];
   const tree = [];
   let current = target;
@@ -442,7 +497,7 @@ const modelToDOM = (code, target, inert = false) => {
       }
     }
   });
-  return current;
+  return current;*/
 };
 
 const modelToOutline = (code, target, inert = false) => {
@@ -505,8 +560,8 @@ const createPaletteSection = (name, tags, palette) => {
         const preview = document.getElementById("element-preview");
         preview.style.top = event.clientY + "px";
         preview.style.left = event.clientX + 200 + "px";
-        preview.innerHTML = "";
-        modelToDOM(snippet, preview);
+        //preview.innerHTML = "";
+        //modelToDOM(snippet, preview);
         preview.style.display = "block";
       };
       el.onmouseout = () => {
@@ -777,6 +832,7 @@ const toggleXMLMode = () => {
       mode: "text/xml",
       theme: "tomorrow-night-eighties",
       extraKeys: { "Ctrl-Space": "autocomplete" },
+      scrollbarStyle: "native",
       lineNumbers: true
     });
     htmlEditor.getDoc().setValue(ATIRToXML(currentDesign.tree));
@@ -795,20 +851,37 @@ const toggleXMLMode = () => {
   }
 };
 
+const switchRenderer = event => {
+  const value = $("#renderer").value;
+  const iframe = $("#visual-editor-frame");
+  if (value === "Vaadin components") {
+    iframe.src = "iframe_vc.html";
+  } else {
+    iframe.src = "iframe_mui.html";
+  }
+};
+
 /**
  * Installs handlers for mouse events on various parts of the UI
  */
 const installUIEventHandlers = () => {
   const outline = getOutlineElement();
-  outline.ondragover = placeMarker;
+  //outline.ondragover = placeMarker;
   outline.onclick = selectElement;
   const paper = getPaperElement();
-  paper.ondragover = placeMarker;
+  //paper.ondragover = placeMarker;
   paper.onclick = selectElement;
-  const marker = $("#marker");
-  marker.ondrop = dropElement;
-  marker.ondragover = placeMarker;
+  //const marker = $("#marker");
+  //marker.ondrop = dropElement;
+  //marker.ondragover = placeMarker;
+  document.body.ondrop = dropElement;
   document.body.ondragend = hideMarkers;
+  document.body.ondragover = placeMarker;
+  const iframe = document.getElementById("visual-editor-frame").contentWindow;
+  iframe.ondrop = dropElement;
+  iframe.ondragend = hideMarkers;
+  iframe.ondragover = placeMarker;
+
   getPaperElement().ondragend = hideMarkers;
   const attributes = $("#attributes");
   attributes.oninput = updateAttributes;
@@ -825,13 +898,15 @@ const installUIEventHandlers = () => {
   $("#share-designs").onclick = shareDesigns;
   $("#project-settings").onclick = showProjectSettings;
   $("#html-mode").onclick = toggleXMLMode;
+  $("#renderer").onchange = switchRenderer;
+  $("#visual-editor-frame").onload = showCurrentDesign;
 
   $("#css-rule-filter").oninput = () => {
     setupCssRules($("#css-rule-filter").value);
   };
 
   textEditor.on("change", () => {
-    const el = paper.shadowRoot.querySelector("style");
+    const el = paper.querySelector("style");
     if (el) {
       const css = textEditor.getValue();
       el.textContent = css;
@@ -1040,9 +1115,9 @@ const setupCssRules = filter => {
   });
 };
 
-const initializePaper = () => {
+/*const initializePaper = () => {
   getPaperElement().attachShadow({ mode: "open" });
-};
+};*/
 
 const initDesigner = () => {
   setDemoDesigns();
@@ -1051,7 +1126,7 @@ const initDesigner = () => {
   setupCssRules();
   populatePalette();
   populateDesignSelectors();
-  initializePaper();
+  //initializePaper();
   initializeDesign();
   installUIEventHandlers();
   installKeyboardHandlers();

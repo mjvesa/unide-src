@@ -222,20 +222,20 @@ const isGridLayout = rect => {
 
 const heuristics = [
   [isSpan, "span"],
-  [isButton, "vaadin-button"],
-  [isRadioButton, "vaadin-radio-button"],
-  [isCheckBox, "vaadin-checkbox"],
+  [isButton, "unide-button"],
+  [isRadioButton, "unide-radio-button"],
+  [isCheckBox, "unide-checkbox"],
   [isRadioGroup, "vaadin-radio-group"],
   [isCheckBoxGroup, "vaadin-checkbox-group"],
   [isPasswordField, "vaadin-password-field"],
-  [isSelect, "vaadin-select"],
-  [isComboBox, "vaadin-combo-box"],
+  [isSelect, "unide-select"],
+  [isComboBox, "unide-combo-box"],
   [isDatePicker, "vaadin-date-picker"],
   [isTimePicker, "vaadin-time-picker"],
   [isNumberField, "vaadin-number-field"],
   [isEmailField, "vaadin-email-field"],
-  [isTabs, "vaadin-tabs"],
-  [isTextField, "vaadin-text-field"],
+  [isTabs, "unide-tabs"],
+  [isTextField, "unide-text-field"],
   [isGrid, "unide-grid"],
   [isSplitLayout, "vaadin-split-layout"],
   [isVerticalLayout, "div"],
@@ -317,7 +317,6 @@ const createAndAppendChildElements = rects => {
     }
 
     if (
-      tagName !== "grid-layout" &&
       tagName !== "vaadin-vertical-layout" &&
       tagName !== "vaadin-horizontal-layout"
     ) {
@@ -415,7 +414,7 @@ const createAndAppendChildElements = rects => {
         });
       } else if (rect.text.includes("|")) {
         rect.text.split("|").forEach(str => {
-          children.push("vaadin-tab", "(", "textContent", str, "=", ")");
+          children.push("unide-tab", "(", "textContent", str, "=", ")");
         });
       } else if (rect.text.includes(";")) {
         setAttribute("items", JSON.stringify(rect.text.split(";")));
@@ -480,8 +479,8 @@ export const enterSketchMode = (targetEl, designCallback) => {
   let originX, originY;
   let focusedElement;
 
-  $ = targetEl.shadowRoot.querySelector.bind(targetEl.shadowRoot);
-  targetEl.shadowRoot.innerHTML = `
+  $ = targetEl.querySelector.bind(targetEl);
+  targetEl.innerHTML = `
   <style>
     #sketch-canvas {
         height: 100%;

@@ -132,6 +132,7 @@
     position: absolute;
     border: 1px solid red;
     z-index: 20000;
+    pointer-events: none;
   }
 
   #select-marker-outline, #select-marker-paper {
@@ -165,6 +166,7 @@
   }
   #text-editor {
     height: 50%;
+    overflow: hidden;
   }
   
   #css-rule-filter {
@@ -178,7 +180,7 @@
     overflow: auto;
   }
   .CodeMirror { height: 100%; }
-
+  
   #delete-design {
     background-color: salmon;
   }
@@ -263,6 +265,10 @@
       Load:
       <select id="choose-design"></select>
     </span>
+    <select id="renderer">
+      <option>Vaadin components</option>
+      <option>Material UI</option>
+    </select>
     <button id="export-design">Export</button>
     <span>
       Import:
@@ -283,7 +289,7 @@
     </div>
     <div id="paper">
         <div id="visual-editor">
-          <iframe id="visual-editor-frame" src="iframe.html"></iframe>
+          <iframe id="visual-editor-frame" src="iframe_vc.html"></iframe>
         </div>
         <div id="xml-editor">
           
