@@ -302,7 +302,7 @@ const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <failOnMissingWebXml>false</failOnMissingWebXml>
         
-        <vaadin.version>14.1.3</vaadin.version>
+        <vaadin.version>15.0.2</vaadin.version>
     </properties>
 
     <repositories>

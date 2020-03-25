@@ -16,7 +16,7 @@ export const demoDesigns = {
         "p",
         "(",
         "textContent",
-        "This application is a free visual designer that can be used to create clickable prototypes of web applications and export them as Vaadin, Vaadin TS, Vanilla Javascript and many other kinds of projects.",
+        "This application is a free visual designer that can be used to create clickable prototypes of web applications and export them as Vaadin server side Java, Vaadin TS, Vanilla Javascript and many other kinds of projects.",
         "=",
         ")",
         "p",
