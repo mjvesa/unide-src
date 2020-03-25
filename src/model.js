@@ -29,19 +29,19 @@ export const findDanglingParen = (arr, index) => {
   return i - 1;
 };
 
-export const insertSubtree = (index, position, subtree, tree) => {
-  let spliceIndex;
+const getSpliceIndex = (index, position, tree) => {
   switch (position) {
     case POSITION_CHILD_OF_ELEMENT:
-      spliceIndex = findDanglingParen(tree, index + 1);
-      break;
+      return findDanglingParen(tree, index + 1);
     case POSITION_BEFORE_ELEMENT:
-      spliceIndex = index - 1;
-      break;
+      return index - 1;
     case POSITION_AFTER_ELEMENT:
-      spliceIndex = findDanglingParen(tree, index + 1) + 1;
-      break;
+      return findDanglingParen(tree, index + 1) + 1;
   }
+};
+
+export const insertSubtree = (index, position, subtree, tree) => {
+  let spliceIndex = getSpliceIndex(index, position, tree);
 
   const left = tree.slice(0, spliceIndex);
   const right = tree.slice(spliceIndex);
@@ -54,7 +54,9 @@ export const moveSubtree = (index, position, begin, end, tree) => {
 
   const newTree = insertSubtree(index, position, subtree, tree);
 
-  if (index < begin) {
+  const spliceIndex = getSpliceIndex(index, position, tree);
+
+  if (spliceIndex < begin) {
     // Adjust for content added before old position
     const subtreeLength = end - begin + 1;
     begin += subtreeLength;
@@ -72,6 +74,13 @@ export const deleteSubtree = (elementIndex, tree) => {
     findDanglingParen(newTree, elementIndex + 1) - elementIndex + 2
   );
   return newTree;
+};
+
+export const copySubtree = (elementIndex, tree) => {
+  return tree.slice(
+    elementIndex - 1,
+    findDanglingParen(tree, elementIndex + 1) + 1
+  );
 };
 
 export const updateSubtreeAttributes = (attributes, elementIndex, tree) => {
