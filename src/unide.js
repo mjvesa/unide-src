@@ -41,6 +41,8 @@ import { cssProperties } from "./css-properties.js";
 import { enterSketchMode } from "./sketch-mode";
 import { ATIRToXML, XMLToATIR } from "./xml";
 
+import { designComponentEditors } from "./design-component-editors";
+
 // Global variables
 const $ = document.querySelector.bind(document);
 
@@ -52,7 +54,7 @@ const initialDesign = `div
   )`;
 
 let currentDesign = [];
-let selectedElement;
+let selectedElementId;
 let storedDesigns = {};
 
 // DnD Stuff
@@ -88,6 +90,25 @@ const showCurrentDesign = () => {
   const outline = getOutlineElement();
   outline.innerHTML = "";
   modelToOutline(currentDesign.tree, outline);
+
+  if (selectedElementId) {
+    const selectedEl = $("#visual-editor").shadowRoot.querySelector(
+      `[data-design-id="${selectedElementId}"]`
+    );
+    if (selectedEl) {
+      selectedEl.style.zIndex = 1000000;
+      selectedEl.style.position = "relative";
+
+      const bcr = selectedEl.getBoundingClientRect();
+      inspector.style.top = bcr.top - 20 + "px";
+      inspector.style.left = bcr.left - 20 + "px";
+      //inspector.style.display = "block";
+
+      const inspectorTarget = $("#inspector-target");
+      inspectorTarget.style.height = bcr.bottom - bcr.top + "px";
+      inspectorTarget.style.width = bcr.right - bcr.left + "px";
+    }
+  }
 };
 
 const startDrag = (event, snippet) => {
@@ -233,6 +254,81 @@ const placeSelectMarker = (target, marker) => {
   marker.style.height = bcr.height + "px";
 };
 
+let editors = {};
+
+const createElementSelect = (el, tag, DCAPI) => {
+  const editorSelect = el.querySelector("#editor-select");
+  editorSelect.oninput = event => {
+    installBExpEditor(event.target.value, DCAPI);
+  };
+  editors = {};
+  editorSelect.innerHTML = "";
+  let installedEditor = false;
+  designComponentEditors.forEach(editor => {
+    if (editor[0] === "*" || editor[0] === tag) {
+      const editorName = editor[1].name;
+      editors[editorName] = editor[1].fn;
+      const option = document.createElement("option");
+      option.textContent = editor[1].displayname;
+      option.value = editorName;
+      editorSelect.appendChild(option);
+      if (editorName == tag + "-editor") {
+        installBExpEditor(editorName, DCAPI);
+        editorSelect.value = editorName;
+        installedEditor = true;
+      }
+    }
+  });
+  if (!installedEditor) {
+    installBExpEditor("default-editor", DCAPI);
+  }
+};
+
+const updateAttributesDC = DCAPI => {
+  /*  const targetRoute = $("#target-route").value;
+  if (targetRoute.trim() !== "") {
+    props.push("targetRoute");
+    props.push(targetRoute);
+    props.push("=");
+  }
+*/
+
+  const { props, style } = DCAPI;
+  const propsArr = [];
+
+  if (style) {
+    let styleStr = "";
+    for (let key in Object.keys(style)) {
+      styleStr = styleStr + key + ":" + style[key] + ";";
+    }
+    if (styleStr.trim !== "") {
+      propsArr.push("style");
+      propsArr.push(styleStr);
+      propsArr.push("=");
+    }
+  }
+
+  for (const key of Object.keys(props)) {
+    propsArr.push(key);
+    propsArr.push(props[key]);
+    propsArr.push("=");
+  }
+
+  const newDesign = {
+    tree: Model.updateSubtreeAttributes(
+      propsArr,
+      selectedElementId,
+      currentDesign.tree
+    ),
+    css: currentDesign.css
+  };
+  showNewDesign(newDesign);
+};
+
+const installBExpEditor = (editorName, DCAPI) => {
+  editors[editorName]($("#editor-content"), DCAPI);
+};
+
 /**
  * Selects the clicked element and displays its attributes in the
  * attribute panel.
@@ -242,37 +338,41 @@ const placeSelectMarker = (target, marker) => {
 const selectElement = e => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
+  selectedElementId = Number(designId);
   if (designId) {
+    const selectedEl = $("#visual-editor").shadowRoot.querySelector(
+      `[data-design-id="${designId}"]`
+    );
     placeSelectMarker(
-      $("#visual-editor").shadowRoot.querySelector(
-        `[data-design-id="${designId}"]`
-      ),
+      selectedEl,
       document.getElementById("select-marker-paper")
     );
     placeSelectMarker(
       $(`#outline [data-design-id="${designId}"]`),
       document.getElementById("select-marker-outline")
     );
-    selectedElement = Number(designId);
     // Mini interpreter for extracting property values
     const stack = [];
-    let props = "<table>";
+    let props = {};
+    const style = {};
     let ip = Number(designId) + 1;
+    const tag = currentDesign.tree[ip - 2].trim();
     let value = currentDesign.tree[ip].trim();
-    $("#target-route").value = "";
-    $("#field-name").value = "";
     while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
       if (value === "=") {
         const tos = stack.pop();
         const nos = stack.pop();
-        if (nos.trim() === "targetRoute") {
-          $("#target-route").value = tos;
-        } else if (nos.trim() === "fieldName") {
-          $("#field-name").value = tos;
+        if (nos === "style") {
+          const rules = tos.split(";");
+          for (let rule of rules) {
+            const prop = rule.split(":");
+            const name = prop[0];
+            if (name !== "") {
+              style[name] = prop[1];
+            }
+          }
         } else {
-          props =
-            props +
-            `<tr><td contenteditable>${nos}</td><td contenteditable>${tos}</td></tr>`;
+          props[nos] = tos;
         }
       } else {
         stack.push(value);
@@ -281,13 +381,24 @@ const selectElement = e => {
       value = currentDesign.tree[ip].trim();
     }
 
-    // Add ten lines for new props
-    for (let i = 0; i < 10; i++) {
-      props =
-        props + `<tr><td contenteditable></td><td contenteditable></td></tr>`;
-    }
+    const inspector = $("#inspector");
+    const bcr = selectedEl.getBoundingClientRect();
+    inspector.style.top = bcr.top - 20 + "px";
+    inspector.style.left = bcr.left - 20 + "px";
+    inspector.style.display = "block";
 
-    document.getElementById("attributes").innerHTML = props + "</table>";
+    const inspectorTarget = $("#inspector-target");
+    inspectorTarget.style.height = bcr.bottom - bcr.top + "px";
+    inspectorTarget.style.width = bcr.right - bcr.left + "px";
+    const DCAPI = {
+      repaint: () => updateAttributesDC(DCAPI),
+      props: props,
+      style: style
+    };
+    createElementSelect(inspector, tag, DCAPI);
+
+    showCurrentDesign();
+
     e.preventDefault();
     e.stopPropagation();
   }
@@ -297,9 +408,9 @@ const selectElement = e => {
  * Updates the attributes of the selected element by removing
  * the previous ones and replacing them with new attributes.
  */
-const updateAttributes = () => {
+const updateAttributes = event => {
   let attributes = [];
-  const table = $("#attributes").firstChild.firstChild;
+  const table = $("#element-preview").firstChild.firstChild;
   table.childNodes.forEach(tr => {
     let key = tr.firstChild.textContent;
     let value = tr.lastChild.textContent;
@@ -326,12 +437,14 @@ const updateAttributes = () => {
   const newDesign = {
     tree: Model.updateSubtreeAttributes(
       attributes,
-      selectedElement,
+      selectedElementId,
       currentDesign.tree
     ),
     css: currentDesign.css
   };
   showNewDesign(newDesign);
+  event.stopPropagation();
+  event.preventDefault();
 };
 
 // eslint-disable-next-line
@@ -561,7 +674,7 @@ const populateDesignSelector = selector => {
 
 const populateDesignSelectors = () => {
   populateDesignSelector($("#choose-design"));
-  populateDesignSelector($("#target-route"));
+  //populateDesignSelector($("#target-route"));
 };
 
 const storeProject = () => {
@@ -798,10 +911,6 @@ const installUIEventHandlers = () => {
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
   document.body.ondragend = hideMarkers;
-  const attributes = $("#attributes");
-  attributes.oninput = updateAttributes;
-  $("#target-route").onchange = updateAttributes;
-  $("#field-name").oninput = updateAttributes;
 
   $("#save-design").onclick = saveDesign;
   $("#choose-design").onchange = loadSelectedDesign;
@@ -951,7 +1060,7 @@ const installKeyboardHandlers = () => {
 
     if (event.key === "Delete") {
       const newDesign = {
-        tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
+        tree: Model.deleteSubtree(selectedElementId, currentDesign.tree),
         css: currentDesign.css
       };
       showNewDesign(newDesign);
