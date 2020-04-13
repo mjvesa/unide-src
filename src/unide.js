@@ -19,7 +19,8 @@ import {
   exportToJava,
   modelToJava,
   kebabToPascalCase,
-  packageToFolder
+  packageToFolder,
+  generateAuxClass
 } from "./export/java";
 import { exportToVaadinTypescript } from "./export/vaadin_typescript";
 import { exportToRaw } from "./export/raw";
@@ -86,7 +87,6 @@ const showCurrentDesign = () => {
   paper.shadowRoot.appendChild(style);
   modelToDOM(currentDesign.tree, paper.shadowRoot);
   const outline = getOutlineElement();
-  outline.innerHTML = "";
   modelToOutline(currentDesign.tree, outline);
 };
 
@@ -233,6 +233,56 @@ const placeSelectMarker = (target, marker) => {
   marker.style.height = bcr.height + "px";
 };
 
+const selectElementWithId = designId => {
+  placeSelectMarker(
+    $("#visual-editor").shadowRoot.querySelector(
+      `[data-design-id="${designId}"]`
+    ),
+    document.getElementById("select-marker-paper")
+  );
+  placeSelectMarker(
+    $(`#outline [data-design-id="${designId}"]`),
+    document.getElementById("select-marker-outline")
+  );
+  selectedElement = Number(designId);
+  // Mini interpreter for extracting property values
+  const stack = [];
+  let props = "<table>";
+  let ip = Number(designId) + 1;
+  let value = currentDesign.tree[ip].trim();
+  $("#target-route").value = "";
+  $("#field-name").value = "";
+  while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
+    if (value === "=") {
+      const tos = stack.pop();
+      const nos = stack.pop();
+      if (nos.trim() === "targetRoute") {
+        $("#target-route").value = tos;
+      } else if (nos.trim() === "fieldName") {
+        $("#field-name").value = tos;
+      } else {
+        props =
+          props +
+          `<tr><td contenteditable>${nos}</td><td contenteditable>${tos}</td></tr>`;
+      }
+    } else {
+      stack.push(value);
+    }
+    ip++;
+    value = currentDesign.tree[ip].trim();
+  }
+
+  // Add ten lines for new props
+  for (let i = 0; i < 10; i++) {
+    props =
+      props + `<tr><td contenteditable></td><td contenteditable></td></tr>`;
+  }
+
+  document.getElementById("attributes").innerHTML = props + "</table>";
+  e.preventDefault();
+  e.stopPropagation();
+};
+
 /**
  * Selects the clicked element and displays its attributes in the
  * attribute panel.
@@ -243,53 +293,7 @@ const selectElement = e => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
   if (designId) {
-    placeSelectMarker(
-      $("#visual-editor").shadowRoot.querySelector(
-        `[data-design-id="${designId}"]`
-      ),
-      document.getElementById("select-marker-paper")
-    );
-    placeSelectMarker(
-      $(`#outline [data-design-id="${designId}"]`),
-      document.getElementById("select-marker-outline")
-    );
-    selectedElement = Number(designId);
-    // Mini interpreter for extracting property values
-    const stack = [];
-    let props = "<table>";
-    let ip = Number(designId) + 1;
-    let value = currentDesign.tree[ip].trim();
-    $("#target-route").value = "";
-    $("#field-name").value = "";
-    while (value !== "(" && value !== ")" && ip < currentDesign.tree.length) {
-      if (value === "=") {
-        const tos = stack.pop();
-        const nos = stack.pop();
-        if (nos.trim() === "targetRoute") {
-          $("#target-route").value = tos;
-        } else if (nos.trim() === "fieldName") {
-          $("#field-name").value = tos;
-        } else {
-          props =
-            props +
-            `<tr><td contenteditable>${nos}</td><td contenteditable>${tos}</td></tr>`;
-        }
-      } else {
-        stack.push(value);
-      }
-      ip++;
-      value = currentDesign.tree[ip].trim();
-    }
-
-    // Add ten lines for new props
-    for (let i = 0; i < 10; i++) {
-      props =
-        props + `<tr><td contenteditable></td><td contenteditable></td></tr>`;
-    }
-
-    document.getElementById("attributes").innerHTML = props + "</table>";
-    e.preventDefault();
-    e.stopPropagation();
+    selectElementWithId(designId);
   }
 };
 
@@ -374,7 +378,6 @@ const modelToDOM = (code, target, inert = false) => {
         const tag = stack.pop();
         // Nested designs, attach shadow root, append style and content
         if (tag in storedDesigns.designs) {
-          console.log("creating shadow root for nested");
           current = document.createElement("div");
           const root = document.createElement("div");
           current.attachShadow({ mode: "open" });
@@ -434,35 +437,57 @@ const modelToDOM = (code, target, inert = false) => {
   return current;
 };
 
+let skipOutline = false;
 const modelToOutline = (code, target, inert = false) => {
   let stack = [];
   let tree = [];
   let current;
   current = target;
-  code.forEach((str, index) => {
-    const trimmed = str.trim();
-    switch (trimmed) {
-      case "(":
-        let old = current;
-        tree.push(current);
-        current = document.createElement("div");
-        current.textContent = stack.pop();
-        current.setAttribute("data-design-id", index);
-        current.ondragstart = event => {
-          startDragFromModel(index, event);
-        };
-        current.draggable = true;
-        old.appendChild(current);
-        break;
-      case ")":
-        current = tree.pop();
-        break;
-      case "=":
-        break;
-      default:
-        stack.push(trimmed);
-    }
-  });
+  if (!skipOutline) {
+    target.innerHTML = "";
+    code.forEach((str, index) => {
+      const trimmed = str.trim();
+      switch (trimmed) {
+        case "(":
+          let old = current;
+          tree.push(current);
+          current = document.createElement("div");
+          const input = document.createElement("input");
+          input.type = "text";
+          input.spellcheck = false;
+          input.value = stack.pop();
+          input.oninput = event => {
+            const newModel = {
+              tree: currentDesign.tree.slice(),
+              css: currentDesign.css
+            };
+            newModel.tree[index - 1] = event.target.value;
+            skipOutline = true;
+            showNewDesign(newModel);
+            skipOutline = false;
+          };
+          input.onfocus = event => {
+            selectElementWithId(index);
+          };
+          current.appendChild(input);
+          current.setAttribute("data-design-id", index);
+          input.setAttribute("data-design-id", index);
+          current.ondragstart = event => {
+            startDragFromModel(index, event);
+          };
+          current.draggable = true;
+          old.appendChild(current);
+          break;
+        case ")":
+          current = tree.pop();
+          break;
+        case "=":
+          break;
+        default:
+          stack.push(trimmed);
+      }
+    });
+  }
   return current;
 };
 
@@ -606,6 +631,16 @@ const saveDesign = () => {
       `./frontend/styles/${designName}.css`,
       currentDesign.css
     );
+
+    const auxFileName = `${packageToFolder(
+      storedDesigns.settings.packageName
+    )}${javaName}Aux.java`;
+    window.Unide.ifDoesNotExist(auxFileName, () => {
+      window.Unide.saveFile(
+        auxFileName,
+        generateAuxClass(javaName, storedDesigns.settings.packageName)
+      );
+    });
   }
 };
 

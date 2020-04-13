@@ -49,7 +49,7 @@ export const exportToJava = project => {
   });
 };
 
-const generateAuxClass = (pascalCaseName, packageName) => {
+export const generateAuxClass = (pascalCaseName, packageName) => {
   return `package ${packageName};
   public class ${pascalCaseName}Aux {
     public ${pascalCaseName}Aux(${pascalCaseName} design) {
