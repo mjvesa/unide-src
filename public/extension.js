@@ -27,7 +27,7 @@ function activate(context) {
     panel.webview.onDidReceiveMessage(
       message => {
         switch (message.command) {
-          case "saveFile":
+          case "saveFile": {
             const fileName = workspacePath + "/" + message.fileName;
             const content = message.content;
             const directory = fileName.substring(0, fileName.lastIndexOf("/"));
@@ -36,7 +36,8 @@ function activate(context) {
             }
             fs.writeFileSync(fileName, content);
             return;
-          case "saveState":
+          }
+          case "saveState": {
             const state = message.state;
             if (!fs.existsSync(workspacePath + "/" + "./src/main/resources")) {
               fs.mkdirSyncworkspacePath +
@@ -48,6 +49,14 @@ function activate(context) {
               state
             );
             return;
+          }
+          case "doesFileExist": {
+            const fileName = workspacePath + "/" + message.fileName;
+            if (!fs.existsSync(fileName)) {
+              panel.webview.postMessage({ command: "fileDoesNotExist" });
+            }
+            return;
+          }
         }
       },
       undefined,
@@ -166,6 +175,17 @@ const getHTML = (folder, state) => {
 
   #outline div {
     margin-left: 1em;
+  }
+
+  #outline input {
+    display: block;
+    background-color: #222;
+    border: none;
+    color: white;
+  }
+
+  #outline input:focus {
+    outline: none;
   }
 
   #attribute-panel {
@@ -386,11 +406,28 @@ const getHTML = (folder, state) => {
     window.Unide.saveFile = (fileName, content) => {
       vscode.postMessage({command:"saveFile", fileName: fileName, content: content});
     };
-    
-    
+       
     window.Unide.saveState = state => {
       vscode.postMessage({command: "saveState", state:state});
     };
+
+    let doesNotExistCallback;
+
+    window.Unide.ifDoesNotExist = (fileName, callback) => {
+      doesNotExistCallback = callback;
+      vscode.postMessage({command: "doesFileExist", fileName: fileName});
+    }
+
+    window.addEventListener('message', event => {
+       const message = event.data;
+        switch (message.command) {
+            case 'fileDoesNotExist':
+              if (doesNotExistCallback) {
+                doesNotExistCallback();
+              }
+              break;
+        }
+    });
     
   </script>
   <script src="${folder}/lib/jszip.min.js"></script>
