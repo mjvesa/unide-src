@@ -298,6 +298,21 @@ const selectElement = e => {
 };
 
 /**
+ * Selects the clicked element and displays its attributes in the
+ * attribute panel.
+ *
+ * @param {*} e
+ */
+const selectAndFocusElement = e => {
+  const target = getElementAt(e.clientX, e.clientY);
+  const designId = target.getAttribute("data-design-id");
+  // Focusing causes the element to be selected
+  const inputEl = $(`#outline input[data-design-id="${designId}"]`);
+  inputEl.focus();
+  inputEl.select();
+};
+
+/**
  * Updates the attributes of the selected element by removing
  * the previous ones and replacing them with new attributes.
  */
@@ -828,7 +843,7 @@ const installUIEventHandlers = () => {
   outline.onclick = selectElement;
   const paper = getPaperElement();
   paper.ondragover = placeMarker;
-  paper.onclick = selectElement;
+  paper.onclick = selectAndFocusElement;
   const marker = $("#marker");
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;
