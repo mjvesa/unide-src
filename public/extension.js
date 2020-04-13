@@ -177,6 +177,17 @@ const getHTML = (folder, state) => {
     margin-left: 1em;
   }
 
+  #outline input {
+    display: block;
+    background-color: #222;
+    border: none;
+    color: white;
+  }
+
+  #outline input:focus {
+    outline: none;
+  }
+
   #attribute-panel {
     border-top: 1px solid gray;
     height: 50%;
