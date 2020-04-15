@@ -13400,30 +13400,49 @@
 	};
 
 	const exportToJava = project => {
-	  const zip = new JSZip();
-	  const designs = project.designs;
-	  const keys = Object.keys(designs);
-	  const packageName = project.settings.packageName;
-	  const javaFolder = packageToFolder(packageName);
-	  for (const i in keys) {
-	    const key = keys[i];
-	    const pascalCaseName = kebabToPascalCase(key);
-	    zip.file("src/main/resources/unide_state.json", JSON.stringify(project));
-	    zip.file(
-	      javaFolder + pascalCaseName + ".java",
-	      modelToJava(pascalCaseName, key, packageName, designs[key].tree)
-	    );
-	    zip.file(
-	      javaFolder + pascalCaseName + "Aux.java",
-	      generateAuxClass(pascalCaseName, packageName)
-	    );
-	    zip.file(`frontend/styles/${key}.css`, designs[key].css);
-	  }
-	  zip.file(javaFolder + "UnideSplitLayout.java", unideSplitLayout(packageName));
-	  zip.file("pom.xml", pomXML);
+	  JSZipUtils.getBinaryContent("templates/vaadin-java-project.zip", function(
+	    err,
+	    data
+	  ) {
+	    if (err) {
+	      throw err; // or handle err
+	    }
 
-	  zip.generateAsync({ type: "blob" }).then(content => {
-	    saveAs(content, "unide-java-designs.zip");
+	    JSZip.loadAsync(data).then(function(zip) {
+	      const designs = project.designs;
+	      const keys = Object.keys(designs);
+	      const packageName = project.settings.packageName;
+	      const javaFolder = packageToFolder(packageName);
+	      for (const i in keys) {
+	        const key = keys[i];
+	        const pascalCaseName = kebabToPascalCase(key);
+	        zip.file(
+	          "src/main/resources/unide_state.json",
+	          JSON.stringify(project)
+	        );
+	        zip.file(
+	          javaFolder + pascalCaseName + ".java",
+	          modelToJava(pascalCaseName, key, packageName, designs[key].tree)
+	        );
+	        zip.file(
+	          javaFolder + pascalCaseName + "Aux.java",
+	          generateAuxClass(pascalCaseName, packageName)
+	        );
+	        zip.file(`frontend/styles/${key}.css`, designs[key].css);
+	      }
+
+	      zip.file(
+	        javaFolder + "UnideSplitLayout.java",
+	        unideSplitLayout(packageName)
+	      );
+
+	      zip.file(javaFolder + "Application.java", application(packageName));
+	      zip.file(javaFolder + "AppShell.java", appShell(packageName));
+
+	      zip.generateAsync({ type: "blob" }).then(content => {
+	        saveAs(content, "unide-java-designs.zip");
+	      });
+	    });
 	  });
 	};
 
@@ -13662,119 +13681,37 @@ public class UnideSplitLayout extends SplitLayout {
 `;
 	};
 
-	const pomXML = `<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    <groupId>unide.app</groupId>
-    <artifactId>app</artifactId>
-    <name>Project base for Vaadin Flow</name>
-    <version>1.0-SNAPSHOT</version>
-    <packaging>war</packaging>
+	const appShell = packageName => `package ${packageName};
 
-    <properties>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <failOnMissingWebXml>false</failOnMissingWebXml>
-        
-        <vaadin.version>15.0.2</vaadin.version>
-    </properties>
+import com.vaadin.flow.component.page.AppShellConfigurator;
+import com.vaadin.flow.server.PWA;
 
-    <repositories>
-        <!-- Repository used by many Vaadin add-ons -->
-        <repository>
-                         <id>Vaadin Directory</id>
-            <url>http://maven.vaadin.com/vaadin-addons</url>
-        </repository>
-    </repositories>
+/**
+ * Use the @PWA annotation make the application installable on phones, tablets
+ * and some desktop browsers.
+ */
+@PWA(name = "unide app", shortName = "unide app")
+public class AppShell implements AppShellConfigurator {
+}
+`;
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>com.vaadin</groupId>
-                <artifactId>vaadin-bom</artifactId>
-                <type>pom</type>
-                <scope>import</scope>
-                <version>\${vaadin.version}</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+	const application = packageName => `package ${packageName};
 
-    <dependencies>
-        <dependency>
-            <groupId>com.vaadin</groupId>
-            <artifactId>vaadin-core</artifactId>
-        </dependency>
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
 
-        <!-- Added to provide logging output as Flow uses -->
-        <!-- the unbound SLF4J no-operation (NOP) logger implementation -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-        </dependency>
+/**
+ * The entry point of the Spring Boot application.
+ */
+@SpringBootApplication
+public class Application extends SpringBootServletInitializer {
 
-        <dependency>
-            <groupId>javax.servlet</groupId>
-            <artifactId>javax.servlet-api</artifactId>
-            <version>3.1.0</version>
-            <scope>provided</scope>
-        </dependency>
-    </dependencies>
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
 
-    <build>
-        <plugins>
-            <!-- Jetty plugin for easy testing without a server -->
-            <plugin>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-maven-plugin</artifactId>
-                <version>9.4.11.v20180605</version>
-                <configuration>
-                    <scanIntervalSeconds>1</scanIntervalSeconds>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
-
-    <profiles>
-        <profile>
-            <!-- Production mode can be activated with either property or profile -->
-            <id>production-mode</id>
-            <activation>
-                <property>
-                    <name>vaadin.productionMode</name>
-                </property>
-            </activation>
-            <properties>
-                <vaadin.productionMode>true</vaadin.productionMode>
-            </properties>
-
-            <dependencies>
-                <dependency>
-                    <groupId>com.vaadin</groupId>
-                    <artifactId>flow-server-production-mode</artifactId>
-                </dependency>
-            </dependencies>
-
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>com.vaadin</groupId>
-                        <artifactId>vaadin-maven-plugin</artifactId>
-                        <version>\${vaadin.version}</version>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>copy-production-files</goal>
-                                    <goal>package-for-production</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
-</project>
+}
 `;
 
 	let jsImports = {
