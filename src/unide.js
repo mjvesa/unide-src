@@ -20,17 +20,9 @@ import {
   modelToJava,
   kebabToPascalCase,
   packageToFolder,
-  generateAuxClass
+  generateAuxClass,
 } from "./export/java";
-import { exportToVaadinTypescript } from "./export/vaadin_typescript";
 import { exportToRaw } from "./export/raw";
-import { exportToAngular } from "./export/angular";
-import { exportToLitElement } from "./export/lit";
-import { exportToPreact } from "./export/preact";
-import { exportToReact } from "./export/react";
-import { exportToSvelte } from "./export/svelte";
-import { exportToVanilla } from "./export/vanilla";
-import { exportToVue } from "./export/vue";
 
 import { paletteContent } from "./curated_header.js";
 import { checkModel } from "./check-model";
@@ -95,7 +87,7 @@ const startDrag = (event, snippet) => {
   previousBegin = previousEnd = -1;
 };
 
-const showNewDesign = newDesign => {
+const showNewDesign = (newDesign) => {
   designStack.push(currentDesign);
   currentDesign = newDesign;
   showCurrentDesign();
@@ -147,7 +139,7 @@ const hideMarkers = () => {
   $("#marker").style.display = "none";
 };
 
-const placeMarker = e => {
+const placeMarker = (e) => {
   const marker = document.getElementById("marker");
   marker.style.display = "none";
   const target = getElementAt(e.clientX, e.clientY);
@@ -186,7 +178,7 @@ const insertingNewSubtree = () => {
   return previousBegin === previousEnd;
 };
 
-const dropElement = e => {
+const dropElement = (e) => {
   hideMarkers();
   // Find position of target
   const target = getElementAt(e.clientX, e.clientY);
@@ -199,7 +191,7 @@ const dropElement = e => {
     const subtree = JSON.parse(e.dataTransfer.getData("text"));
     newDesign = {
       tree: Model.insertSubtree(index, position, subtree, currentDesign.tree),
-      css: currentDesign.css
+      css: currentDesign.css,
     };
   } else {
     if (index >= previousBegin && index <= previousEnd) {
@@ -214,7 +206,7 @@ const dropElement = e => {
         previousEnd,
         currentDesign.tree
       ),
-      css: currentDesign.css
+      css: currentDesign.css,
     };
   }
 
@@ -233,7 +225,7 @@ const placeSelectMarker = (target, marker) => {
   marker.style.height = bcr.height + "px";
 };
 
-const selectElementWithId = designId => {
+const selectElementWithId = (designId) => {
   placeSelectMarker(
     $("#visual-editor").shadowRoot.querySelector(
       `[data-design-id="${designId}"]`
@@ -289,7 +281,7 @@ const selectElementWithId = designId => {
  *
  * @param {*} e
  */
-const selectElement = e => {
+const selectElement = (e) => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
   if (designId) {
@@ -303,7 +295,7 @@ const selectElement = e => {
  *
  * @param {*} e
  */
-const selectAndFocusElement = e => {
+const selectAndFocusElement = (e) => {
   const target = getElementAt(e.clientX, e.clientY);
   const designId = target.getAttribute("data-design-id");
   // Focusing causes the element to be selected
@@ -319,7 +311,7 @@ const selectAndFocusElement = e => {
 const updateAttributes = () => {
   let attributes = [];
   const table = $("#attributes").firstChild.firstChild;
-  table.childNodes.forEach(tr => {
+  table.childNodes.forEach((tr) => {
     let key = tr.firstChild.textContent;
     let value = tr.lastChild.textContent;
     if (!(key.trim() === "")) {
@@ -348,20 +340,20 @@ const updateAttributes = () => {
       selectedElement,
       currentDesign.tree
     ),
-    css: currentDesign.css
+    css: currentDesign.css,
   };
   showNewDesign(newDesign);
 };
 
 // eslint-disable-next-line
-const navigateTo = event => {
+const navigateTo = (event) => {
   const targetRoute = event.target.getAttribute("targetroute");
   if (targetRoute) {
     loadDesign(targetRoute);
   }
 };
 
-const insertCssRule = el => {
+const insertCssRule = (el) => {
   let selector = "";
   let current = el;
   const shadowParent = getPaperElement().shadowRoot;
@@ -406,14 +398,14 @@ const modelToDOM = (code, target, inert = false) => {
         }
         if (!inert) {
           current.setAttribute("data-design-id", index);
-          current.ondragstart = event => {
+          current.ondragstart = (event) => {
             startDragFromModel(index, event);
           };
-          current.ondblclick = event => {
+          current.ondblclick = (event) => {
             navigateTo(event);
           };
 
-          current.oncontextmenu = event => {
+          current.oncontextmenu = (event) => {
             insertCssRule(event.target);
             event.stopPropagation();
             event.preventDefault();
@@ -471,23 +463,23 @@ const modelToOutline = (code, target, inert = false) => {
           input.type = "text";
           input.spellcheck = false;
           input.value = stack.pop();
-          input.oninput = event => {
+          input.oninput = (event) => {
             const newModel = {
               tree: currentDesign.tree.slice(),
-              css: currentDesign.css
+              css: currentDesign.css,
             };
             newModel.tree[index - 1] = event.target.value;
             skipOutline = true;
             showNewDesign(newModel);
             skipOutline = false;
           };
-          input.onfocus = event => {
+          input.onfocus = (event) => {
             selectElementWithId(index);
           };
           current.appendChild(input);
           current.setAttribute("data-design-id", index);
           input.setAttribute("data-design-id", index);
-          current.ondragstart = event => {
+          current.ondragstart = (event) => {
             startDragFromModel(index, event);
           };
           current.draggable = true;
@@ -524,13 +516,13 @@ const createPaletteSection = (name, tags, palette) => {
     const snippet = tagAndSnippet[1];
     if (snippet) {
       el.draggable = true;
-      el.ondragstart = event => {
+      el.ondragstart = (event) => {
         const preview = document.getElementById("element-preview");
         preview.style.display = "none";
         startDrag(event, snippet);
       };
 
-      el.onmouseover = event => {
+      el.onmouseover = (event) => {
         const preview = document.getElementById("element-preview");
         preview.style.top = event.clientY + "px";
         preview.style.left = event.clientX + 200 + "px";
@@ -555,7 +547,7 @@ const createPaletteSection = (name, tags, palette) => {
 const getStoredDesignsForPalette = () => {
   const parsedDesigns = [];
   const keys = Object.keys(storedDesigns.designs);
-  keys.forEach(key => {
+  keys.forEach((key) => {
     parsedDesigns.push([key, [key, "(", ")"]]);
     parsedDesigns.push(["expanded " + key, storedDesigns.designs[key].tree]);
   });
@@ -585,7 +577,7 @@ const populatePalette = () => {
  * Populates the design selector with the designs found
  * in local storage.
  */
-const populateDesignSelector = selector => {
+const populateDesignSelector = (selector) => {
   selector.innerHTML = "";
   const keys = Object.keys(storedDesigns.designs);
   const placeholder = document.createElement("option");
@@ -665,7 +657,7 @@ const saveDesign = () => {
  *
  * @param {*} designName
  */
-const loadDesign = designName => {
+const loadDesign = (designName) => {
   hideMarkers();
   $("#design-name").value = designName;
   currentDesign = storedDesigns.designs[designName];
@@ -695,40 +687,15 @@ const importRawModel = () => {
 };
 
 /**
- * Calls the appropriate function for exporting the designs currently
- * in local storage based on user selection.
+ * Exports the design as a Maven project
  */
 const exportDesign = () => {
-  const format = storedDesigns.settings.exportFormat || "Vaadin Java";
-
-  if (format === "LitElement") {
-    exportToLitElement(storedDesigns);
-  } else if (format === "Angular") {
-    exportToAngular(storedDesigns);
-  } else if (format === "Preact") {
-    exportToPreact(storedDesigns);
-  } else if (format === "Raw") {
-    exportToRaw(storedDesigns);
-  } else if (format === "React") {
-    exportToReact(storedDesigns);
-  } else if (format === "Svelte") {
-    exportToSvelte(storedDesigns);
-  } else if (format === "VanillaJS") {
-    exportToVanilla(storedDesigns);
-  } else if (format === "Vue") {
-    exportToVue(storedDesigns);
-  } else if (format === "Vaadin Java") {
-    exportToJava(storedDesigns);
-  } else if (format === "Vaadin TypeScript") {
-    exportToVaadinTypescript(storedDesigns);
-  } else {
-    window.alert(`Export to ${format} is not implemented yet, sorry.`);
-  }
+  exportToJava(storedDesigns);
 };
 
 const switchToSketchMode = () => {
   hideMarkers();
-  enterSketchMode(getPaperElement(), design => {
+  enterSketchMode(getPaperElement(), (design) => {
     const newTree = currentDesign.tree.slice().concat(design);
     showNewDesign({ css: currentDesign.css.slice(), tree: newTree });
   });
@@ -774,7 +741,7 @@ const shareDesigns = () => {
   document.body.scroll(0, 0);
 };
 
-const showProjectSettings = event => {
+const showProjectSettings = (event) => {
   const el = $("#visual-editor");
   const settings = storedDesigns.settings || {};
   const node = document.importNode($("#settings-template").content, true);
@@ -816,14 +783,14 @@ const toggleXMLMode = () => {
       mode: "text/xml",
       theme: "tomorrow-night-eighties",
       extraKeys: { "Ctrl-Space": "autocomplete" },
-      lineNumbers: true
+      lineNumbers: true,
     });
     htmlEditor.getDoc().setValue(ATIRToXML(currentDesign.tree));
     htmlEditor.on("change", () => {
       window.requestAnimationFrame(() => {
         const newDesign = {
           css: currentDesign.css,
-          tree: XMLToATIR(htmlEditor.getDoc().getValue())
+          tree: XMLToATIR(htmlEditor.getDoc().getValue()),
         };
         showNewDesign(newDesign);
       });
@@ -924,7 +891,7 @@ const installUIEventHandlers = () => {
           new Picker({
             parent: parent,
             color: pieces[1].replace(";", ""),
-            onChange: color => {
+            onChange: (color) => {
               const newLine = textEditor.getLine(pos.line);
               const end = { line: pos.line, ch: newLine.length };
               const beginning = { line: pos.line, ch: 0 };
@@ -934,7 +901,7 @@ const installUIEventHandlers = () => {
               );
               //"font-size:" + rangeEl.value + "px",
               textEditor.replaceRange(newContent, beginning, end);
-            }
+            },
           });
         }
       } else if (cssPropertyTypes.finite.hasOwnProperty(prop)) {
@@ -947,7 +914,7 @@ const installUIEventHandlers = () => {
           el.style.top = pos.line + 4 + "rem";
           el.style.left = pos.ch + "rem";
           const parent = document.getElementById("finite-select");
-          choices.forEach(choice => {
+          choices.forEach((choice) => {
             const opt = document.createElement("option");
             opt.textContent = choice;
             parent.appendChild(opt);
@@ -979,7 +946,7 @@ const installUIEventHandlers = () => {
 };
 
 const installKeyboardHandlers = () => {
-  document.body.onkeypress = event => {
+  document.body.onkeypress = (event) => {
     if (event.key === "z" && event.ctrlKey) {
       if (designStack.length > 0) {
         redoStack.push(currentDesign);
@@ -1002,7 +969,7 @@ const installKeyboardHandlers = () => {
     if (event.key === "Delete") {
       const newDesign = {
         tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
-        css: currentDesign.css
+        css: currentDesign.css,
       };
       showNewDesign(newDesign);
       event.stopPropagation();
@@ -1041,30 +1008,30 @@ const setupTextEditor = () => {
   textEditor = CodeMirror($("#text-editor"), {
     mode: "text/css",
     theme: "tomorrow-night-eighties",
-    extraKeys: { "Ctrl-Space": "autocomplete" }
+    extraKeys: { "Ctrl-Space": "autocomplete" },
   });
 };
 
-const insertCssAtCursor = cssText => {
+const insertCssAtCursor = (cssText) => {
   const pos = textEditor.getCursor();
   textEditor.replaceRange(cssText, pos);
 };
 
-const setupCssRules = filter => {
+const setupCssRules = (filter) => {
   const el = $("#css-rules");
   el.innerHTML = "";
-  Object.keys(cssProperties).forEach(key => {
+  Object.keys(cssProperties).forEach((key) => {
     if (!filter || key.includes(filter)) {
       const header = document.createElement("h2");
       header.textContent = key;
       el.appendChild(header);
-      cssProperties[key].forEach(propName => {
+      cssProperties[key].forEach((propName) => {
         const div = document.createElement("div");
         div.textContent = propName;
         div.onclick = () => {
           insertCssAtCursor(propName + ":");
         };
-        div.oncontextmenu = event => {
+        div.oncontextmenu = (event) => {
           window.open(
             `https://developer.mozilla.org/en-US/docs/Web/CSS/${propName}`,
             "_blank"

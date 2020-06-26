@@ -1,17 +1,13 @@
 # Unide
 
-Unide is
-
-- Universal, as designs produced using it can be exported to many platforms
-- Unidirectional, as it is in complete control of its model and is capable of exporting it to other models
-- U and I, as it let's the user create pure Java Vaadin projects
+Unide is a visual designer for Vaadin. It exports to plain Java.
 
 Using Unide in VSCode is recommended. Install it trough the extension marketplace.
 
 To run Unide locally, install it via npm `npm install -g unide` and then
 invoke `unide` at the root of your Vaadin project.
 
-To try it out without instaling anything [Unide can be used online](https://mjvesa.github.io/unide/)
+To try it out without installing anything [Unide can be used online](https://mjvesa.github.io/unide/)
 
 ## Goal of the project
 
