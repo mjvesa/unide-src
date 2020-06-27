@@ -16,7 +16,7 @@ export const demoDesigns = {
         "p",
         "(",
         "textContent",
-        "This application is a free visual designer that can be used to create clickable prototypes of web applications and export them as Vaadin server side Java, Vaadin TS, Vanilla Javascript and many other kinds of projects.",
+        "This application is a free visual designer that can be used to create clickable prototypes of web applications and export them as plain Java using Vaadin",
         "=",
         ")",
         "p",
@@ -91,9 +91,9 @@ export const demoDesigns = {
         " tour-2",
         "=",
         ")",
-        "  )"
+        "  )",
       ],
-      css: "h1 {\n  color: black;\n}\n"
+      css: "h1 {\n  color: black;\n}\n",
     },
     "tour-2": {
       tree: [
@@ -129,10 +129,10 @@ export const demoDesigns = {
         ' One more thing. The exported project can be built and run with "mvn package" followed by "mvn jetty:run".',
         "=",
         ")",
-        "  )"
+        "  )",
       ],
-      css: ""
-    }
+      css: "",
+    },
   },
-  settings: { packageName: "unide.app", exportFormat: "Java" }
+  settings: { packageName: "unide.app", exportFormat: "Java" },
 };

@@ -342,7 +342,7 @@ const getHTML = (folder, state) => {
 
   <!-- Header fields and buttons-->
   <div id="design-details">
-    <span>Unide 0.3.1</span>
+    <span>Unide 0.4.0</span>
     <button id="project-settings">Settings</button>
     <button id="new-design">New Design</button>
     <button id="sketch-design">Sketch</button>

@@ -2,12 +2,12 @@
 
 Unide is a visual designer for Vaadin. It exports to plain Java.
 
-Using Unide in VSCode is recommended. Install it trough the extension marketplace.
-
-To run Unide locally, install it via npm `npm install -g unide` and then
+To run Unide locally, install it via npm `npm install -g mjvesa/unide-src` and then
 invoke `unide` at the root of your Vaadin project.
 
 To try it out without installing anything [Unide can be used online](https://mjvesa.github.io/unide/)
+
+There is a VSCode extension, but it is currently not kept up to date.
 
 ## Goal of the project
 

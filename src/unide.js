@@ -462,7 +462,7 @@ const modelToOutline = (code, target, inert = false) => {
           const input = document.createElement("input");
           input.type = "text";
           input.spellcheck = false;
-          input.value = stack.pop();
+          input.value = kebabToPascalCase(stack.pop()).replace("Vaadin", "");
           input.oninput = (event) => {
             const newModel = {
               tree: currentDesign.tree.slice(),
@@ -617,12 +617,7 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   storeProject();
-  const format = storedDesigns.settings.exportFormat || "Vaadin Java";
-  if (
-    window.Unide &&
-    (window.Unide.inElectron || window.Unide.inVSCode) &&
-    format === "Vaadin Java"
-  ) {
+  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(
       javaName,
