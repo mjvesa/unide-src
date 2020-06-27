@@ -1,7 +1,7 @@
 {
   "name": "unide",
-  "version": "0.3.1",
-  "description": "Universal visual designer for Vaadin and Vaadin Components",
+  "version": "0.4.0",
+  "description": "Universal visual designer for Vaadin",
   "repository": "https://github.com/mjvesa/unide-src",
   "icon": "public/images/unide_tiny.png",
   "publisher": "mjvesa",
@@ -42,7 +42,6 @@
     "file-saver": "^2.0.0-rc.4",
     "jszip": "^3.1.5",
     "jszip-utils": "^0.1.0",
-    "prettier": "^1.16.4",
     "vanilla-picker": "^2.7.2"
   },
   "devDependencies": {

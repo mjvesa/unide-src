@@ -617,12 +617,7 @@ const saveDesign = () => {
   const designName = document.getElementById("design-name").value;
   storedDesigns.designs[designName] = currentDesign;
   storeProject();
-  const format = storedDesigns.settings.exportFormat || "Vaadin Java";
-  if (
-    window.Unide &&
-    (window.Unide.inElectron || window.Unide.inVSCode) &&
-    format === "Vaadin Java"
-  ) {
+  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     const javaName = kebabToPascalCase(designName);
     let content = modelToJava(
       javaName,
