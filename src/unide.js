@@ -462,7 +462,7 @@ const modelToOutline = (code, target, inert = false) => {
           const input = document.createElement("input");
           input.type = "text";
           input.spellcheck = false;
-          input.value = stack.pop();
+          input.value = kebabToPascalCase(stack.pop()).replace("Vaadin", "");
           input.oninput = (event) => {
             const newModel = {
               tree: currentDesign.tree.slice(),
