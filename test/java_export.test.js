@@ -1,3 +1,6 @@
+/**
+ *  @group unit
+ */
 const esmImport = require("esm")(module);
 // const java = esmImport("../src/export/java.js");
 import { kebabToPascalCase, modelToJava } from "../src/export/java.js";

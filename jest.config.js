@@ -5,4 +5,5 @@ module.exports = {
     "^.+\\.js?$": "babel-jest",
   },
   testEnvironment: "jsdom",
+  runner: "groups",
 };
