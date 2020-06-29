@@ -83,6 +83,12 @@ export const copySubtree = (elementIndex, tree) => {
   );
 };
 
+/**
+ *
+ * @param {*} attributes Attributes as ATIR containing full attrbute expressions ["key", "value", "="]
+ * @param {*} elementIndex Index of the element whose attributes to update
+ * @param {*} tree The element tree where the element to be updated resides in
+ */
 export const updateSubtreeAttributes = (attributes, elementIndex, tree) => {
   // Find range of previous attributes
   let index = elementIndex + 1;

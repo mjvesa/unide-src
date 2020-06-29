@@ -300,8 +300,10 @@ const selectAndFocusElement = (e) => {
   const designId = target.getAttribute("data-design-id");
   // Focusing causes the element to be selected
   const inputEl = $(`#outline input[data-design-id="${designId}"]`);
-  inputEl.focus();
-  inputEl.select();
+  if (inputEl) {
+    inputEl.focus();
+    inputEl.select();
+  }
 };
 
 /**
@@ -674,7 +676,7 @@ const importRawModel = () => {
   if (file) {
     const reader = new FileReader();
     reader.readAsText(file, "UTF-8");
-    reader.onload = function(evt) {
+    reader.onload = function (evt) {
       localStorage.setItem("unide.project", evt.target.result);
       populateDesignSelectors();
     };
@@ -745,19 +747,12 @@ const showProjectSettings = (event) => {
 
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
-  el.shadowRoot.querySelector("#choose-export-format").value =
-    settings.exportFormat || "Vaadin Java";
-
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
   el.shadowRoot.querySelector("#settings-save").onclick = () => {
     const packageName = el.shadowRoot.querySelector("#target-folder").value;
-    const exportFormat = el.shadowRoot.querySelector("#choose-export-format")
-      .value;
     settings.packageName = packageName;
-    settings.exportFormat = exportFormat;
-    2;
     storedDesigns.settings = settings;
     storeProject();
     showCurrentDesign();
