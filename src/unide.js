@@ -747,12 +747,21 @@ const showProjectSettings = (event) => {
 
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
+  el.shadowRoot.querySelector("#use-app-layout").checked =
+    settings.useAppLayout || false;
+  el.shadowRoot.querySelector("#app-layout-class").value =
+    settings.appLayoutClass || "";
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
   el.shadowRoot.querySelector("#settings-save").onclick = () => {
-    const packageName = el.shadowRoot.querySelector("#target-folder").value;
-    settings.packageName = packageName;
+    settings.useAppLayout = el.shadowRoot.querySelector(
+      "#use-app-layout"
+    ).checked;
+    settings.appLayoutClass = el.shadowRoot.querySelector(
+      "#app-layout-class"
+    ).value;
+    settings.packageName = el.shadowRoot.querySelector("#target-folder").value;
     storedDesigns.settings = settings;
     storeProject();
     showCurrentDesign();

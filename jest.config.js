@@ -6,4 +6,5 @@ module.exports = {
   },
   testEnvironment: "jsdom",
   runner: "groups",
+  collectCoverageFrom: ["src/**/*.js"],
 };

@@ -212,6 +212,10 @@
         justify-content: space-between;
       }
 
+      .settings-page > div > div > * {
+        display: inline;
+      }
+
       .button-bar {
         display: flex;
         justify-content: space-between;
@@ -223,12 +227,22 @@
     </style>
     <div class="settings-page">
       <div>
-        <span>
+        <div>
           Target package
           <input id="target-folder" type="text"></input>
           <!-- Button only visible on Electron -->
           <button  id="select-folder" hidden>Select</button>      
-        </span>
+        </div>
+        <div>
+          <div>
+            Use Applayout 
+            <input id="use-app-layout" type="checkbox"></input>
+          </div>
+          <div>
+            AppLayout class
+            <input id="app-layout-class" type="text"></input>
+          </div>
+        </div>
       </div>
       <span class="button-bar">
           <button id="settings-cancel">Cancel</button>
