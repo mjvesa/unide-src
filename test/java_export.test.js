@@ -15,6 +15,7 @@ test("Java export simple design", () => {
     "TestDesign",
     "test-design",
     "my.test.package",
+    "",
     ["div", "(", "textContent", "some text content", "=", ")"]
   );
 
@@ -23,4 +24,18 @@ test("Java export simple design", () => {
     '_div.getElement().setText("some text content");'
   );
   expect(exportedJava).toContain("new TestDesignAux(this);");
+  expect(exportedJava).toContain('@Route("TestDesign")');
+});
+
+test("Java export simple design with app layout", () => {
+  const div = document.createElement("div");
+  const exportedJava = modelToJava(
+    "TestDesign",
+    "test-design",
+    "my.test.package",
+    "MyAppLayout",
+    ["div", "(", "textContent", "some text content", "=", ")"]
+  );
+
+  expect(exportedJava).toContain('@Route("TestDesign", MyAppLayout.class)');
 });
