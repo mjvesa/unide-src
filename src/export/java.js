@@ -3,7 +3,7 @@
  */
 import flowImports from "./flow_imports.js";
 
-export const kebabToPascalCase = str => {
+export const kebabToPascalCase = (str) => {
   const parts = str.split("-");
   let result = "";
   for (const i in parts) {
@@ -12,17 +12,17 @@ export const kebabToPascalCase = str => {
   return result;
 };
 
-const kebabToCamelCase = str => {
+const kebabToCamelCase = (str) => {
   const pascal = kebabToPascalCase(str).replace("/Vaadin/g", "");
   return pascal.charAt(0).toLowerCase() + pascal.substring(1);
 };
 
-export const packageToFolder = packageName => {
+export const packageToFolder = (packageName) => {
   return "src/main/java/" + packageName.replace(/\./g, "/") + "/";
 };
 
-export const exportToJava = project => {
-  JSZipUtils.getBinaryContent("templates/vaadin-java-project.zip", function(
+export const exportToJava = (project) => {
+  JSZipUtils.getBinaryContent("templates/vaadin-java-project.zip", function (
     err,
     data
   ) {
@@ -30,10 +30,13 @@ export const exportToJava = project => {
       throw err; // or handle err
     }
 
-    JSZip.loadAsync(data).then(function(zip) {
+    JSZip.loadAsync(data).then(function (zip) {
       const designs = project.designs;
       const keys = Object.keys(designs);
       const packageName = project.settings.packageName;
+      const appLayoutClass = project.settings.useAppLayout
+        ? project.settings.appLayoutClass
+        : "";
       const javaFolder = packageToFolder(packageName);
       for (const i in keys) {
         const key = keys[i];
@@ -44,7 +47,13 @@ export const exportToJava = project => {
         );
         zip.file(
           javaFolder + pascalCaseName + ".java",
-          modelToJava(pascalCaseName, key, packageName, designs[key].tree)
+          modelToJava(
+            pascalCaseName,
+            key,
+            packageName,
+            appLayoutClass,
+            designs[key].tree
+          )
         );
         zip.file(
           javaFolder + pascalCaseName + "Aux.java",
@@ -61,7 +70,7 @@ export const exportToJava = project => {
       zip.file(javaFolder + "Application.java", application(packageName));
       zip.file(javaFolder + "AppShell.java", appShell(packageName));
 
-      zip.generateAsync({ type: "blob" }).then(content => {
+      zip.generateAsync({ type: "blob" }).then((content) => {
         saveAs(content, "unide-java-designs.zip");
       });
     });
@@ -76,11 +85,17 @@ export const generateAuxClass = (pascalCaseName, packageName) => {
   }`;
 };
 
-const classForTag = tag => {
+const classForTag = (tag) => {
   return flowImports[tag] ? flowImports[tag].name : kebabToPascalCase(tag);
 };
 
-export const modelToJava = (pascalCaseName, tag, packageName, code) => {
+export const modelToJava = (
+  pascalCaseName,
+  tag,
+  packageName,
+  appLayoutClass,
+  code
+) => {
   const singleIndent = "    ";
   const doubleIndent = singleIndent + singleIndent;
   const importedTags = new Set();
@@ -101,7 +116,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
   importedTags.add("div");
 
   let result = "";
-  code.forEach(str => {
+  code.forEach((str) => {
     const trimmed = str.trim();
     switch (trimmed) {
       case "(": {
@@ -157,9 +172,9 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
             let gridItems =
               `${doubleIndent}ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();\n` +
               `${doubleIndent}${pascalCaseName}GridType item;\n`;
-            obj.forEach(values => {
+            obj.forEach((values) => {
               let item = `${doubleIndent}item = new ${pascalCaseName}GridType();\n`;
-              Object.keys(values).forEach(key => {
+              Object.keys(values).forEach((key) => {
                 item = item.concat(
                   `${doubleIndent}item.set${key}("${values[key]}");\n`
                 );
@@ -176,7 +191,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
             let methods = "";
             let fields = "";
             let creation = "";
-            obj.forEach(pair => {
+            obj.forEach((pair) => {
               creation = creation.concat(
                 `${doubleIndent}${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
               );
@@ -263,7 +278,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
 
   let importStrings = "";
 
-  importedTags.forEach(tag => {
+  importedTags.forEach((tag) => {
     importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
   });
 
@@ -273,7 +288,11 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
   import com.vaadin.flow.component.dependency.CssImport;
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
-  @Route("${pascalCaseName}")
+  @Route("${pascalCaseName}"${
+    !appLayoutClass | (appLayoutClass === "")
+      ? ""
+      : ", layout=" + appLayoutClass + ".class"
+  })
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
       ${fields}
@@ -286,7 +305,7 @@ export const modelToJava = (pascalCaseName, tag, packageName, code) => {
   `;
 };
 
-const unideSplitLayout = packageName => {
+const unideSplitLayout = (packageName) => {
   return `package ${packageName};
 import com.vaadin.flow.component.splitlayout.SplitLayout;
 import com.vaadin.flow.component.Component;
@@ -306,7 +325,7 @@ public class UnideSplitLayout extends SplitLayout {
 `;
 };
 
-const appShell = packageName => `package ${packageName};
+const appShell = (packageName) => `package ${packageName};
 
 import com.vaadin.flow.component.page.AppShellConfigurator;
 import com.vaadin.flow.server.PWA;
@@ -320,7 +339,7 @@ public class AppShell implements AppShellConfigurator {
 }
 `;
 
-const application = packageName => `package ${packageName};
+const application = (packageName) => `package ${packageName};
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

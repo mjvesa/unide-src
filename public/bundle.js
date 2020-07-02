@@ -13377,7 +13377,7 @@
 	 *  Exporter from model to Flow. Exports full project buildable with maven.
 	 */
 
-	const kebabToPascalCase = str => {
+	const kebabToPascalCase = (str) => {
 	  const parts = str.split("-");
 	  let result = "";
 	  for (const i in parts) {
@@ -13386,17 +13386,17 @@
 	  return result;
 	};
 
-	const kebabToCamelCase = str => {
+	const kebabToCamelCase = (str) => {
 	  const pascal = kebabToPascalCase(str).replace("/Vaadin/g", "");
 	  return pascal.charAt(0).toLowerCase() + pascal.substring(1);
 	};
 
-	const packageToFolder = packageName => {
+	const packageToFolder = (packageName) => {
 	  return "src/main/java/" + packageName.replace(/\./g, "/") + "/";
 	};
 
-	const exportToJava = project => {
-	  JSZipUtils.getBinaryContent("templates/vaadin-java-project.zip", function(
+	const exportToJava = (project) => {
+	  JSZipUtils.getBinaryContent("templates/vaadin-java-project.zip", function (
 	    err,
 	    data
 	  ) {
@@ -13404,10 +13404,13 @@
 	      throw err; // or handle err
 	    }
 
-	    JSZip.loadAsync(data).then(function(zip) {
+	    JSZip.loadAsync(data).then(function (zip) {
 	      const designs = project.designs;
 	      const keys = Object.keys(designs);
 	      const packageName = project.settings.packageName;
+	      const appLayoutClass = project.settings.useAppLayout
+	        ? project.settings.appLayoutClass
+	        : "";
 	      const javaFolder = packageToFolder(packageName);
 	      for (const i in keys) {
 	        const key = keys[i];
@@ -13418,7 +13421,13 @@
 	        );
 	        zip.file(
 	          javaFolder + pascalCaseName + ".java",
-	          modelToJava(pascalCaseName, key, packageName, designs[key].tree)
+	          modelToJava(
+	            pascalCaseName,
+	            key,
+	            packageName,
+	            appLayoutClass,
+	            designs[key].tree
+	          )
 	        );
 	        zip.file(
 	          javaFolder + pascalCaseName + "Aux.java",
@@ -13435,7 +13444,7 @@
 	      zip.file(javaFolder + "Application.java", application(packageName));
 	      zip.file(javaFolder + "AppShell.java", appShell(packageName));
 
-	      zip.generateAsync({ type: "blob" }).then(content => {
+	      zip.generateAsync({ type: "blob" }).then((content) => {
 	        saveAs(content, "unide-java-designs.zip");
 	      });
 	    });
@@ -13450,11 +13459,17 @@
   }`;
 	};
 
-	const classForTag = tag => {
+	const classForTag = (tag) => {
 	  return flowImports[tag] ? flowImports[tag].name : kebabToPascalCase(tag);
 	};
 
-	const modelToJava = (pascalCaseName, tag, packageName, code) => {
+	const modelToJava = (
+	  pascalCaseName,
+	  tag,
+	  packageName,
+	  appLayoutClass,
+	  code
+	) => {
 	  const singleIndent = "    ";
 	  const doubleIndent = singleIndent + singleIndent;
 	  const importedTags = new Set();
@@ -13473,7 +13488,7 @@
 	  importedTags.add("div");
 
 	  let result = "";
-	  code.forEach(str => {
+	  code.forEach((str) => {
 	    const trimmed = str.trim();
 	    switch (trimmed) {
 	      case "(": {
@@ -13528,9 +13543,9 @@
 	            let gridItems =
 	              `${doubleIndent}ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();\n` +
 	              `${doubleIndent}${pascalCaseName}GridType item;\n`;
-	            obj.forEach(values => {
+	            obj.forEach((values) => {
 	              let item = `${doubleIndent}item = new ${pascalCaseName}GridType();\n`;
-	              Object.keys(values).forEach(key => {
+	              Object.keys(values).forEach((key) => {
 	                item = item.concat(
 	                  `${doubleIndent}item.set${key}("${values[key]}");\n`
 	                );
@@ -13547,7 +13562,7 @@
 	            let methods = "";
 	            let fields = "";
 	            let creation = "";
-	            obj.forEach(pair => {
+	            obj.forEach((pair) => {
 	              creation = creation.concat(
 	                `${doubleIndent}${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
 	              );
@@ -13634,7 +13649,7 @@
 
 	  let importStrings = "";
 
-	  importedTags.forEach(tag => {
+	  importedTags.forEach((tag) => {
 	    importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
 	  });
 
@@ -13644,7 +13659,11 @@
   import com.vaadin.flow.component.dependency.CssImport;
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
-  @Route("${pascalCaseName}")
+  @Route("${pascalCaseName}"${
+    !appLayoutClass | (appLayoutClass === "")
+      ? ""
+      : ", layout=" + appLayoutClass + ".class"
+  })
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
       ${fields}
@@ -13657,7 +13676,7 @@
   `;
 	};
 
-	const unideSplitLayout = packageName => {
+	const unideSplitLayout = (packageName) => {
 	  return `package ${packageName};
 import com.vaadin.flow.component.splitlayout.SplitLayout;
 import com.vaadin.flow.component.Component;
@@ -13677,7 +13696,7 @@ public class UnideSplitLayout extends SplitLayout {
 `;
 	};
 
-	const appShell = packageName => `package ${packageName};
+	const appShell = (packageName) => `package ${packageName};
 
 import com.vaadin.flow.component.page.AppShellConfigurator;
 import com.vaadin.flow.server.PWA;
@@ -13691,7 +13710,7 @@ public class AppShell implements AppShellConfigurator {
 }
 `;
 
-	const application = packageName => `package ${packageName};
+	const application = (packageName) => `package ${packageName};
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -65047,8 +65066,6 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  document.getElementById("attributes").innerHTML = props + "</table>";
-	  e.preventDefault();
-	  e.stopPropagation();
 	};
 
 	/**
@@ -65397,10 +65414,14 @@ public class Application extends SpringBootServletInitializer {
 	  storeProject();
 	  if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
 	    const javaName = kebabToPascalCase(designName);
+	    const appLayoutClass = storedDesigns.settings.useAppLayout
+	      ? storedDesigns.settings.appLayoutClass
+	      : "";
 	    let content = modelToJava(
 	      javaName,
 	      designName,
 	      storedDesigns.settings.packageName,
+	      appLayoutClass,
 	      currentDesign.tree
 	    );
 	    window.Unide.saveFile(
@@ -65523,10 +65544,22 @@ public class Application extends SpringBootServletInitializer {
 
 	  el.shadowRoot.querySelector("#target-folder").value =
 	    settings.packageName || "unide.app";
-	  el.shadowRoot.querySelector("#use-app-layout").checked =
-	    settings.useAppLayout || false;
-	  el.shadowRoot.querySelector("#app-layout-class").value =
-	    settings.appLayoutClass || "";
+	  const useAppLayout = el.shadowRoot.querySelector("#use-app-layout");
+	  useAppLayout.checked = settings.useAppLayout || false;
+	  const appLayoutClass = el.shadowRoot.querySelector("#app-layout-class");
+	  appLayoutClass.value = settings.appLayoutClass || "";
+	  if (!settings.useAppLayout) {
+	    appLayoutClass.setAttribute("disabled", true);
+	  }
+	  useAppLayout.onchange = (event) => {
+	    console.log("perkele" + event.target.checked);
+	    if (event.target.checked) {
+	      appLayoutClass.removeAttribute("disabled");
+	    } else {
+	      appLayoutClass.setAttribute("disabled", true);
+	    }
+	  };
+
 	  el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
 	    showCurrentDesign();
 	  };

@@ -212,8 +212,9 @@
         justify-content: space-between;
       }
 
-      .settings-page > div > div > * {
-        display: inline;
+      .settings-page > div > div > span {
+        display: inline-block;
+        width: 7rem;
       }
 
       .button-bar {
@@ -228,20 +229,20 @@
     <div class="settings-page">
       <div>
         <div>
-          Target package
+          <h1>Project settings</h1>
+          <span>Target package</span>
           <input id="target-folder" type="text"></input>
           <!-- Button only visible on Electron -->
           <button  id="select-folder" hidden>Select</button>      
         </div>
+        <hr>
         <div>
-          <div>
-            Use Applayout 
-            <input id="use-app-layout" type="checkbox"></input>
-          </div>
-          <div>
-            AppLayout class
-            <input id="app-layout-class" type="text"></input>
-          </div>
+          <span>Use Applayout</span>
+          <input id="use-app-layout" type="checkbox"></input>
+        </div>
+        <div>
+          <span>AppLayout class</span>
+          <input id="app-layout-class" type="text"></input>
         </div>
       </div>
       <span class="button-bar">

@@ -37,5 +37,7 @@ test("Java export simple design with app layout", () => {
     ["div", "(", "textContent", "some text content", "=", ")"]
   );
 
-  expect(exportedJava).toContain('@Route("TestDesign", MyAppLayout.class)');
+  expect(exportedJava).toContain(
+    '@Route("TestDesign", layout=MyAppLayout.class)'
+  );
 });

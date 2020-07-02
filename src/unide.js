@@ -271,8 +271,6 @@ const selectElementWithId = (designId) => {
   }
 
   document.getElementById("attributes").innerHTML = props + "</table>";
-  e.preventDefault();
-  e.stopPropagation();
 };
 
 /**
@@ -621,10 +619,14 @@ const saveDesign = () => {
   storeProject();
   if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     const javaName = kebabToPascalCase(designName);
+    const appLayoutClass = storedDesigns.settings.useAppLayout
+      ? storedDesigns.settings.appLayoutClass
+      : "";
     let content = modelToJava(
       javaName,
       designName,
       storedDesigns.settings.packageName,
+      appLayoutClass,
       currentDesign.tree
     );
     window.Unide.saveFile(
@@ -747,10 +749,22 @@ const showProjectSettings = (event) => {
 
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
-  el.shadowRoot.querySelector("#use-app-layout").checked =
-    settings.useAppLayout || false;
-  el.shadowRoot.querySelector("#app-layout-class").value =
-    settings.appLayoutClass || "";
+  const useAppLayout = el.shadowRoot.querySelector("#use-app-layout");
+  useAppLayout.checked = settings.useAppLayout || false;
+  const appLayoutClass = el.shadowRoot.querySelector("#app-layout-class");
+  appLayoutClass.value = settings.appLayoutClass || "";
+  if (!settings.useAppLayout) {
+    appLayoutClass.setAttribute("disabled", true);
+  }
+  useAppLayout.onchange = (event) => {
+    console.log("perkele" + event.target.checked);
+    if (event.target.checked) {
+      appLayoutClass.removeAttribute("disabled");
+    } else {
+      appLayoutClass.setAttribute("disabled", true);
+    }
+  };
+
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
