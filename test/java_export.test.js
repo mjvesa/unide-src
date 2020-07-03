@@ -33,11 +33,12 @@ test("Java export simple design with app layout", () => {
     "TestDesign",
     "test-design",
     "my.test.package",
-    "MyAppLayout",
+    "com.example.pack.MyAppLayout",
     ["div", "(", "textContent", "some text content", "=", ")"]
   );
 
   expect(exportedJava).toContain(
     '@Route("TestDesign", layout=MyAppLayout.class)'
   );
+  expect(exportedJava).toContain("import com.example.pack.MyAppLayout;");
 });

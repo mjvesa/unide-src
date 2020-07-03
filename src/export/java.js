@@ -282,16 +282,20 @@ export const modelToJava = (
     importStrings = importStrings.concat(`${flowImports[tag].import}\n`);
   });
 
+  const useAppLayout = !(appLayoutClass === "");
+  const appLayoutClassParts = appLayoutClass.split(".");
+  const appLayoutClassName =
+    appLayoutClassParts[appLayoutClassParts.length - 1];
+
   return `package ${packageName};
   ${importStrings}
   import java.util.ArrayList;
   import com.vaadin.flow.component.dependency.CssImport;
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
+  ${useAppLayout ? "import " + appLayoutClass + ";" : ""}
   @Route("${pascalCaseName}"${
-    !appLayoutClass | (appLayoutClass === "")
-      ? ""
-      : ", layout=" + appLayoutClass + ".class"
+    useAppLayout ? ", layout=" + appLayoutClassName + ".class" : ""
   })
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
