@@ -271,8 +271,6 @@ const selectElementWithId = (designId) => {
   }
 
   document.getElementById("attributes").innerHTML = props + "</table>";
-  e.preventDefault();
-  e.stopPropagation();
 };
 
 /**
@@ -286,23 +284,6 @@ const selectElement = (e) => {
   const designId = target.getAttribute("data-design-id");
   if (designId) {
     selectElementWithId(designId);
-  }
-};
-
-/**
- * Selects the clicked element and displays its attributes in the
- * attribute panel.
- *
- * @param {*} e
- */
-const selectAndFocusElement = (e) => {
-  const target = getElementAt(e.clientX, e.clientY);
-  const designId = target.getAttribute("data-design-id");
-  // Focusing causes the element to be selected
-  const inputEl = $(`#outline input[data-design-id="${designId}"]`);
-  if (inputEl) {
-    inputEl.focus();
-    inputEl.select();
   }
 };
 
@@ -621,10 +602,14 @@ const saveDesign = () => {
   storeProject();
   if (window.Unide && (window.Unide.inElectron || window.Unide.inVSCode)) {
     const javaName = kebabToPascalCase(designName);
+    const appLayoutClass = storedDesigns.settings.useAppLayout
+      ? storedDesigns.settings.appLayoutClass
+      : "";
     let content = modelToJava(
       javaName,
       designName,
       storedDesigns.settings.packageName,
+      appLayoutClass,
       currentDesign.tree
     );
     window.Unide.saveFile(
@@ -747,12 +732,33 @@ const showProjectSettings = (event) => {
 
   el.shadowRoot.querySelector("#target-folder").value =
     settings.packageName || "unide.app";
+  const useAppLayout = el.shadowRoot.querySelector("#use-app-layout");
+  useAppLayout.checked = settings.useAppLayout || false;
+  const appLayoutClass = el.shadowRoot.querySelector("#app-layout-class");
+  appLayoutClass.value = settings.appLayoutClass || "";
+  if (!settings.useAppLayout) {
+    appLayoutClass.setAttribute("disabled", true);
+  }
+  useAppLayout.onchange = (event) => {
+    console.log("perkele" + event.target.checked);
+    if (event.target.checked) {
+      appLayoutClass.removeAttribute("disabled");
+    } else {
+      appLayoutClass.setAttribute("disabled", true);
+    }
+  };
+
   el.shadowRoot.querySelector("#settings-cancel").onclick = () => {
     showCurrentDesign();
   };
   el.shadowRoot.querySelector("#settings-save").onclick = () => {
-    const packageName = el.shadowRoot.querySelector("#target-folder").value;
-    settings.packageName = packageName;
+    settings.useAppLayout = el.shadowRoot.querySelector(
+      "#use-app-layout"
+    ).checked;
+    settings.appLayoutClass = el.shadowRoot.querySelector(
+      "#app-layout-class"
+    ).value;
+    settings.packageName = el.shadowRoot.querySelector("#target-folder").value;
     storedDesigns.settings = settings;
     storeProject();
     showCurrentDesign();
@@ -800,7 +806,7 @@ const installUIEventHandlers = () => {
   outline.onclick = selectElement;
   const paper = getPaperElement();
   paper.ondragover = placeMarker;
-  paper.onclick = selectAndFocusElement;
+  paper.onclick = selectElement;
   const marker = $("#marker");
   marker.ondrop = dropElement;
   marker.ondragover = placeMarker;

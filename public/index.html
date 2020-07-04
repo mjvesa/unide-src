@@ -212,23 +212,38 @@
         justify-content: space-between;
       }
 
+      .settings-page > div > div > span {
+        display: inline-block;
+        width: 7rem;
+      }
+
       .button-bar {
         display: flex;
         justify-content: space-between;
       }
-      #target-folder {
+      #target-folder, #app-layout-class {
         width: 40rem;
       }
 
     </style>
     <div class="settings-page">
       <div>
-        <span>
-          Target package
+        <div>
+          <h1>Project settings</h1>
+          <span>Target package</span>
           <input id="target-folder" type="text"></input>
           <!-- Button only visible on Electron -->
           <button  id="select-folder" hidden>Select</button>      
-        </span>
+        </div>
+        <hr>
+        <div>
+          <span>Use App Layout</span>
+          <input id="use-app-layout" type="checkbox"></input>
+        </div>
+        <div>
+          <span>App Layout class</span>
+          <input id="app-layout-class" type="text"></input>
+        </div>
       </div>
       <span class="button-bar">
           <button id="settings-cancel">Cancel</button>
@@ -239,7 +254,7 @@
 
   <!-- Header fields and buttons-->
   <div id="design-details">
-    <span>Unide 0.4.1</span>
+    <span>Unide 0.5.0</span>
     <button id="project-settings">Settings</button>
     <button id="new-design">New Design</button>
     <button id="sketch-design">Sketch</button>
