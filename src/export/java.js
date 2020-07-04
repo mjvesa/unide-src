@@ -294,8 +294,8 @@ export const modelToJava = (
   import com.vaadin.flow.router.PageTitle;
   import com.vaadin.flow.router.Route;
   ${useAppLayout ? "import " + appLayoutClass + ";" : ""}
-  @Route("${pascalCaseName}"${
-    useAppLayout ? ", layout=" + appLayoutClassName + ".class" : ""
+  @Route(${useAppLayout ? "value = " : ""}"${pascalCaseName}"${
+    useAppLayout ? ", layout = " + appLayoutClassName + ".class" : ""
   })
   @CssImport("styles/${tag}.css")
   public class ${pascalCaseName} extends Div {
