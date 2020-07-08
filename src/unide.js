@@ -33,6 +33,7 @@ import { cssPropertyTypes } from "./css-proprety-types";
 import { cssProperties } from "./css-properties.js";
 import { enterSketchMode } from "./sketch-mode";
 import { ATIRToXML, XMLToATIR } from "./xml";
+import { generateCrudFromBean } from "./crud_generator.js";
 
 // Global variables
 const $ = document.querySelector.bind(document);
@@ -709,6 +710,23 @@ const newDesign = () => {
   showCurrentDesign();
 };
 
+const newDesignFromBean = () => {
+  const el = $("#visual-editor");
+  const node = document.importNode($("#crudgen-template").content, true);
+  el.shadowRoot.innerHTML = "";
+  el.shadowRoot.appendChild(node);
+
+  const button = el.shadowRoot.querySelector("#generate-crud-button");
+  button.onclick = () => {
+    const ta = el.shadowRoot.querySelector("#bean-source");
+    $("#design-name").value = "";
+    const crud = generateCrudFromBean(ta.value);
+    currentDesign = { css: "", tree: crud };
+    designStack.push(currentDesign);
+    showCurrentDesign();
+  };
+};
+
 const shareDesigns = () => {
   const designs = btoa(JSON.stringify(storedDesigns));
   const shareLink = window.location.href + "?share=" + designs;
@@ -823,6 +841,7 @@ const installUIEventHandlers = () => {
   $("#sketch-design").onclick = switchToSketchMode;
   $("#delete-design").onclick = deleteDesign;
   $("#new-design").onclick = newDesign;
+  $("#new-design-from-bean").onclick = newDesignFromBean;
   $("#share-designs").onclick = shareDesigns;
   $("#project-settings").onclick = showProjectSettings;
   $("#html-mode").onclick = toggleXMLMode;
