@@ -25,6 +25,13 @@ test("Generated tree has all fields", () => {
   expect(crud).toEqual(expect.arrayContaining(["label", "Notes", "="]));
 });
 
+test("Generated tree contains entity", () => {
+  const crud = generateCrudFromBean(exampleBean);
+  expect(crud).toEqual(
+    expect.arrayContaining(["entity", "com.example.Employee", "="])
+  );
+});
+
 test("Grid captions are proper JSON", (done) => {
   const crud = generateCrudFromBean(exampleBean);
   const captionsJSON = crud[crud.indexOf("columnCaptions") + 1];
@@ -47,7 +54,7 @@ test("Grid items are proper JSON", (done) => {
   }
 });
 
-const tinyBean = `package com.example
+const tinyBean = `package com.example;
 
 public class Bean {
 
@@ -66,7 +73,7 @@ public class Bean {
 }
 `;
 
-const exampleBean = `package com.example
+const exampleBean = `package com.example;
 
 
 public class Employee {

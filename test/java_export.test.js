@@ -40,3 +40,29 @@ test("Java export simple design with app layout", () => {
   );
   expect(exportedJava).toContain("import com.example.pack.MyAppLayout;");
 });
+
+test("Grid content generated without entity", () => {
+  const div = document.createElement("div");
+  const exportedJava = modelToJava(
+    "TestDesign",
+    "test-design",
+    "my.test.package",
+    "com.example.pack.MyAppLayout",
+    [
+      "unide-grid",
+      "(",
+      "columnNames",
+      "some text content",
+      "=",
+      "items",
+      "",
+      ")",
+    ]
+  );
+
+  expect(exportedJava).toContain(
+    '@Route(value = "TestDesign", layout = MyAppLayout.class)'
+  );
+  expect(exportedJava).toContain("import com.example.pack.MyAppLayout;");
+});
+test("Entity results in no grid content", () => {});

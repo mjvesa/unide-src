@@ -13361,6 +13361,10 @@ let z,M,C=/(url\()([^)]*)(\))/g,k=/(^\/[^\/])|(^#)|(^[\w-\d]*:)/;function S(t,e)
 	    name: "PasswordField",
 	    import: "import com.vaadin.flow.component.textfield.PasswordField;",
 	  },
+	  "vaadin-number-field": {
+	    name: "NumberField",
+	    import: "import com.vaadin.flow.component.textfield.NumberField;",
+	  },
 	  "vaadin-text-area": {
 	    name: "TextArea",
 	    import: "import com.vaadin.flow.component.textfield.TextArea;",
@@ -66443,27 +66447,37 @@ const Kl=(()=>{try{return document.createEvent("TouchEvent"),!0}catch(t){return!
 	 */
 
 	const FIELD_TYPES = {
-	  String: "vaadin-text-field",
-	  Boolean: "vaadin-checkbox",
-	  Integer: "vaadin-number-field",
-	  Long: "vaadin-number-field",
+	  String: ["vaadin-text-field", "(", "label", "*placeholder*", "=", ")"],
+	  Boolean: ["vaadin-checkbox", "(", "textContent", "*placeholder*", "=", ")"],
+	  Integer: ["vaadin-number-field", "(", "label", "*placeholder*", "=", ")"],
+	  Long: ["vaadin-number-field", "(", "label", "*placeholder*", "=", ")"],
 	};
 	const generateCrudFromBean = (bean) => {
-	  const matcher = /([A-Z]\S*)\s(get|is)(\S*)\(/g;
-	  const matches = bean.matchAll(matcher);
+	  const getterMatcher = /([A-Z]\S*)\s(get|is)(\S*)\(/g;
+	  const packageMatcher = /package\s([a-z]+(\.[a-z]+)*);/;
+	  const classNameMatcher = /public\s+class\s+([A-Z][a-z]*)\s*{/;
+	  const matches = bean.matchAll(getterMatcher);
+	  const className = bean.match(classNameMatcher);
+	  const packageName = bean.match(packageMatcher);
 	  let fields = [];
 	  let gridColumns = "";
 	  let paths = [];
 
 	  for (let match of matches) {
-	    let fieldType = FIELD_TYPES[match[1]] || "vaadin-text-field";
-
-	    fields = fields.concat(fieldType, "(", "label", match[3], "=", ")");
+	    let fieldCode = FIELD_TYPES[match[1]].slice() || [
+	      "vaadin-text-field",
+	      "(",
+	      "label",
+	      "*placeholder*",
+	      "=",
+	      ")",
+	    ];
+	    fieldCode[fieldCode.indexOf("*placeholder*")] = match[3];
+	    fields = fields.concat(fieldCode);
 
 	    gridColumns =
-	      gridColumns +
-	      `{\"name\": \"${match[3]}\", \"path\": \"${match[3].toLowerCase()}\"},`;
-	    paths.push(match[3].toLowerCase());
+	      gridColumns + `{\"name\": \"${match[3]}\", \"path\": \"${match[3]}\"},`;
+	    paths.push(match[3]);
 	  }
 
 	  let items = "";
@@ -66495,6 +66509,9 @@ const Kl=(()=>{try{return document.createEvent("TouchEvent"),!0}catch(t){return!
 	      "=",
 	      "items",
 	      "[" + items.substring(0, items.length - 1) + "]",
+	      "=",
+	      "entity",
+	      packageName[1] + "." + className[1],
 	      "=",
 	      ")",
 	    ])

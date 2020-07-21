@@ -121,6 +121,10 @@ const flowImports = {
     name: "PasswordField",
     import: "import com.vaadin.flow.component.textfield.PasswordField;",
   },
+  "vaadin-number-field": {
+    name: "NumberField",
+    import: "import com.vaadin.flow.component.textfield.NumberField;",
+  },
   "vaadin-text-area": {
     name: "TextArea",
     import: "import com.vaadin.flow.component.textfield.TextArea;",
