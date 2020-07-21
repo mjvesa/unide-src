@@ -15,12 +15,12 @@ const childOf = (rectA, rectB) => {
   );
 };
 
-const isSquarish = rect => {
+const isSquarish = (rect) => {
   const ratio = (rect.right - rect.left) / (rect.bottom - rect.top);
   return ratio > 0.7 && ratio < 1.3;
 };
 
-const isCheckBox = rect => {
+const isCheckBox = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
 
@@ -33,7 +33,7 @@ const isCheckBox = rect => {
   );
 };
 
-const isRadioButton = rect => {
+const isRadioButton = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
 
@@ -47,12 +47,12 @@ const isRadioButton = rect => {
   );
 };
 
-const isRadioGroup = rect => {
+const isRadioGroup = (rect) => {
   if (!rect.children) {
     return false;
   }
   let result = true;
-  rect.children.forEach(rect => {
+  rect.children.forEach((rect) => {
     if (!isRadioButton(rect)) {
       result = false;
     }
@@ -60,12 +60,12 @@ const isRadioGroup = rect => {
   return result;
 };
 
-const isCheckBoxGroup = rect => {
+const isCheckBoxGroup = (rect) => {
   if (!rect.children) {
     return false;
   }
   let result = true;
-  rect.children.forEach(rect => {
+  rect.children.forEach((rect) => {
     if (!isCheckBox(rect)) {
       result = false;
     }
@@ -73,19 +73,19 @@ const isCheckBoxGroup = rect => {
   return result;
 };
 
-const isSpan = rect => {
+const isSpan = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h > 2 && h < 100 && rect.text && rect.text.includes("#");
 };
 
-const isButton = rect => {
+const isButton = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h > 2 && w < 150 && h < 100 && !rect.children;
 };
 
-const isSelect = rect => {
+const isSelect = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return (
@@ -93,50 +93,50 @@ const isSelect = rect => {
   );
 };
 
-const isGrid = rect => {
+const isGrid = (rect) => {
   const h = rect.bottom - rect.top;
   return h > 100 && rect.text && rect.text.includes(",");
 };
 
-const isComboBox = rect => {
+const isComboBox = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h > 2 && h < 100 && rect.text && rect.text.includes(";");
 };
 
-const isTextField = rect => {
+const isTextField = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h > 2 && w > 150 && h < 50; // && !rect.children && !rect.text;
 };
 
-const isPasswordField = rect => {
+const isPasswordField = (rect) => {
   return isTextField(rect) && rect.text && rect.text.includes("*");
 };
 
-const isDatePicker = rect => {
+const isDatePicker = (rect) => {
   return isTextField(rect) && rect.text && rect.text.includes("$date");
 };
 
-const isTimePicker = rect => {
+const isTimePicker = (rect) => {
   return isTextField(rect) && rect.text && rect.text.includes("$time");
 };
 
-const isNumberField = rect => {
+const isNumberField = (rect) => {
   return isTextField(rect) && rect.text && rect.text.includes("$number");
 };
 
-const isEmailField = rect => {
+const isEmailField = (rect) => {
   return isTextField(rect) && rect.text && rect.text.includes("$email");
 };
 
-const isVerticalLayout = rect => {
+const isVerticalLayout = (rect) => {
   if (!rect.children || rect.children.length < 2) {
     return false;
   }
   let result = true;
-  rect.children.forEach(outer => {
-    rect.children.forEach(inner => {
+  rect.children.forEach((outer) => {
+    rect.children.forEach((inner) => {
       const hdiff = Math.abs(outer.left - inner.left);
       const vdiff = Math.abs(outer.top - inner.top);
       if (hdiff > vdiff) {
@@ -148,13 +148,13 @@ const isVerticalLayout = rect => {
   return result;
 };
 
-const isHorizontalLayout = rect => {
+const isHorizontalLayout = (rect) => {
   if (!rect.children || rect.children.length < 2) {
     return false;
   }
   let result = true;
-  rect.children.forEach(outer => {
-    rect.children.forEach(inner => {
+  rect.children.forEach((outer) => {
+    rect.children.forEach((inner) => {
       const hdiff = Math.abs(outer.left - inner.left);
       const vdiff = Math.abs(outer.top - inner.top);
       if (hdiff < vdiff) {
@@ -166,7 +166,7 @@ const isHorizontalLayout = rect => {
   return result;
 };
 
-const rectArea = rect => {
+const rectArea = (rect) => {
   const w = Math.abs(rect.right - rect.left);
   const h = Math.abs(rect.bottom - rect.top);
   return w * h;
@@ -185,10 +185,10 @@ const rectsIntersect = (rectA, rectB) => {
   );
 };
 
-const getSmallestRect = rects => {
+const getSmallestRect = (rects) => {
   let smallestArea = rectArea(rects[0]);
   let smallest = rects[0];
-  rects.forEach(rect => {
+  rects.forEach((rect) => {
     if (rectArea(rect) < smallestArea) {
       smallestArea = rectArea(rect);
       smallest = rect;
@@ -197,26 +197,26 @@ const getSmallestRect = rects => {
   return smallest;
 };
 
-const isSplitLayout = rect => {
+const isSplitLayout = (rect) => {
   if (!rect.children || rect.children.length !== 3) {
     return false;
   }
 
   const smallest = getSmallestRect(rect.children);
-  const others = rect.children.filter(rect => rect !== smallest);
+  const others = rect.children.filter((rect) => rect !== smallest);
 
   return (
     rectsIntersect(others[0], smallest) && rectsIntersect(others[1], smallest)
   );
 };
 
-const isTabs = rect => {
+const isTabs = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h > 2 && rect.text && rect.text.includes("|");
 };
 
-const isGridLayout = rect => {
+const isGridLayout = (rect) => {
   return rect.children && rect.children.length > 1 ? true : false;
 };
 
@@ -239,11 +239,11 @@ const heuristics = [
   [isGrid, "unide-grid"],
   [isSplitLayout, "vaadin-split-layout"],
   [isVerticalLayout, "div"],
-  [isHorizontalLayout, "div"]
+  [isHorizontalLayout, "div"],
   // [isGridLayout, "grid-layout"]
 ];
 
-const getTagForRect = rect => {
+const getTagForRect = (rect) => {
   for (let i = 0; i < heuristics.length; i++) {
     const heuristic = heuristics[i];
     if (heuristic[0](rect)) {
@@ -253,12 +253,12 @@ const getTagForRect = rect => {
   return "div";
 };
 
-const createTreeFromRects = rects => {
+const createTreeFromRects = (rects) => {
   const roots = [];
-  rects.forEach(rect => {
+  rects.forEach((rect) => {
     let smallestArea = 10000000;
     let potentialParent;
-    rects.forEach(parentRect => {
+    rects.forEach((parentRect) => {
       const area =
         Math.abs(parentRect.right - parentRect.left) *
         Math.abs(parentRect.bottom - parentRect.top);
@@ -285,8 +285,16 @@ const showCurrentGuess = (rect, rects) => {
   el.style.left = rect.left + "px";
 
   createTreeFromRects(rects);
-  el.textContent = getTagForRect(rect).replace("vaadin-", "");
-  rects.forEach(rect => {
+  const tag = getTagForRect(rect);
+  el.textContent = tag.replace("vaadin-", "");
+  el.setAttribute("data-guess", tag);
+  rects.forEach((rect) => {
+    delete rect.children;
+  });
+};
+
+const clearChildren = (rects) => {
+  rects.forEach((rect) => {
     delete rect.children;
   });
 };
@@ -295,18 +303,22 @@ const hideCurrentGuess = () => {
   $("#current-guess").style.display = "none";
 };
 
-const rectRatio = rect => {
+const rectRatio = (rect) => {
   const w = rect.right - rect.left;
   const h = rect.bottom - rect.top;
   return w / h;
 };
 
-const createAndAppendChildElements = rects => {
+const getWord = () => {
+  return ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
+};
+
+const createAndAppendChildElements = (rects) => {
   let tree = [];
   const setAttribute = (name, value) => {
     tree.push(name, value, "=");
   };
-  rects.forEach(rect => {
+  rects.forEach((rect) => {
     const children = [];
     let styles = "";
     const tagName = getTagForRect(rect);
@@ -359,7 +371,7 @@ const createAndAppendChildElements = rects => {
       let columnWidth = 0;
       let maxColumnWidth = 0;
       let previous = rect.children[0];
-      rect.children.forEach(rect => {
+      rect.children.forEach((rect) => {
         if (previous.left > rect.left) {
           if (columnWidth > maxColumnWidth) {
             maxColumnWidth = columnWidth;
@@ -376,7 +388,7 @@ const createAndAppendChildElements = rects => {
     if (tagName === "vaadin-split-layout") {
       // remove drag handle rect
       const smallest = getSmallestRect(rect.children);
-      rect.children = rect.children.filter(rect => rect !== smallest);
+      rect.children = rect.children.filter((rect) => rect !== smallest);
       // determine orientation
       const child = rect.children[0];
       if (
@@ -396,25 +408,25 @@ const createAndAppendChildElements = rects => {
       if (tagName == "unide-grid") {
         const columns = rect.text.split(",");
         const columnCaptions = [];
-        columns.forEach(column => {
+        columns.forEach((column) => {
           columnCaptions.push({ name: column, path: column });
         });
         setAttribute("columnCaptions", JSON.stringify(columnCaptions));
         const items = [];
         for (let i = 0; i < 10; i++) {
           const item = {};
-          columns.forEach(column => {
-            item[column] = ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
+          columns.forEach((column) => {
+            item[column] = getWord();
           });
           items.push(item);
         }
         setAttribute("items", JSON.stringify(items));
       } else if (rect.text.includes(",")) {
-        rect.text.split(",").forEach(str => {
+        rect.text.split(",").forEach((str) => {
           children.push("vaadin-item", "(", "textContent", str, "=", ")");
         });
       } else if (rect.text.includes("|")) {
-        rect.text.split("|").forEach(str => {
+        rect.text.split("|").forEach((str) => {
           children.push("vaadin-tab", "(", "textContent", str, "=", ")");
         });
       } else if (rect.text.includes(";")) {
@@ -422,6 +434,21 @@ const createAndAppendChildElements = rects => {
       } else {
         setAttribute("textContent", rect.text.replace("#", ""));
       }
+    }
+
+    if (tagName === "vaadin-button") {
+      setAttribute("textContent", getWord());
+      setAttribute("theme", "primary");
+    }
+
+    if (
+      [
+        "vaadin-text-field",
+        "vaadin-password-field",
+        "vaadin-date-field",
+      ].includes(tagName)
+    ) {
+      setAttribute("label", getWord());
     }
 
     if (rect.children) {
@@ -456,13 +483,149 @@ const createAndAppendChildElements = rects => {
   return tree;
 };
 
-const fixZIndexes = rects => {
+const createAndAppendChildElementsToDOM = (parent, rects) => {
+  rects.forEach((rect) => {
+    let tagName = getTagForRect(rect);
+    tagName = tagName.replace("unide-grid", "vaadin-grid");
+    let el = document.createElement(tagName);
+    el.style.left = rect.left + "px";
+    el.style.top = rect.top + "px";
+    el.style.minWidth = rect.right - rect.left + "px";
+    el.style.minHeight = rect.bottom - rect.top + "px";
+
+    // if (
+    //   tagName !== "grid-layout" &&
+    //   tagName !== "vaadin-vertical-layout" &&
+    //   tagName !== "vaadin-horizontal-layout"
+    // ) {
+    //   el.style.margin = "0.5em";
+    // }
+
+    if (
+      tagName === "vaadin-radio-group" ||
+      tagName === "vaadin-checkbox-group"
+    ) {
+      if (rectRatio(rect) < 1) {
+        el.setAttribute("theme", "vertical");
+      }
+    }
+
+    if (tagName === "vaadin-vertical-layout") {
+      rect.children.sort((rectA, rectB) => {
+        return rectA.top - rectB.top;
+      });
+    }
+
+    if (tagName === "vaadin-horizontal-layout") {
+      rect.children.sort((rectA, rectB) => {
+        return rectA.left - rectB.left;
+      });
+    }
+
+    if (tagName === "grid-layout") {
+      el.style.display = "grid";
+      // Sort into left-right and top down order
+      rect.children.sort((rectA, rectB) => {
+        return (
+          rectA.left +
+          (rectA.top - rect.top - ((rectA.top - rect.top) % 50)) * 8192 -
+          (rectB.left +
+            (rectB.top - rect.top - ((rectB.top - rect.top) % 50)) * 8192)
+        );
+      });
+      let columnWidth = 0;
+      let maxColumnWidth = 0;
+      let previous = rect.children[0];
+      rect.children.forEach((rect) => {
+        if (previous.left > rect.left) {
+          if (columnWidth > maxColumnWidth) {
+            maxColumnWidth = columnWidth;
+          }
+          columnWidth = 0;
+        }
+        columnWidth++;
+        previous = rect;
+      });
+      el.style.gridTemplateColumns = `repeat(${maxColumnWidth}, auto)`;
+    }
+
+    if (tagName === "vaadin-split-layout") {
+      // remove drag handle rect
+      const smallest = getSmallestRect(rect.children);
+      rect.children = rect.children.filter((rect) => rect !== smallest);
+      // determine orientation
+      const child = rect.children[0];
+      if (
+        pointInsideRect(child, smallest.left, smallest.top) !==
+        pointInsideRect(child, smallest.left, smallest.bottom)
+      ) {
+        el.setAttribute("orientation", "vertical");
+      }
+    }
+
+    // Handle text content in rect
+    if (
+      rect.text &&
+      tagName !== "vaadin-radio-button" &&
+      tagName !== "vaadin-checkbox"
+    ) {
+      if (tagName == "vaadin-grid") {
+        const columnNames = rect.text.split(",");
+        columnNames.forEach((columnName) => {
+          const column = document.createElement("vaadin-grid-column");
+          column.setAttribute("path", columnName);
+          column.setAttribute("header", columnName);
+          el.appendChild(column);
+        });
+        let items = [];
+        for (let i = 0; i < 200; i++) {
+          let item = {};
+          columnNames.forEach((columnName) => {
+            item[columnName] = getWord();
+          });
+          items.push(item);
+        }
+        el.items = items;
+      } else if (rect.text.includes(",")) {
+        rect.text.split(",").forEach((str) => {
+          let item = document.createElement("vaadin-item");
+          item.textContent = str;
+          el.appendChild(item);
+        });
+      } else if (rect.text.includes("|")) {
+        rect.text.split("|").forEach((str) => {
+          let tab = document.createElement("vaadin-tab");
+          tab.textContent = str;
+          el.appendChild(tab);
+        });
+      } else if (rect.text.includes(";")) {
+        el.items = rect.text.split(";");
+      } else {
+        el.textContent = rect.text.replace("#", "");
+      }
+    }
+    el.setAttribute("label", getWord());
+
+    if (tagName === "vaadin-button") {
+      el.textContent = getWord();
+      el.setAttribute("theme", "primary");
+    }
+
+    parent.appendChild(el);
+    if (rect.children) {
+      createAndAppendChildElementsToDOM(parent, rect.children);
+    }
+  });
+};
+
+const fixZIndexes = (rects) => {
   const fixInternal = (rects, zIndex) => {
-    rects.forEach(rect => {
+    rects.forEach((rect) => {
       if (rect.el) {
         rect.el.style.zIndex = zIndex;
-        rect.el.style.backgroundColor = `rgb(${255 - zIndex * 32},${255 -
-          zIndex * 32},255)`;
+        rect.el.style.backgroundColor = `rgb(${255 - zIndex * 32},${
+          255 - zIndex * 32
+        },${255 - zIndex * 32})`;
 
         if (rect.children) {
           fixInternal(rect.children, zIndex + 1);
@@ -486,11 +649,30 @@ export const enterSketchMode = (targetEl, designCallback) => {
     #sketch-canvas {
         height: 100%;
     }
+    #preview-canvas {
+      position: absolute;
+      height: 100%;
+      margin-top: -100%;
+      pointer-events: none;
+    }
+
+    #preview-canvas * {
+      position: fixed;
+    }
+
+    #preview-canvas vaadin-tab {
+      position: relative;
+    }
+
     #sketch-canvas div {
         border: solid 1px black;
         position: absolute;
-      }
-    #current-guess {
+        opacity: 0.1;
+    }
+    #sketch-canvas div:hover {
+      opacity: 0.8;
+    }
+      #current-guess {
         display: none;
         position: absolute;
         z-index: 10000;
@@ -498,10 +680,11 @@ export const enterSketchMode = (targetEl, designCallback) => {
   </style>
   <span id="current-guess"></span>
   <vaadin-button id="generate-button"><iron-icon icon="vaadin:vaadin-h"></iron-icon></vaadin-button>
-  <div id="sketch-canvas"></div>`;
+  <div id="sketch-canvas"></div>
+  <div id="preview-canvas"></div>`;
 
   const canvas = $("#sketch-canvas");
-  canvas.onkeypress = event => {
+  canvas.onkeypress = (event) => {
     if (event.key === "Delete") {
       if (focusedElement) {
         rects.remove(focusedElement.rect);
@@ -510,19 +693,20 @@ export const enterSketchMode = (targetEl, designCallback) => {
     }
   };
 
-  canvas.onmousedown = event => {
+  canvas.onmousedown = (event) => {
     draggedEl = document.createElement("div");
     draggedEl.style.zIndex = 1000;
     draggedRect = { el: draggedEl };
 
     draggedEl.rect = draggedRect;
     draggedEl.contentEditable = true;
-    draggedEl.oninput = event => {
+    draggedEl.oninput = (event) => {
       event.target.rect.text = event.target.textContent;
       showCurrentGuess(event.target.rect, rects);
+      updatePreview();
     };
 
-    draggedEl.onmouseover = event => {
+    draggedEl.onmouseover = (event) => {
       event.target.focus();
       focusedElement = event.target;
       showCurrentGuess(event.target.rect, rects);
@@ -541,7 +725,7 @@ export const enterSketchMode = (targetEl, designCallback) => {
     canvas.appendChild(draggedEl);
   };
 
-  canvas.onmousemove = event => {
+  canvas.onmousemove = (event) => {
     if (draggedEl) {
       draggedEl.style.width = event.clientX - originX + "px";
       draggedEl.style.height = event.clientY - originY + "px";
@@ -549,7 +733,7 @@ export const enterSketchMode = (targetEl, designCallback) => {
         left: originX,
         top: originY,
         right: event.clientX,
-        bottom: event.clientY
+        bottom: event.clientY,
       });
       showCurrentGuess(draggedRect, rects);
     }
@@ -559,12 +743,23 @@ export const enterSketchMode = (targetEl, designCallback) => {
     rects.push(draggedRect);
     draggedEl = undefined;
     hideCurrentGuess();
-    fixZIndexes(createTreeFromRects(rects));
+    const roots = createTreeFromRects(rects);
+    fixZIndexes(roots);
+    updatePreview();
+  };
+
+  const updatePreview = () => {
+    clearChildren(rects);
+    $("#preview-canvas").innerHTML = "";
+    createAndAppendChildElementsToDOM(
+      $("#preview-canvas"),
+      createTreeFromRects(rects)
+    );
   };
 
   $("#generate-button").onclick = () => {
     hideCurrentGuess();
-    const roots = createTreeFromRects(rects);
-    designCallback(createAndAppendChildElements(roots));
+    clearChildren(rects);
+    designCallback(createAndAppendChildElements(createTreeFromRects(rects)));
   };
 };

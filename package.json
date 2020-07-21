@@ -41,7 +41,7 @@
     "@vaadin/vaadin-grid": "^5.4.8",
     "@vaadin/vaadin-tabs": "^3.0.4",
     "codemirror": "^5.44.0",
-    "electron": "^6.0.9",
+    "electron": "^9.1.0",
     "file-saver": "^2.0.0-rc.4",
     "jszip": "^3.1.5",
     "jszip-utils": "^0.1.0",
