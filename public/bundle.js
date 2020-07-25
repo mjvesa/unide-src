@@ -180,10 +180,28 @@
 	    }
 	  }
 
-	  var Delayed = function() {this.id = null;};
+	  var Delayed = function() {
+	    this.id = null;
+	    this.f = null;
+	    this.time = 0;
+	    this.handler = bind(this.onTimeout, this);
+	  };
+	  Delayed.prototype.onTimeout = function (self) {
+	    self.id = 0;
+	    if (self.time <= +new Date) {
+	      self.f();
+	    } else {
+	      setTimeout(self.handler, self.time - +new Date);
+	    }
+	  };
 	  Delayed.prototype.set = function (ms, f) {
-	    clearTimeout(this.id);
-	    this.id = setTimeout(f, ms);
+	    this.f = f;
+	    var time = +new Date + ms;
+	    if (!this.id || time < this.time) {
+	      clearTimeout(this.id);
+	      this.id = setTimeout(this.handler, ms);
+	      this.time = time;
+	    }
 	  };
 
 	  function indexOf(array, elt) {
@@ -193,7 +211,7 @@
 	  }
 
 	  // Number of pixels added to scroller and sizer to hide scrollbar
-	  var scrollerGap = 30;
+	  var scrollerGap = 50;
 
 	  // Returned or thrown by various protocols to signal 'I'm not
 	  // handling this'.
@@ -299,108 +317,582 @@
 	    }
 	  }
 
-	  // The display handles the DOM integration, both for input reading
-	  // and content drawing. It holds references to DOM nodes and
-	  // display-related state.
+	  // BIDI HELPERS
 
-	  function Display(place, doc, input) {
-	    var d = this;
-	    this.input = input;
+	  function iterateBidiSections(order, from, to, f) {
+	    if (!order) { return f(from, to, "ltr", 0) }
+	    var found = false;
+	    for (var i = 0; i < order.length; ++i) {
+	      var part = order[i];
+	      if (part.from < to && part.to > from || from == to && part.to == from) {
+	        f(Math.max(part.from, from), Math.min(part.to, to), part.level == 1 ? "rtl" : "ltr", i);
+	        found = true;
+	      }
+	    }
+	    if (!found) { f(from, to, "ltr"); }
+	  }
 
-	    // Covers bottom-right square when both scrollbars are present.
-	    d.scrollbarFiller = elt("div", null, "CodeMirror-scrollbar-filler");
-	    d.scrollbarFiller.setAttribute("cm-not-content", "true");
-	    // Covers bottom of gutter when coverGutterNextToScrollbar is on
-	    // and h scrollbar is present.
-	    d.gutterFiller = elt("div", null, "CodeMirror-gutter-filler");
-	    d.gutterFiller.setAttribute("cm-not-content", "true");
-	    // Will contain the actual code, positioned to cover the viewport.
-	    d.lineDiv = eltP("div", null, "CodeMirror-code");
-	    // Elements are added to these to represent selection and cursors.
-	    d.selectionDiv = elt("div", null, null, "position: relative; z-index: 1");
-	    d.cursorDiv = elt("div", null, "CodeMirror-cursors");
-	    // A visibility: hidden element used to find the size of things.
-	    d.measure = elt("div", null, "CodeMirror-measure");
-	    // When lines outside of the viewport are measured, they are drawn in this.
-	    d.lineMeasure = elt("div", null, "CodeMirror-measure");
-	    // Wraps everything that needs to exist inside the vertically-padded coordinate system
-	    d.lineSpace = eltP("div", [d.measure, d.lineMeasure, d.selectionDiv, d.cursorDiv, d.lineDiv],
-	                      null, "position: relative; outline: none");
-	    var lines = eltP("div", [d.lineSpace], "CodeMirror-lines");
-	    // Moved around its parent to cover visible view.
-	    d.mover = elt("div", [lines], null, "position: relative");
-	    // Set to the height of the document, allowing scrolling.
-	    d.sizer = elt("div", [d.mover], "CodeMirror-sizer");
-	    d.sizerWidth = null;
-	    // Behavior of elts with overflow: auto and padding is
-	    // inconsistent across browsers. This is used to ensure the
-	    // scrollable area is big enough.
-	    d.heightForcer = elt("div", null, null, "position: absolute; height: " + scrollerGap + "px; width: 1px;");
-	    // Will contain the gutters, if any.
-	    d.gutters = elt("div", null, "CodeMirror-gutters");
-	    d.lineGutter = null;
-	    // Actual scrollable element.
-	    d.scroller = elt("div", [d.sizer, d.heightForcer, d.gutters], "CodeMirror-scroll");
-	    d.scroller.setAttribute("tabIndex", "-1");
-	    // The element in which the editor lives.
-	    d.wrapper = elt("div", [d.scrollbarFiller, d.gutterFiller, d.scroller], "CodeMirror");
+	  var bidiOther = null;
+	  function getBidiPartAt(order, ch, sticky) {
+	    var found;
+	    bidiOther = null;
+	    for (var i = 0; i < order.length; ++i) {
+	      var cur = order[i];
+	      if (cur.from < ch && cur.to > ch) { return i }
+	      if (cur.to == ch) {
+	        if (cur.from != cur.to && sticky == "before") { found = i; }
+	        else { bidiOther = i; }
+	      }
+	      if (cur.from == ch) {
+	        if (cur.from != cur.to && sticky != "before") { found = i; }
+	        else { bidiOther = i; }
+	      }
+	    }
+	    return found != null ? found : bidiOther
+	  }
 
-	    // Work around IE7 z-index bug (not perfect, hence IE7 not really being supported)
-	    if (ie && ie_version < 8) { d.gutters.style.zIndex = -1; d.scroller.style.paddingRight = 0; }
-	    if (!webkit && !(gecko && mobile)) { d.scroller.draggable = true; }
+	  // Bidirectional ordering algorithm
+	  // See http://unicode.org/reports/tr9/tr9-13.html for the algorithm
+	  // that this (partially) implements.
 
-	    if (place) {
-	      if (place.appendChild) { place.appendChild(d.wrapper); }
-	      else { place(d.wrapper); }
+	  // One-char codes used for character types:
+	  // L (L):   Left-to-Right
+	  // R (R):   Right-to-Left
+	  // r (AL):  Right-to-Left Arabic
+	  // 1 (EN):  European Number
+	  // + (ES):  European Number Separator
+	  // % (ET):  European Number Terminator
+	  // n (AN):  Arabic Number
+	  // , (CS):  Common Number Separator
+	  // m (NSM): Non-Spacing Mark
+	  // b (BN):  Boundary Neutral
+	  // s (B):   Paragraph Separator
+	  // t (S):   Segment Separator
+	  // w (WS):  Whitespace
+	  // N (ON):  Other Neutrals
+
+	  // Returns null if characters are ordered as they appear
+	  // (left-to-right), or an array of sections ({from, to, level}
+	  // objects) in the order in which they occur visually.
+	  var bidiOrdering = (function() {
+	    // Character types for codepoints 0 to 0xff
+	    var lowTypes = "bbbbbbbbbtstwsbbbbbbbbbbbbbbssstwNN%%%NNNNNN,N,N1111111111NNNNNNNLLLLLLLLLLLLLLLLLLLLLLLLLLNNNNNNLLLLLLLLLLLLLLLLLLLLLLLLLLNNNNbbbbbbsbbbbbbbbbbbbbbbbbbbbbbbbbb,N%%%%NNNNLNNNNN%%11NLNNN1LNNNNNLLLLLLLLLLLLLLLLLLLLLLLNLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLN";
+	    // Character types for codepoints 0x600 to 0x6f9
+	    var arabicTypes = "nnnnnnNNr%%r,rNNmmmmmmmmmmmrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnn%nnrrrmrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrmmmmmmmnNmmmmmmrrmmNmmmmrr1111111111";
+	    function charType(code) {
+	      if (code <= 0xf7) { return lowTypes.charAt(code) }
+	      else if (0x590 <= code && code <= 0x5f4) { return "R" }
+	      else if (0x600 <= code && code <= 0x6f9) { return arabicTypes.charAt(code - 0x600) }
+	      else if (0x6ee <= code && code <= 0x8ac) { return "r" }
+	      else if (0x2000 <= code && code <= 0x200b) { return "w" }
+	      else if (code == 0x200c) { return "b" }
+	      else { return "L" }
 	    }
 
-	    // Current rendered range (may be bigger than the view window).
-	    d.viewFrom = d.viewTo = doc.first;
-	    d.reportedViewFrom = d.reportedViewTo = doc.first;
-	    // Information about the rendered lines.
-	    d.view = [];
-	    d.renderedView = null;
-	    // Holds info about a single rendered line when it was rendered
-	    // for measurement, while not in view.
-	    d.externalMeasured = null;
-	    // Empty space (in pixels) above the view
-	    d.viewOffset = 0;
-	    d.lastWrapHeight = d.lastWrapWidth = 0;
-	    d.updateLineNumbers = null;
+	    var bidiRE = /[\u0590-\u05f4\u0600-\u06ff\u0700-\u08ac]/;
+	    var isNeutral = /[stwN]/, isStrong = /[LRr]/, countsAsLeft = /[Lb1n]/, countsAsNum = /[1n]/;
 
-	    d.nativeBarWidth = d.barHeight = d.barWidth = 0;
-	    d.scrollbarsClipped = false;
+	    function BidiSpan(level, from, to) {
+	      this.level = level;
+	      this.from = from; this.to = to;
+	    }
 
-	    // Used to only resize the line number gutter when necessary (when
-	    // the amount of lines crosses a boundary that makes its width change)
-	    d.lineNumWidth = d.lineNumInnerWidth = d.lineNumChars = null;
-	    // Set to true when a non-horizontal-scrolling line widget is
-	    // added. As an optimization, line widget aligning is skipped when
-	    // this is false.
-	    d.alignWidgets = false;
+	    return function(str, direction) {
+	      var outerType = direction == "ltr" ? "L" : "R";
 
-	    d.cachedCharWidth = d.cachedTextHeight = d.cachedPaddingH = null;
+	      if (str.length == 0 || direction == "ltr" && !bidiRE.test(str)) { return false }
+	      var len = str.length, types = [];
+	      for (var i = 0; i < len; ++i)
+	        { types.push(charType(str.charCodeAt(i))); }
 
-	    // Tracks the maximum line length so that the horizontal scrollbar
-	    // can be kept static when scrolling.
-	    d.maxLine = null;
-	    d.maxLineLength = 0;
-	    d.maxLineChanged = false;
+	      // W1. Examine each non-spacing mark (NSM) in the level run, and
+	      // change the type of the NSM to the type of the previous
+	      // character. If the NSM is at the start of the level run, it will
+	      // get the type of sor.
+	      for (var i$1 = 0, prev = outerType; i$1 < len; ++i$1) {
+	        var type = types[i$1];
+	        if (type == "m") { types[i$1] = prev; }
+	        else { prev = type; }
+	      }
 
-	    // Used for measuring wheel scrolling granularity
-	    d.wheelDX = d.wheelDY = d.wheelStartX = d.wheelStartY = null;
+	      // W2. Search backwards from each instance of a European number
+	      // until the first strong type (R, L, AL, or sor) is found. If an
+	      // AL is found, change the type of the European number to Arabic
+	      // number.
+	      // W3. Change all ALs to R.
+	      for (var i$2 = 0, cur = outerType; i$2 < len; ++i$2) {
+	        var type$1 = types[i$2];
+	        if (type$1 == "1" && cur == "r") { types[i$2] = "n"; }
+	        else if (isStrong.test(type$1)) { cur = type$1; if (type$1 == "r") { types[i$2] = "R"; } }
+	      }
 
-	    // True when shift is held down.
-	    d.shift = false;
+	      // W4. A single European separator between two European numbers
+	      // changes to a European number. A single common separator between
+	      // two numbers of the same type changes to that type.
+	      for (var i$3 = 1, prev$1 = types[0]; i$3 < len - 1; ++i$3) {
+	        var type$2 = types[i$3];
+	        if (type$2 == "+" && prev$1 == "1" && types[i$3+1] == "1") { types[i$3] = "1"; }
+	        else if (type$2 == "," && prev$1 == types[i$3+1] &&
+	                 (prev$1 == "1" || prev$1 == "n")) { types[i$3] = prev$1; }
+	        prev$1 = type$2;
+	      }
 
-	    // Used to track whether anything happened since the context menu
-	    // was opened.
-	    d.selForContextMenu = null;
+	      // W5. A sequence of European terminators adjacent to European
+	      // numbers changes to all European numbers.
+	      // W6. Otherwise, separators and terminators change to Other
+	      // Neutral.
+	      for (var i$4 = 0; i$4 < len; ++i$4) {
+	        var type$3 = types[i$4];
+	        if (type$3 == ",") { types[i$4] = "N"; }
+	        else if (type$3 == "%") {
+	          var end = (void 0);
+	          for (end = i$4 + 1; end < len && types[end] == "%"; ++end) {}
+	          var replace = (i$4 && types[i$4-1] == "!") || (end < len && types[end] == "1") ? "1" : "N";
+	          for (var j = i$4; j < end; ++j) { types[j] = replace; }
+	          i$4 = end - 1;
+	        }
+	      }
 
-	    d.activeTouch = null;
+	      // W7. Search backwards from each instance of a European number
+	      // until the first strong type (R, L, or sor) is found. If an L is
+	      // found, then change the type of the European number to L.
+	      for (var i$5 = 0, cur$1 = outerType; i$5 < len; ++i$5) {
+	        var type$4 = types[i$5];
+	        if (cur$1 == "L" && type$4 == "1") { types[i$5] = "L"; }
+	        else if (isStrong.test(type$4)) { cur$1 = type$4; }
+	      }
 
-	    input.init(d);
+	      // N1. A sequence of neutrals takes the direction of the
+	      // surrounding strong text if the text on both sides has the same
+	      // direction. European and Arabic numbers act as if they were R in
+	      // terms of their influence on neutrals. Start-of-level-run (sor)
+	      // and end-of-level-run (eor) are used at level run boundaries.
+	      // N2. Any remaining neutrals take the embedding direction.
+	      for (var i$6 = 0; i$6 < len; ++i$6) {
+	        if (isNeutral.test(types[i$6])) {
+	          var end$1 = (void 0);
+	          for (end$1 = i$6 + 1; end$1 < len && isNeutral.test(types[end$1]); ++end$1) {}
+	          var before = (i$6 ? types[i$6-1] : outerType) == "L";
+	          var after = (end$1 < len ? types[end$1] : outerType) == "L";
+	          var replace$1 = before == after ? (before ? "L" : "R") : outerType;
+	          for (var j$1 = i$6; j$1 < end$1; ++j$1) { types[j$1] = replace$1; }
+	          i$6 = end$1 - 1;
+	        }
+	      }
+
+	      // Here we depart from the documented algorithm, in order to avoid
+	      // building up an actual levels array. Since there are only three
+	      // levels (0, 1, 2) in an implementation that doesn't take
+	      // explicit embedding into account, we can build up the order on
+	      // the fly, without following the level-based algorithm.
+	      var order = [], m;
+	      for (var i$7 = 0; i$7 < len;) {
+	        if (countsAsLeft.test(types[i$7])) {
+	          var start = i$7;
+	          for (++i$7; i$7 < len && countsAsLeft.test(types[i$7]); ++i$7) {}
+	          order.push(new BidiSpan(0, start, i$7));
+	        } else {
+	          var pos = i$7, at = order.length, isRTL = direction == "rtl" ? 1 : 0;
+	          for (++i$7; i$7 < len && types[i$7] != "L"; ++i$7) {}
+	          for (var j$2 = pos; j$2 < i$7;) {
+	            if (countsAsNum.test(types[j$2])) {
+	              if (pos < j$2) { order.splice(at, 0, new BidiSpan(1, pos, j$2)); at += isRTL; }
+	              var nstart = j$2;
+	              for (++j$2; j$2 < i$7 && countsAsNum.test(types[j$2]); ++j$2) {}
+	              order.splice(at, 0, new BidiSpan(2, nstart, j$2));
+	              at += isRTL;
+	              pos = j$2;
+	            } else { ++j$2; }
+	          }
+	          if (pos < i$7) { order.splice(at, 0, new BidiSpan(1, pos, i$7)); }
+	        }
+	      }
+	      if (direction == "ltr") {
+	        if (order[0].level == 1 && (m = str.match(/^\s+/))) {
+	          order[0].from = m[0].length;
+	          order.unshift(new BidiSpan(0, 0, m[0].length));
+	        }
+	        if (lst(order).level == 1 && (m = str.match(/\s+$/))) {
+	          lst(order).to -= m[0].length;
+	          order.push(new BidiSpan(0, len - m[0].length, len));
+	        }
+	      }
+
+	      return direction == "rtl" ? order.reverse() : order
+	    }
+	  })();
+
+	  // Get the bidi ordering for the given line (and cache it). Returns
+	  // false for lines that are fully left-to-right, and an array of
+	  // BidiSpan objects otherwise.
+	  function getOrder(line, direction) {
+	    var order = line.order;
+	    if (order == null) { order = line.order = bidiOrdering(line.text, direction); }
+	    return order
 	  }
+
+	  // EVENT HANDLING
+
+	  // Lightweight event framework. on/off also work on DOM nodes,
+	  // registering native DOM handlers.
+
+	  var noHandlers = [];
+
+	  var on = function(emitter, type, f) {
+	    if (emitter.addEventListener) {
+	      emitter.addEventListener(type, f, false);
+	    } else if (emitter.attachEvent) {
+	      emitter.attachEvent("on" + type, f);
+	    } else {
+	      var map = emitter._handlers || (emitter._handlers = {});
+	      map[type] = (map[type] || noHandlers).concat(f);
+	    }
+	  };
+
+	  function getHandlers(emitter, type) {
+	    return emitter._handlers && emitter._handlers[type] || noHandlers
+	  }
+
+	  function off(emitter, type, f) {
+	    if (emitter.removeEventListener) {
+	      emitter.removeEventListener(type, f, false);
+	    } else if (emitter.detachEvent) {
+	      emitter.detachEvent("on" + type, f);
+	    } else {
+	      var map = emitter._handlers, arr = map && map[type];
+	      if (arr) {
+	        var index = indexOf(arr, f);
+	        if (index > -1)
+	          { map[type] = arr.slice(0, index).concat(arr.slice(index + 1)); }
+	      }
+	    }
+	  }
+
+	  function signal(emitter, type /*, values...*/) {
+	    var handlers = getHandlers(emitter, type);
+	    if (!handlers.length) { return }
+	    var args = Array.prototype.slice.call(arguments, 2);
+	    for (var i = 0; i < handlers.length; ++i) { handlers[i].apply(null, args); }
+	  }
+
+	  // The DOM events that CodeMirror handles can be overridden by
+	  // registering a (non-DOM) handler on the editor for the event name,
+	  // and preventDefault-ing the event in that handler.
+	  function signalDOMEvent(cm, e, override) {
+	    if (typeof e == "string")
+	      { e = {type: e, preventDefault: function() { this.defaultPrevented = true; }}; }
+	    signal(cm, override || e.type, cm, e);
+	    return e_defaultPrevented(e) || e.codemirrorIgnore
+	  }
+
+	  function signalCursorActivity(cm) {
+	    var arr = cm._handlers && cm._handlers.cursorActivity;
+	    if (!arr) { return }
+	    var set = cm.curOp.cursorActivityHandlers || (cm.curOp.cursorActivityHandlers = []);
+	    for (var i = 0; i < arr.length; ++i) { if (indexOf(set, arr[i]) == -1)
+	      { set.push(arr[i]); } }
+	  }
+
+	  function hasHandler(emitter, type) {
+	    return getHandlers(emitter, type).length > 0
+	  }
+
+	  // Add on and off methods to a constructor's prototype, to make
+	  // registering events on such objects more convenient.
+	  function eventMixin(ctor) {
+	    ctor.prototype.on = function(type, f) {on(this, type, f);};
+	    ctor.prototype.off = function(type, f) {off(this, type, f);};
+	  }
+
+	  // Due to the fact that we still support jurassic IE versions, some
+	  // compatibility wrappers are needed.
+
+	  function e_preventDefault(e) {
+	    if (e.preventDefault) { e.preventDefault(); }
+	    else { e.returnValue = false; }
+	  }
+	  function e_stopPropagation(e) {
+	    if (e.stopPropagation) { e.stopPropagation(); }
+	    else { e.cancelBubble = true; }
+	  }
+	  function e_defaultPrevented(e) {
+	    return e.defaultPrevented != null ? e.defaultPrevented : e.returnValue == false
+	  }
+	  function e_stop(e) {e_preventDefault(e); e_stopPropagation(e);}
+
+	  function e_target(e) {return e.target || e.srcElement}
+	  function e_button(e) {
+	    var b = e.which;
+	    if (b == null) {
+	      if (e.button & 1) { b = 1; }
+	      else if (e.button & 2) { b = 3; }
+	      else if (e.button & 4) { b = 2; }
+	    }
+	    if (mac && e.ctrlKey && b == 1) { b = 3; }
+	    return b
+	  }
+
+	  // Detect drag-and-drop
+	  var dragAndDrop = function() {
+	    // There is *some* kind of drag-and-drop support in IE6-8, but I
+	    // couldn't get it to work yet.
+	    if (ie && ie_version < 9) { return false }
+	    var div = elt('div');
+	    return "draggable" in div || "dragDrop" in div
+	  }();
+
+	  var zwspSupported;
+	  function zeroWidthElement(measure) {
+	    if (zwspSupported == null) {
+	      var test = elt("span", "\u200b");
+	      removeChildrenAndAdd(measure, elt("span", [test, document.createTextNode("x")]));
+	      if (measure.firstChild.offsetHeight != 0)
+	        { zwspSupported = test.offsetWidth <= 1 && test.offsetHeight > 2 && !(ie && ie_version < 8); }
+	    }
+	    var node = zwspSupported ? elt("span", "\u200b") :
+	      elt("span", "\u00a0", null, "display: inline-block; width: 1px; margin-right: -1px");
+	    node.setAttribute("cm-text", "");
+	    return node
+	  }
+
+	  // Feature-detect IE's crummy client rect reporting for bidi text
+	  var badBidiRects;
+	  function hasBadBidiRects(measure) {
+	    if (badBidiRects != null) { return badBidiRects }
+	    var txt = removeChildrenAndAdd(measure, document.createTextNode("A\u062eA"));
+	    var r0 = range(txt, 0, 1).getBoundingClientRect();
+	    var r1 = range(txt, 1, 2).getBoundingClientRect();
+	    removeChildren(measure);
+	    if (!r0 || r0.left == r0.right) { return false } // Safari returns null in some cases (#2780)
+	    return badBidiRects = (r1.right - r0.right < 3)
+	  }
+
+	  // See if "".split is the broken IE version, if so, provide an
+	  // alternative way to split lines.
+	  var splitLinesAuto = "\n\nb".split(/\n/).length != 3 ? function (string) {
+	    var pos = 0, result = [], l = string.length;
+	    while (pos <= l) {
+	      var nl = string.indexOf("\n", pos);
+	      if (nl == -1) { nl = string.length; }
+	      var line = string.slice(pos, string.charAt(nl - 1) == "\r" ? nl - 1 : nl);
+	      var rt = line.indexOf("\r");
+	      if (rt != -1) {
+	        result.push(line.slice(0, rt));
+	        pos += rt + 1;
+	      } else {
+	        result.push(line);
+	        pos = nl + 1;
+	      }
+	    }
+	    return result
+	  } : function (string) { return string.split(/\r\n?|\n/); };
+
+	  var hasSelection = window.getSelection ? function (te) {
+	    try { return te.selectionStart != te.selectionEnd }
+	    catch(e) { return false }
+	  } : function (te) {
+	    var range;
+	    try {range = te.ownerDocument.selection.createRange();}
+	    catch(e) {}
+	    if (!range || range.parentElement() != te) { return false }
+	    return range.compareEndPoints("StartToEnd", range) != 0
+	  };
+
+	  var hasCopyEvent = (function () {
+	    var e = elt("div");
+	    if ("oncopy" in e) { return true }
+	    e.setAttribute("oncopy", "return;");
+	    return typeof e.oncopy == "function"
+	  })();
+
+	  var badZoomedRects = null;
+	  function hasBadZoomedRects(measure) {
+	    if (badZoomedRects != null) { return badZoomedRects }
+	    var node = removeChildrenAndAdd(measure, elt("span", "x"));
+	    var normal = node.getBoundingClientRect();
+	    var fromRange = range(node, 0, 1).getBoundingClientRect();
+	    return badZoomedRects = Math.abs(normal.left - fromRange.left) > 1
+	  }
+
+	  // Known modes, by name and by MIME
+	  var modes = {}, mimeModes = {};
+
+	  // Extra arguments are stored as the mode's dependencies, which is
+	  // used by (legacy) mechanisms like loadmode.js to automatically
+	  // load a mode. (Preferred mechanism is the require/define calls.)
+	  function defineMode(name, mode) {
+	    if (arguments.length > 2)
+	      { mode.dependencies = Array.prototype.slice.call(arguments, 2); }
+	    modes[name] = mode;
+	  }
+
+	  function defineMIME(mime, spec) {
+	    mimeModes[mime] = spec;
+	  }
+
+	  // Given a MIME type, a {name, ...options} config object, or a name
+	  // string, return a mode config object.
+	  function resolveMode(spec) {
+	    if (typeof spec == "string" && mimeModes.hasOwnProperty(spec)) {
+	      spec = mimeModes[spec];
+	    } else if (spec && typeof spec.name == "string" && mimeModes.hasOwnProperty(spec.name)) {
+	      var found = mimeModes[spec.name];
+	      if (typeof found == "string") { found = {name: found}; }
+	      spec = createObj(found, spec);
+	      spec.name = found.name;
+	    } else if (typeof spec == "string" && /^[\w\-]+\/[\w\-]+\+xml$/.test(spec)) {
+	      return resolveMode("application/xml")
+	    } else if (typeof spec == "string" && /^[\w\-]+\/[\w\-]+\+json$/.test(spec)) {
+	      return resolveMode("application/json")
+	    }
+	    if (typeof spec == "string") { return {name: spec} }
+	    else { return spec || {name: "null"} }
+	  }
+
+	  // Given a mode spec (anything that resolveMode accepts), find and
+	  // initialize an actual mode object.
+	  function getMode(options, spec) {
+	    spec = resolveMode(spec);
+	    var mfactory = modes[spec.name];
+	    if (!mfactory) { return getMode(options, "text/plain") }
+	    var modeObj = mfactory(options, spec);
+	    if (modeExtensions.hasOwnProperty(spec.name)) {
+	      var exts = modeExtensions[spec.name];
+	      for (var prop in exts) {
+	        if (!exts.hasOwnProperty(prop)) { continue }
+	        if (modeObj.hasOwnProperty(prop)) { modeObj["_" + prop] = modeObj[prop]; }
+	        modeObj[prop] = exts[prop];
+	      }
+	    }
+	    modeObj.name = spec.name;
+	    if (spec.helperType) { modeObj.helperType = spec.helperType; }
+	    if (spec.modeProps) { for (var prop$1 in spec.modeProps)
+	      { modeObj[prop$1] = spec.modeProps[prop$1]; } }
+
+	    return modeObj
+	  }
+
+	  // This can be used to attach properties to mode objects from
+	  // outside the actual mode definition.
+	  var modeExtensions = {};
+	  function extendMode(mode, properties) {
+	    var exts = modeExtensions.hasOwnProperty(mode) ? modeExtensions[mode] : (modeExtensions[mode] = {});
+	    copyObj(properties, exts);
+	  }
+
+	  function copyState(mode, state) {
+	    if (state === true) { return state }
+	    if (mode.copyState) { return mode.copyState(state) }
+	    var nstate = {};
+	    for (var n in state) {
+	      var val = state[n];
+	      if (val instanceof Array) { val = val.concat([]); }
+	      nstate[n] = val;
+	    }
+	    return nstate
+	  }
+
+	  // Given a mode and a state (for that mode), find the inner mode and
+	  // state at the position that the state refers to.
+	  function innerMode(mode, state) {
+	    var info;
+	    while (mode.innerMode) {
+	      info = mode.innerMode(state);
+	      if (!info || info.mode == mode) { break }
+	      state = info.state;
+	      mode = info.mode;
+	    }
+	    return info || {mode: mode, state: state}
+	  }
+
+	  function startState(mode, a1, a2) {
+	    return mode.startState ? mode.startState(a1, a2) : true
+	  }
+
+	  // STRING STREAM
+
+	  // Fed to the mode parsers, provides helper functions to make
+	  // parsers more succinct.
+
+	  var StringStream = function(string, tabSize, lineOracle) {
+	    this.pos = this.start = 0;
+	    this.string = string;
+	    this.tabSize = tabSize || 8;
+	    this.lastColumnPos = this.lastColumnValue = 0;
+	    this.lineStart = 0;
+	    this.lineOracle = lineOracle;
+	  };
+
+	  StringStream.prototype.eol = function () {return this.pos >= this.string.length};
+	  StringStream.prototype.sol = function () {return this.pos == this.lineStart};
+	  StringStream.prototype.peek = function () {return this.string.charAt(this.pos) || undefined};
+	  StringStream.prototype.next = function () {
+	    if (this.pos < this.string.length)
+	      { return this.string.charAt(this.pos++) }
+	  };
+	  StringStream.prototype.eat = function (match) {
+	    var ch = this.string.charAt(this.pos);
+	    var ok;
+	    if (typeof match == "string") { ok = ch == match; }
+	    else { ok = ch && (match.test ? match.test(ch) : match(ch)); }
+	    if (ok) {++this.pos; return ch}
+	  };
+	  StringStream.prototype.eatWhile = function (match) {
+	    var start = this.pos;
+	    while (this.eat(match)){}
+	    return this.pos > start
+	  };
+	  StringStream.prototype.eatSpace = function () {
+	    var start = this.pos;
+	    while (/[\s\u00a0]/.test(this.string.charAt(this.pos))) { ++this.pos; }
+	    return this.pos > start
+	  };
+	  StringStream.prototype.skipToEnd = function () {this.pos = this.string.length;};
+	  StringStream.prototype.skipTo = function (ch) {
+	    var found = this.string.indexOf(ch, this.pos);
+	    if (found > -1) {this.pos = found; return true}
+	  };
+	  StringStream.prototype.backUp = function (n) {this.pos -= n;};
+	  StringStream.prototype.column = function () {
+	    if (this.lastColumnPos < this.start) {
+	      this.lastColumnValue = countColumn(this.string, this.start, this.tabSize, this.lastColumnPos, this.lastColumnValue);
+	      this.lastColumnPos = this.start;
+	    }
+	    return this.lastColumnValue - (this.lineStart ? countColumn(this.string, this.lineStart, this.tabSize) : 0)
+	  };
+	  StringStream.prototype.indentation = function () {
+	    return countColumn(this.string, null, this.tabSize) -
+	      (this.lineStart ? countColumn(this.string, this.lineStart, this.tabSize) : 0)
+	  };
+	  StringStream.prototype.match = function (pattern, consume, caseInsensitive) {
+	    if (typeof pattern == "string") {
+	      var cased = function (str) { return caseInsensitive ? str.toLowerCase() : str; };
+	      var substr = this.string.substr(this.pos, pattern.length);
+	      if (cased(substr) == cased(pattern)) {
+	        if (consume !== false) { this.pos += pattern.length; }
+	        return true
+	      }
+	    } else {
+	      var match = this.string.slice(this.pos).match(pattern);
+	      if (match && match.index > 0) { return null }
+	      if (match && consume !== false) { this.pos += match[0].length; }
+	      return match
+	    }
+	  };
+	  StringStream.prototype.current = function (){return this.string.slice(this.start, this.pos)};
+	  StringStream.prototype.hideFirstChars = function (n, inner) {
+	    this.lineStart += n;
+	    try { return inner() }
+	    finally { this.lineStart -= n; }
+	  };
+	  StringStream.prototype.lookAhead = function (n) {
+	    var oracle = this.lineOracle;
+	    return oracle && oracle.lookAhead(n)
+	  };
+	  StringStream.prototype.baseToken = function () {
+	    var oracle = this.lineOracle;
+	    return oracle && oracle.baseToken(this.pos)
+	  };
 
 	  // Find the line object corresponding to the given line number.
 	  function getLine(doc, n) {
@@ -525,6 +1017,280 @@
 	    var out = [];
 	    for (var i = 0; i < array.length; i++) { out[i] = clipPos(doc, array[i]); }
 	    return out
+	  }
+
+	  var SavedContext = function(state, lookAhead) {
+	    this.state = state;
+	    this.lookAhead = lookAhead;
+	  };
+
+	  var Context = function(doc, state, line, lookAhead) {
+	    this.state = state;
+	    this.doc = doc;
+	    this.line = line;
+	    this.maxLookAhead = lookAhead || 0;
+	    this.baseTokens = null;
+	    this.baseTokenPos = 1;
+	  };
+
+	  Context.prototype.lookAhead = function (n) {
+	    var line = this.doc.getLine(this.line + n);
+	    if (line != null && n > this.maxLookAhead) { this.maxLookAhead = n; }
+	    return line
+	  };
+
+	  Context.prototype.baseToken = function (n) {
+	    if (!this.baseTokens) { return null }
+	    while (this.baseTokens[this.baseTokenPos] <= n)
+	      { this.baseTokenPos += 2; }
+	    var type = this.baseTokens[this.baseTokenPos + 1];
+	    return {type: type && type.replace(/( |^)overlay .*/, ""),
+	            size: this.baseTokens[this.baseTokenPos] - n}
+	  };
+
+	  Context.prototype.nextLine = function () {
+	    this.line++;
+	    if (this.maxLookAhead > 0) { this.maxLookAhead--; }
+	  };
+
+	  Context.fromSaved = function (doc, saved, line) {
+	    if (saved instanceof SavedContext)
+	      { return new Context(doc, copyState(doc.mode, saved.state), line, saved.lookAhead) }
+	    else
+	      { return new Context(doc, copyState(doc.mode, saved), line) }
+	  };
+
+	  Context.prototype.save = function (copy) {
+	    var state = copy !== false ? copyState(this.doc.mode, this.state) : this.state;
+	    return this.maxLookAhead > 0 ? new SavedContext(state, this.maxLookAhead) : state
+	  };
+
+
+	  // Compute a style array (an array starting with a mode generation
+	  // -- for invalidation -- followed by pairs of end positions and
+	  // style strings), which is used to highlight the tokens on the
+	  // line.
+	  function highlightLine(cm, line, context, forceToEnd) {
+	    // A styles array always starts with a number identifying the
+	    // mode/overlays that it is based on (for easy invalidation).
+	    var st = [cm.state.modeGen], lineClasses = {};
+	    // Compute the base array of styles
+	    runMode(cm, line.text, cm.doc.mode, context, function (end, style) { return st.push(end, style); },
+	            lineClasses, forceToEnd);
+	    var state = context.state;
+
+	    // Run overlays, adjust style array.
+	    var loop = function ( o ) {
+	      context.baseTokens = st;
+	      var overlay = cm.state.overlays[o], i = 1, at = 0;
+	      context.state = true;
+	      runMode(cm, line.text, overlay.mode, context, function (end, style) {
+	        var start = i;
+	        // Ensure there's a token end at the current position, and that i points at it
+	        while (at < end) {
+	          var i_end = st[i];
+	          if (i_end > end)
+	            { st.splice(i, 1, end, st[i+1], i_end); }
+	          i += 2;
+	          at = Math.min(end, i_end);
+	        }
+	        if (!style) { return }
+	        if (overlay.opaque) {
+	          st.splice(start, i - start, end, "overlay " + style);
+	          i = start + 2;
+	        } else {
+	          for (; start < i; start += 2) {
+	            var cur = st[start+1];
+	            st[start+1] = (cur ? cur + " " : "") + "overlay " + style;
+	          }
+	        }
+	      }, lineClasses);
+	      context.state = state;
+	      context.baseTokens = null;
+	      context.baseTokenPos = 1;
+	    };
+
+	    for (var o = 0; o < cm.state.overlays.length; ++o) loop( o );
+
+	    return {styles: st, classes: lineClasses.bgClass || lineClasses.textClass ? lineClasses : null}
+	  }
+
+	  function getLineStyles(cm, line, updateFrontier) {
+	    if (!line.styles || line.styles[0] != cm.state.modeGen) {
+	      var context = getContextBefore(cm, lineNo(line));
+	      var resetState = line.text.length > cm.options.maxHighlightLength && copyState(cm.doc.mode, context.state);
+	      var result = highlightLine(cm, line, context);
+	      if (resetState) { context.state = resetState; }
+	      line.stateAfter = context.save(!resetState);
+	      line.styles = result.styles;
+	      if (result.classes) { line.styleClasses = result.classes; }
+	      else if (line.styleClasses) { line.styleClasses = null; }
+	      if (updateFrontier === cm.doc.highlightFrontier)
+	        { cm.doc.modeFrontier = Math.max(cm.doc.modeFrontier, ++cm.doc.highlightFrontier); }
+	    }
+	    return line.styles
+	  }
+
+	  function getContextBefore(cm, n, precise) {
+	    var doc = cm.doc, display = cm.display;
+	    if (!doc.mode.startState) { return new Context(doc, true, n) }
+	    var start = findStartLine(cm, n, precise);
+	    var saved = start > doc.first && getLine(doc, start - 1).stateAfter;
+	    var context = saved ? Context.fromSaved(doc, saved, start) : new Context(doc, startState(doc.mode), start);
+
+	    doc.iter(start, n, function (line) {
+	      processLine(cm, line.text, context);
+	      var pos = context.line;
+	      line.stateAfter = pos == n - 1 || pos % 5 == 0 || pos >= display.viewFrom && pos < display.viewTo ? context.save() : null;
+	      context.nextLine();
+	    });
+	    if (precise) { doc.modeFrontier = context.line; }
+	    return context
+	  }
+
+	  // Lightweight form of highlight -- proceed over this line and
+	  // update state, but don't save a style array. Used for lines that
+	  // aren't currently visible.
+	  function processLine(cm, text, context, startAt) {
+	    var mode = cm.doc.mode;
+	    var stream = new StringStream(text, cm.options.tabSize, context);
+	    stream.start = stream.pos = startAt || 0;
+	    if (text == "") { callBlankLine(mode, context.state); }
+	    while (!stream.eol()) {
+	      readToken(mode, stream, context.state);
+	      stream.start = stream.pos;
+	    }
+	  }
+
+	  function callBlankLine(mode, state) {
+	    if (mode.blankLine) { return mode.blankLine(state) }
+	    if (!mode.innerMode) { return }
+	    var inner = innerMode(mode, state);
+	    if (inner.mode.blankLine) { return inner.mode.blankLine(inner.state) }
+	  }
+
+	  function readToken(mode, stream, state, inner) {
+	    for (var i = 0; i < 10; i++) {
+	      if (inner) { inner[0] = innerMode(mode, state).mode; }
+	      var style = mode.token(stream, state);
+	      if (stream.pos > stream.start) { return style }
+	    }
+	    throw new Error("Mode " + mode.name + " failed to advance stream.")
+	  }
+
+	  var Token = function(stream, type, state) {
+	    this.start = stream.start; this.end = stream.pos;
+	    this.string = stream.current();
+	    this.type = type || null;
+	    this.state = state;
+	  };
+
+	  // Utility for getTokenAt and getLineTokens
+	  function takeToken(cm, pos, precise, asArray) {
+	    var doc = cm.doc, mode = doc.mode, style;
+	    pos = clipPos(doc, pos);
+	    var line = getLine(doc, pos.line), context = getContextBefore(cm, pos.line, precise);
+	    var stream = new StringStream(line.text, cm.options.tabSize, context), tokens;
+	    if (asArray) { tokens = []; }
+	    while ((asArray || stream.pos < pos.ch) && !stream.eol()) {
+	      stream.start = stream.pos;
+	      style = readToken(mode, stream, context.state);
+	      if (asArray) { tokens.push(new Token(stream, style, copyState(doc.mode, context.state))); }
+	    }
+	    return asArray ? tokens : new Token(stream, style, context.state)
+	  }
+
+	  function extractLineClasses(type, output) {
+	    if (type) { for (;;) {
+	      var lineClass = type.match(/(?:^|\s+)line-(background-)?(\S+)/);
+	      if (!lineClass) { break }
+	      type = type.slice(0, lineClass.index) + type.slice(lineClass.index + lineClass[0].length);
+	      var prop = lineClass[1] ? "bgClass" : "textClass";
+	      if (output[prop] == null)
+	        { output[prop] = lineClass[2]; }
+	      else if (!(new RegExp("(?:^|\\s)" + lineClass[2] + "(?:$|\\s)")).test(output[prop]))
+	        { output[prop] += " " + lineClass[2]; }
+	    } }
+	    return type
+	  }
+
+	  // Run the given mode's parser over a line, calling f for each token.
+	  function runMode(cm, text, mode, context, f, lineClasses, forceToEnd) {
+	    var flattenSpans = mode.flattenSpans;
+	    if (flattenSpans == null) { flattenSpans = cm.options.flattenSpans; }
+	    var curStart = 0, curStyle = null;
+	    var stream = new StringStream(text, cm.options.tabSize, context), style;
+	    var inner = cm.options.addModeClass && [null];
+	    if (text == "") { extractLineClasses(callBlankLine(mode, context.state), lineClasses); }
+	    while (!stream.eol()) {
+	      if (stream.pos > cm.options.maxHighlightLength) {
+	        flattenSpans = false;
+	        if (forceToEnd) { processLine(cm, text, context, stream.pos); }
+	        stream.pos = text.length;
+	        style = null;
+	      } else {
+	        style = extractLineClasses(readToken(mode, stream, context.state, inner), lineClasses);
+	      }
+	      if (inner) {
+	        var mName = inner[0].name;
+	        if (mName) { style = "m-" + (style ? mName + " " + style : mName); }
+	      }
+	      if (!flattenSpans || curStyle != style) {
+	        while (curStart < stream.start) {
+	          curStart = Math.min(stream.start, curStart + 5000);
+	          f(curStart, curStyle);
+	        }
+	        curStyle = style;
+	      }
+	      stream.start = stream.pos;
+	    }
+	    while (curStart < stream.pos) {
+	      // Webkit seems to refuse to render text nodes longer than 57444
+	      // characters, and returns inaccurate measurements in nodes
+	      // starting around 5000 chars.
+	      var pos = Math.min(stream.pos, curStart + 5000);
+	      f(pos, curStyle);
+	      curStart = pos;
+	    }
+	  }
+
+	  // Finds the line to start with when starting a parse. Tries to
+	  // find a line with a stateAfter, so that it can start with a
+	  // valid state. If that fails, it returns the line with the
+	  // smallest indentation, which tends to need the least context to
+	  // parse correctly.
+	  function findStartLine(cm, n, precise) {
+	    var minindent, minline, doc = cm.doc;
+	    var lim = precise ? -1 : n - (cm.doc.mode.innerMode ? 1000 : 100);
+	    for (var search = n; search > lim; --search) {
+	      if (search <= doc.first) { return doc.first }
+	      var line = getLine(doc, search - 1), after = line.stateAfter;
+	      if (after && (!precise || search + (after instanceof SavedContext ? after.lookAhead : 0) <= doc.modeFrontier))
+	        { return search }
+	      var indented = countColumn(line.text, null, cm.options.tabSize);
+	      if (minline == null || minindent > indented) {
+	        minline = search - 1;
+	        minindent = indented;
+	      }
+	    }
+	    return minline
+	  }
+
+	  function retreatFrontier(doc, n) {
+	    doc.modeFrontier = Math.min(doc.modeFrontier, n);
+	    if (doc.highlightFrontier < n - 10) { return }
+	    var start = doc.first;
+	    for (var line = n - 1; line > start; line--) {
+	      var saved = getLine(doc, line).stateAfter;
+	      // change is on 3
+	      // state on line 1 looked ahead 2 -- so saw 3
+	      // test 1 + 2 < 3 should cover this
+	      if (saved && (!(saved instanceof SavedContext) || line + saved.lookAhead < n)) {
+	        start = line + 1;
+	        break
+	      }
+	    }
+	    doc.highlightFrontier = Math.min(doc.highlightFrontier, start);
 	  }
 
 	  // Optimize some code when these features are not used.
@@ -765,8 +1531,8 @@
 	  // Test whether there exists a collapsed span that partially
 	  // overlaps (covers the start or end, but not both) of a new span.
 	  // Such overlap is not allowed.
-	  function conflictingCollapsedRange(doc, lineNo$$1, from, to, marker) {
-	    var line = getLine(doc, lineNo$$1);
+	  function conflictingCollapsedRange(doc, lineNo, from, to, marker) {
+	    var line = getLine(doc, lineNo);
 	    var sps = sawCollapsedSpans && line.markedSpans;
 	    if (sps) { for (var i = 0; i < sps.length; ++i) {
 	      var sp = sps[i];
@@ -913,860 +1679,6 @@
 	        d.maxLine = line;
 	      }
 	    });
-	  }
-
-	  // BIDI HELPERS
-
-	  function iterateBidiSections(order, from, to, f) {
-	    if (!order) { return f(from, to, "ltr", 0) }
-	    var found = false;
-	    for (var i = 0; i < order.length; ++i) {
-	      var part = order[i];
-	      if (part.from < to && part.to > from || from == to && part.to == from) {
-	        f(Math.max(part.from, from), Math.min(part.to, to), part.level == 1 ? "rtl" : "ltr", i);
-	        found = true;
-	      }
-	    }
-	    if (!found) { f(from, to, "ltr"); }
-	  }
-
-	  var bidiOther = null;
-	  function getBidiPartAt(order, ch, sticky) {
-	    var found;
-	    bidiOther = null;
-	    for (var i = 0; i < order.length; ++i) {
-	      var cur = order[i];
-	      if (cur.from < ch && cur.to > ch) { return i }
-	      if (cur.to == ch) {
-	        if (cur.from != cur.to && sticky == "before") { found = i; }
-	        else { bidiOther = i; }
-	      }
-	      if (cur.from == ch) {
-	        if (cur.from != cur.to && sticky != "before") { found = i; }
-	        else { bidiOther = i; }
-	      }
-	    }
-	    return found != null ? found : bidiOther
-	  }
-
-	  // Bidirectional ordering algorithm
-	  // See http://unicode.org/reports/tr9/tr9-13.html for the algorithm
-	  // that this (partially) implements.
-
-	  // One-char codes used for character types:
-	  // L (L):   Left-to-Right
-	  // R (R):   Right-to-Left
-	  // r (AL):  Right-to-Left Arabic
-	  // 1 (EN):  European Number
-	  // + (ES):  European Number Separator
-	  // % (ET):  European Number Terminator
-	  // n (AN):  Arabic Number
-	  // , (CS):  Common Number Separator
-	  // m (NSM): Non-Spacing Mark
-	  // b (BN):  Boundary Neutral
-	  // s (B):   Paragraph Separator
-	  // t (S):   Segment Separator
-	  // w (WS):  Whitespace
-	  // N (ON):  Other Neutrals
-
-	  // Returns null if characters are ordered as they appear
-	  // (left-to-right), or an array of sections ({from, to, level}
-	  // objects) in the order in which they occur visually.
-	  var bidiOrdering = (function() {
-	    // Character types for codepoints 0 to 0xff
-	    var lowTypes = "bbbbbbbbbtstwsbbbbbbbbbbbbbbssstwNN%%%NNNNNN,N,N1111111111NNNNNNNLLLLLLLLLLLLLLLLLLLLLLLLLLNNNNNNLLLLLLLLLLLLLLLLLLLLLLLLLLNNNNbbbbbbsbbbbbbbbbbbbbbbbbbbbbbbbbb,N%%%%NNNNLNNNNN%%11NLNNN1LNNNNNLLLLLLLLLLLLLLLLLLLLLLLNLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLN";
-	    // Character types for codepoints 0x600 to 0x6f9
-	    var arabicTypes = "nnnnnnNNr%%r,rNNmmmmmmmmmmmrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnn%nnrrrmrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrmmmmmmmnNmmmmmmrrmmNmmmmrr1111111111";
-	    function charType(code) {
-	      if (code <= 0xf7) { return lowTypes.charAt(code) }
-	      else if (0x590 <= code && code <= 0x5f4) { return "R" }
-	      else if (0x600 <= code && code <= 0x6f9) { return arabicTypes.charAt(code - 0x600) }
-	      else if (0x6ee <= code && code <= 0x8ac) { return "r" }
-	      else if (0x2000 <= code && code <= 0x200b) { return "w" }
-	      else if (code == 0x200c) { return "b" }
-	      else { return "L" }
-	    }
-
-	    var bidiRE = /[\u0590-\u05f4\u0600-\u06ff\u0700-\u08ac]/;
-	    var isNeutral = /[stwN]/, isStrong = /[LRr]/, countsAsLeft = /[Lb1n]/, countsAsNum = /[1n]/;
-
-	    function BidiSpan(level, from, to) {
-	      this.level = level;
-	      this.from = from; this.to = to;
-	    }
-
-	    return function(str, direction) {
-	      var outerType = direction == "ltr" ? "L" : "R";
-
-	      if (str.length == 0 || direction == "ltr" && !bidiRE.test(str)) { return false }
-	      var len = str.length, types = [];
-	      for (var i = 0; i < len; ++i)
-	        { types.push(charType(str.charCodeAt(i))); }
-
-	      // W1. Examine each non-spacing mark (NSM) in the level run, and
-	      // change the type of the NSM to the type of the previous
-	      // character. If the NSM is at the start of the level run, it will
-	      // get the type of sor.
-	      for (var i$1 = 0, prev = outerType; i$1 < len; ++i$1) {
-	        var type = types[i$1];
-	        if (type == "m") { types[i$1] = prev; }
-	        else { prev = type; }
-	      }
-
-	      // W2. Search backwards from each instance of a European number
-	      // until the first strong type (R, L, AL, or sor) is found. If an
-	      // AL is found, change the type of the European number to Arabic
-	      // number.
-	      // W3. Change all ALs to R.
-	      for (var i$2 = 0, cur = outerType; i$2 < len; ++i$2) {
-	        var type$1 = types[i$2];
-	        if (type$1 == "1" && cur == "r") { types[i$2] = "n"; }
-	        else if (isStrong.test(type$1)) { cur = type$1; if (type$1 == "r") { types[i$2] = "R"; } }
-	      }
-
-	      // W4. A single European separator between two European numbers
-	      // changes to a European number. A single common separator between
-	      // two numbers of the same type changes to that type.
-	      for (var i$3 = 1, prev$1 = types[0]; i$3 < len - 1; ++i$3) {
-	        var type$2 = types[i$3];
-	        if (type$2 == "+" && prev$1 == "1" && types[i$3+1] == "1") { types[i$3] = "1"; }
-	        else if (type$2 == "," && prev$1 == types[i$3+1] &&
-	                 (prev$1 == "1" || prev$1 == "n")) { types[i$3] = prev$1; }
-	        prev$1 = type$2;
-	      }
-
-	      // W5. A sequence of European terminators adjacent to European
-	      // numbers changes to all European numbers.
-	      // W6. Otherwise, separators and terminators change to Other
-	      // Neutral.
-	      for (var i$4 = 0; i$4 < len; ++i$4) {
-	        var type$3 = types[i$4];
-	        if (type$3 == ",") { types[i$4] = "N"; }
-	        else if (type$3 == "%") {
-	          var end = (void 0);
-	          for (end = i$4 + 1; end < len && types[end] == "%"; ++end) {}
-	          var replace = (i$4 && types[i$4-1] == "!") || (end < len && types[end] == "1") ? "1" : "N";
-	          for (var j = i$4; j < end; ++j) { types[j] = replace; }
-	          i$4 = end - 1;
-	        }
-	      }
-
-	      // W7. Search backwards from each instance of a European number
-	      // until the first strong type (R, L, or sor) is found. If an L is
-	      // found, then change the type of the European number to L.
-	      for (var i$5 = 0, cur$1 = outerType; i$5 < len; ++i$5) {
-	        var type$4 = types[i$5];
-	        if (cur$1 == "L" && type$4 == "1") { types[i$5] = "L"; }
-	        else if (isStrong.test(type$4)) { cur$1 = type$4; }
-	      }
-
-	      // N1. A sequence of neutrals takes the direction of the
-	      // surrounding strong text if the text on both sides has the same
-	      // direction. European and Arabic numbers act as if they were R in
-	      // terms of their influence on neutrals. Start-of-level-run (sor)
-	      // and end-of-level-run (eor) are used at level run boundaries.
-	      // N2. Any remaining neutrals take the embedding direction.
-	      for (var i$6 = 0; i$6 < len; ++i$6) {
-	        if (isNeutral.test(types[i$6])) {
-	          var end$1 = (void 0);
-	          for (end$1 = i$6 + 1; end$1 < len && isNeutral.test(types[end$1]); ++end$1) {}
-	          var before = (i$6 ? types[i$6-1] : outerType) == "L";
-	          var after = (end$1 < len ? types[end$1] : outerType) == "L";
-	          var replace$1 = before == after ? (before ? "L" : "R") : outerType;
-	          for (var j$1 = i$6; j$1 < end$1; ++j$1) { types[j$1] = replace$1; }
-	          i$6 = end$1 - 1;
-	        }
-	      }
-
-	      // Here we depart from the documented algorithm, in order to avoid
-	      // building up an actual levels array. Since there are only three
-	      // levels (0, 1, 2) in an implementation that doesn't take
-	      // explicit embedding into account, we can build up the order on
-	      // the fly, without following the level-based algorithm.
-	      var order = [], m;
-	      for (var i$7 = 0; i$7 < len;) {
-	        if (countsAsLeft.test(types[i$7])) {
-	          var start = i$7;
-	          for (++i$7; i$7 < len && countsAsLeft.test(types[i$7]); ++i$7) {}
-	          order.push(new BidiSpan(0, start, i$7));
-	        } else {
-	          var pos = i$7, at = order.length;
-	          for (++i$7; i$7 < len && types[i$7] != "L"; ++i$7) {}
-	          for (var j$2 = pos; j$2 < i$7;) {
-	            if (countsAsNum.test(types[j$2])) {
-	              if (pos < j$2) { order.splice(at, 0, new BidiSpan(1, pos, j$2)); }
-	              var nstart = j$2;
-	              for (++j$2; j$2 < i$7 && countsAsNum.test(types[j$2]); ++j$2) {}
-	              order.splice(at, 0, new BidiSpan(2, nstart, j$2));
-	              pos = j$2;
-	            } else { ++j$2; }
-	          }
-	          if (pos < i$7) { order.splice(at, 0, new BidiSpan(1, pos, i$7)); }
-	        }
-	      }
-	      if (direction == "ltr") {
-	        if (order[0].level == 1 && (m = str.match(/^\s+/))) {
-	          order[0].from = m[0].length;
-	          order.unshift(new BidiSpan(0, 0, m[0].length));
-	        }
-	        if (lst(order).level == 1 && (m = str.match(/\s+$/))) {
-	          lst(order).to -= m[0].length;
-	          order.push(new BidiSpan(0, len - m[0].length, len));
-	        }
-	      }
-
-	      return direction == "rtl" ? order.reverse() : order
-	    }
-	  })();
-
-	  // Get the bidi ordering for the given line (and cache it). Returns
-	  // false for lines that are fully left-to-right, and an array of
-	  // BidiSpan objects otherwise.
-	  function getOrder(line, direction) {
-	    var order = line.order;
-	    if (order == null) { order = line.order = bidiOrdering(line.text, direction); }
-	    return order
-	  }
-
-	  // EVENT HANDLING
-
-	  // Lightweight event framework. on/off also work on DOM nodes,
-	  // registering native DOM handlers.
-
-	  var noHandlers = [];
-
-	  var on = function(emitter, type, f) {
-	    if (emitter.addEventListener) {
-	      emitter.addEventListener(type, f, false);
-	    } else if (emitter.attachEvent) {
-	      emitter.attachEvent("on" + type, f);
-	    } else {
-	      var map$$1 = emitter._handlers || (emitter._handlers = {});
-	      map$$1[type] = (map$$1[type] || noHandlers).concat(f);
-	    }
-	  };
-
-	  function getHandlers(emitter, type) {
-	    return emitter._handlers && emitter._handlers[type] || noHandlers
-	  }
-
-	  function off(emitter, type, f) {
-	    if (emitter.removeEventListener) {
-	      emitter.removeEventListener(type, f, false);
-	    } else if (emitter.detachEvent) {
-	      emitter.detachEvent("on" + type, f);
-	    } else {
-	      var map$$1 = emitter._handlers, arr = map$$1 && map$$1[type];
-	      if (arr) {
-	        var index = indexOf(arr, f);
-	        if (index > -1)
-	          { map$$1[type] = arr.slice(0, index).concat(arr.slice(index + 1)); }
-	      }
-	    }
-	  }
-
-	  function signal(emitter, type /*, values...*/) {
-	    var handlers = getHandlers(emitter, type);
-	    if (!handlers.length) { return }
-	    var args = Array.prototype.slice.call(arguments, 2);
-	    for (var i = 0; i < handlers.length; ++i) { handlers[i].apply(null, args); }
-	  }
-
-	  // The DOM events that CodeMirror handles can be overridden by
-	  // registering a (non-DOM) handler on the editor for the event name,
-	  // and preventDefault-ing the event in that handler.
-	  function signalDOMEvent(cm, e, override) {
-	    if (typeof e == "string")
-	      { e = {type: e, preventDefault: function() { this.defaultPrevented = true; }}; }
-	    signal(cm, override || e.type, cm, e);
-	    return e_defaultPrevented(e) || e.codemirrorIgnore
-	  }
-
-	  function signalCursorActivity(cm) {
-	    var arr = cm._handlers && cm._handlers.cursorActivity;
-	    if (!arr) { return }
-	    var set = cm.curOp.cursorActivityHandlers || (cm.curOp.cursorActivityHandlers = []);
-	    for (var i = 0; i < arr.length; ++i) { if (indexOf(set, arr[i]) == -1)
-	      { set.push(arr[i]); } }
-	  }
-
-	  function hasHandler(emitter, type) {
-	    return getHandlers(emitter, type).length > 0
-	  }
-
-	  // Add on and off methods to a constructor's prototype, to make
-	  // registering events on such objects more convenient.
-	  function eventMixin(ctor) {
-	    ctor.prototype.on = function(type, f) {on(this, type, f);};
-	    ctor.prototype.off = function(type, f) {off(this, type, f);};
-	  }
-
-	  // Due to the fact that we still support jurassic IE versions, some
-	  // compatibility wrappers are needed.
-
-	  function e_preventDefault(e) {
-	    if (e.preventDefault) { e.preventDefault(); }
-	    else { e.returnValue = false; }
-	  }
-	  function e_stopPropagation(e) {
-	    if (e.stopPropagation) { e.stopPropagation(); }
-	    else { e.cancelBubble = true; }
-	  }
-	  function e_defaultPrevented(e) {
-	    return e.defaultPrevented != null ? e.defaultPrevented : e.returnValue == false
-	  }
-	  function e_stop(e) {e_preventDefault(e); e_stopPropagation(e);}
-
-	  function e_target(e) {return e.target || e.srcElement}
-	  function e_button(e) {
-	    var b = e.which;
-	    if (b == null) {
-	      if (e.button & 1) { b = 1; }
-	      else if (e.button & 2) { b = 3; }
-	      else if (e.button & 4) { b = 2; }
-	    }
-	    if (mac && e.ctrlKey && b == 1) { b = 3; }
-	    return b
-	  }
-
-	  // Detect drag-and-drop
-	  var dragAndDrop = function() {
-	    // There is *some* kind of drag-and-drop support in IE6-8, but I
-	    // couldn't get it to work yet.
-	    if (ie && ie_version < 9) { return false }
-	    var div = elt('div');
-	    return "draggable" in div || "dragDrop" in div
-	  }();
-
-	  var zwspSupported;
-	  function zeroWidthElement(measure) {
-	    if (zwspSupported == null) {
-	      var test = elt("span", "\u200b");
-	      removeChildrenAndAdd(measure, elt("span", [test, document.createTextNode("x")]));
-	      if (measure.firstChild.offsetHeight != 0)
-	        { zwspSupported = test.offsetWidth <= 1 && test.offsetHeight > 2 && !(ie && ie_version < 8); }
-	    }
-	    var node = zwspSupported ? elt("span", "\u200b") :
-	      elt("span", "\u00a0", null, "display: inline-block; width: 1px; margin-right: -1px");
-	    node.setAttribute("cm-text", "");
-	    return node
-	  }
-
-	  // Feature-detect IE's crummy client rect reporting for bidi text
-	  var badBidiRects;
-	  function hasBadBidiRects(measure) {
-	    if (badBidiRects != null) { return badBidiRects }
-	    var txt = removeChildrenAndAdd(measure, document.createTextNode("A\u062eA"));
-	    var r0 = range(txt, 0, 1).getBoundingClientRect();
-	    var r1 = range(txt, 1, 2).getBoundingClientRect();
-	    removeChildren(measure);
-	    if (!r0 || r0.left == r0.right) { return false } // Safari returns null in some cases (#2780)
-	    return badBidiRects = (r1.right - r0.right < 3)
-	  }
-
-	  // See if "".split is the broken IE version, if so, provide an
-	  // alternative way to split lines.
-	  var splitLinesAuto = "\n\nb".split(/\n/).length != 3 ? function (string) {
-	    var pos = 0, result = [], l = string.length;
-	    while (pos <= l) {
-	      var nl = string.indexOf("\n", pos);
-	      if (nl == -1) { nl = string.length; }
-	      var line = string.slice(pos, string.charAt(nl - 1) == "\r" ? nl - 1 : nl);
-	      var rt = line.indexOf("\r");
-	      if (rt != -1) {
-	        result.push(line.slice(0, rt));
-	        pos += rt + 1;
-	      } else {
-	        result.push(line);
-	        pos = nl + 1;
-	      }
-	    }
-	    return result
-	  } : function (string) { return string.split(/\r\n?|\n/); };
-
-	  var hasSelection = window.getSelection ? function (te) {
-	    try { return te.selectionStart != te.selectionEnd }
-	    catch(e) { return false }
-	  } : function (te) {
-	    var range$$1;
-	    try {range$$1 = te.ownerDocument.selection.createRange();}
-	    catch(e) {}
-	    if (!range$$1 || range$$1.parentElement() != te) { return false }
-	    return range$$1.compareEndPoints("StartToEnd", range$$1) != 0
-	  };
-
-	  var hasCopyEvent = (function () {
-	    var e = elt("div");
-	    if ("oncopy" in e) { return true }
-	    e.setAttribute("oncopy", "return;");
-	    return typeof e.oncopy == "function"
-	  })();
-
-	  var badZoomedRects = null;
-	  function hasBadZoomedRects(measure) {
-	    if (badZoomedRects != null) { return badZoomedRects }
-	    var node = removeChildrenAndAdd(measure, elt("span", "x"));
-	    var normal = node.getBoundingClientRect();
-	    var fromRange = range(node, 0, 1).getBoundingClientRect();
-	    return badZoomedRects = Math.abs(normal.left - fromRange.left) > 1
-	  }
-
-	  // Known modes, by name and by MIME
-	  var modes = {}, mimeModes = {};
-
-	  // Extra arguments are stored as the mode's dependencies, which is
-	  // used by (legacy) mechanisms like loadmode.js to automatically
-	  // load a mode. (Preferred mechanism is the require/define calls.)
-	  function defineMode(name, mode) {
-	    if (arguments.length > 2)
-	      { mode.dependencies = Array.prototype.slice.call(arguments, 2); }
-	    modes[name] = mode;
-	  }
-
-	  function defineMIME(mime, spec) {
-	    mimeModes[mime] = spec;
-	  }
-
-	  // Given a MIME type, a {name, ...options} config object, or a name
-	  // string, return a mode config object.
-	  function resolveMode(spec) {
-	    if (typeof spec == "string" && mimeModes.hasOwnProperty(spec)) {
-	      spec = mimeModes[spec];
-	    } else if (spec && typeof spec.name == "string" && mimeModes.hasOwnProperty(spec.name)) {
-	      var found = mimeModes[spec.name];
-	      if (typeof found == "string") { found = {name: found}; }
-	      spec = createObj(found, spec);
-	      spec.name = found.name;
-	    } else if (typeof spec == "string" && /^[\w\-]+\/[\w\-]+\+xml$/.test(spec)) {
-	      return resolveMode("application/xml")
-	    } else if (typeof spec == "string" && /^[\w\-]+\/[\w\-]+\+json$/.test(spec)) {
-	      return resolveMode("application/json")
-	    }
-	    if (typeof spec == "string") { return {name: spec} }
-	    else { return spec || {name: "null"} }
-	  }
-
-	  // Given a mode spec (anything that resolveMode accepts), find and
-	  // initialize an actual mode object.
-	  function getMode(options, spec) {
-	    spec = resolveMode(spec);
-	    var mfactory = modes[spec.name];
-	    if (!mfactory) { return getMode(options, "text/plain") }
-	    var modeObj = mfactory(options, spec);
-	    if (modeExtensions.hasOwnProperty(spec.name)) {
-	      var exts = modeExtensions[spec.name];
-	      for (var prop in exts) {
-	        if (!exts.hasOwnProperty(prop)) { continue }
-	        if (modeObj.hasOwnProperty(prop)) { modeObj["_" + prop] = modeObj[prop]; }
-	        modeObj[prop] = exts[prop];
-	      }
-	    }
-	    modeObj.name = spec.name;
-	    if (spec.helperType) { modeObj.helperType = spec.helperType; }
-	    if (spec.modeProps) { for (var prop$1 in spec.modeProps)
-	      { modeObj[prop$1] = spec.modeProps[prop$1]; } }
-
-	    return modeObj
-	  }
-
-	  // This can be used to attach properties to mode objects from
-	  // outside the actual mode definition.
-	  var modeExtensions = {};
-	  function extendMode(mode, properties) {
-	    var exts = modeExtensions.hasOwnProperty(mode) ? modeExtensions[mode] : (modeExtensions[mode] = {});
-	    copyObj(properties, exts);
-	  }
-
-	  function copyState(mode, state) {
-	    if (state === true) { return state }
-	    if (mode.copyState) { return mode.copyState(state) }
-	    var nstate = {};
-	    for (var n in state) {
-	      var val = state[n];
-	      if (val instanceof Array) { val = val.concat([]); }
-	      nstate[n] = val;
-	    }
-	    return nstate
-	  }
-
-	  // Given a mode and a state (for that mode), find the inner mode and
-	  // state at the position that the state refers to.
-	  function innerMode(mode, state) {
-	    var info;
-	    while (mode.innerMode) {
-	      info = mode.innerMode(state);
-	      if (!info || info.mode == mode) { break }
-	      state = info.state;
-	      mode = info.mode;
-	    }
-	    return info || {mode: mode, state: state}
-	  }
-
-	  function startState(mode, a1, a2) {
-	    return mode.startState ? mode.startState(a1, a2) : true
-	  }
-
-	  // STRING STREAM
-
-	  // Fed to the mode parsers, provides helper functions to make
-	  // parsers more succinct.
-
-	  var StringStream = function(string, tabSize, lineOracle) {
-	    this.pos = this.start = 0;
-	    this.string = string;
-	    this.tabSize = tabSize || 8;
-	    this.lastColumnPos = this.lastColumnValue = 0;
-	    this.lineStart = 0;
-	    this.lineOracle = lineOracle;
-	  };
-
-	  StringStream.prototype.eol = function () {return this.pos >= this.string.length};
-	  StringStream.prototype.sol = function () {return this.pos == this.lineStart};
-	  StringStream.prototype.peek = function () {return this.string.charAt(this.pos) || undefined};
-	  StringStream.prototype.next = function () {
-	    if (this.pos < this.string.length)
-	      { return this.string.charAt(this.pos++) }
-	  };
-	  StringStream.prototype.eat = function (match) {
-	    var ch = this.string.charAt(this.pos);
-	    var ok;
-	    if (typeof match == "string") { ok = ch == match; }
-	    else { ok = ch && (match.test ? match.test(ch) : match(ch)); }
-	    if (ok) {++this.pos; return ch}
-	  };
-	  StringStream.prototype.eatWhile = function (match) {
-	    var start = this.pos;
-	    while (this.eat(match)){}
-	    return this.pos > start
-	  };
-	  StringStream.prototype.eatSpace = function () {
-	      var this$1 = this;
-
-	    var start = this.pos;
-	    while (/[\s\u00a0]/.test(this.string.charAt(this.pos))) { ++this$1.pos; }
-	    return this.pos > start
-	  };
-	  StringStream.prototype.skipToEnd = function () {this.pos = this.string.length;};
-	  StringStream.prototype.skipTo = function (ch) {
-	    var found = this.string.indexOf(ch, this.pos);
-	    if (found > -1) {this.pos = found; return true}
-	  };
-	  StringStream.prototype.backUp = function (n) {this.pos -= n;};
-	  StringStream.prototype.column = function () {
-	    if (this.lastColumnPos < this.start) {
-	      this.lastColumnValue = countColumn(this.string, this.start, this.tabSize, this.lastColumnPos, this.lastColumnValue);
-	      this.lastColumnPos = this.start;
-	    }
-	    return this.lastColumnValue - (this.lineStart ? countColumn(this.string, this.lineStart, this.tabSize) : 0)
-	  };
-	  StringStream.prototype.indentation = function () {
-	    return countColumn(this.string, null, this.tabSize) -
-	      (this.lineStart ? countColumn(this.string, this.lineStart, this.tabSize) : 0)
-	  };
-	  StringStream.prototype.match = function (pattern, consume, caseInsensitive) {
-	    if (typeof pattern == "string") {
-	      var cased = function (str) { return caseInsensitive ? str.toLowerCase() : str; };
-	      var substr = this.string.substr(this.pos, pattern.length);
-	      if (cased(substr) == cased(pattern)) {
-	        if (consume !== false) { this.pos += pattern.length; }
-	        return true
-	      }
-	    } else {
-	      var match = this.string.slice(this.pos).match(pattern);
-	      if (match && match.index > 0) { return null }
-	      if (match && consume !== false) { this.pos += match[0].length; }
-	      return match
-	    }
-	  };
-	  StringStream.prototype.current = function (){return this.string.slice(this.start, this.pos)};
-	  StringStream.prototype.hideFirstChars = function (n, inner) {
-	    this.lineStart += n;
-	    try { return inner() }
-	    finally { this.lineStart -= n; }
-	  };
-	  StringStream.prototype.lookAhead = function (n) {
-	    var oracle = this.lineOracle;
-	    return oracle && oracle.lookAhead(n)
-	  };
-	  StringStream.prototype.baseToken = function () {
-	    var oracle = this.lineOracle;
-	    return oracle && oracle.baseToken(this.pos)
-	  };
-
-	  var SavedContext = function(state, lookAhead) {
-	    this.state = state;
-	    this.lookAhead = lookAhead;
-	  };
-
-	  var Context = function(doc, state, line, lookAhead) {
-	    this.state = state;
-	    this.doc = doc;
-	    this.line = line;
-	    this.maxLookAhead = lookAhead || 0;
-	    this.baseTokens = null;
-	    this.baseTokenPos = 1;
-	  };
-
-	  Context.prototype.lookAhead = function (n) {
-	    var line = this.doc.getLine(this.line + n);
-	    if (line != null && n > this.maxLookAhead) { this.maxLookAhead = n; }
-	    return line
-	  };
-
-	  Context.prototype.baseToken = function (n) {
-	      var this$1 = this;
-
-	    if (!this.baseTokens) { return null }
-	    while (this.baseTokens[this.baseTokenPos] <= n)
-	      { this$1.baseTokenPos += 2; }
-	    var type = this.baseTokens[this.baseTokenPos + 1];
-	    return {type: type && type.replace(/( |^)overlay .*/, ""),
-	            size: this.baseTokens[this.baseTokenPos] - n}
-	  };
-
-	  Context.prototype.nextLine = function () {
-	    this.line++;
-	    if (this.maxLookAhead > 0) { this.maxLookAhead--; }
-	  };
-
-	  Context.fromSaved = function (doc, saved, line) {
-	    if (saved instanceof SavedContext)
-	      { return new Context(doc, copyState(doc.mode, saved.state), line, saved.lookAhead) }
-	    else
-	      { return new Context(doc, copyState(doc.mode, saved), line) }
-	  };
-
-	  Context.prototype.save = function (copy) {
-	    var state = copy !== false ? copyState(this.doc.mode, this.state) : this.state;
-	    return this.maxLookAhead > 0 ? new SavedContext(state, this.maxLookAhead) : state
-	  };
-
-
-	  // Compute a style array (an array starting with a mode generation
-	  // -- for invalidation -- followed by pairs of end positions and
-	  // style strings), which is used to highlight the tokens on the
-	  // line.
-	  function highlightLine(cm, line, context, forceToEnd) {
-	    // A styles array always starts with a number identifying the
-	    // mode/overlays that it is based on (for easy invalidation).
-	    var st = [cm.state.modeGen], lineClasses = {};
-	    // Compute the base array of styles
-	    runMode(cm, line.text, cm.doc.mode, context, function (end, style) { return st.push(end, style); },
-	            lineClasses, forceToEnd);
-	    var state = context.state;
-
-	    // Run overlays, adjust style array.
-	    var loop = function ( o ) {
-	      context.baseTokens = st;
-	      var overlay = cm.state.overlays[o], i = 1, at = 0;
-	      context.state = true;
-	      runMode(cm, line.text, overlay.mode, context, function (end, style) {
-	        var start = i;
-	        // Ensure there's a token end at the current position, and that i points at it
-	        while (at < end) {
-	          var i_end = st[i];
-	          if (i_end > end)
-	            { st.splice(i, 1, end, st[i+1], i_end); }
-	          i += 2;
-	          at = Math.min(end, i_end);
-	        }
-	        if (!style) { return }
-	        if (overlay.opaque) {
-	          st.splice(start, i - start, end, "overlay " + style);
-	          i = start + 2;
-	        } else {
-	          for (; start < i; start += 2) {
-	            var cur = st[start+1];
-	            st[start+1] = (cur ? cur + " " : "") + "overlay " + style;
-	          }
-	        }
-	      }, lineClasses);
-	      context.state = state;
-	      context.baseTokens = null;
-	      context.baseTokenPos = 1;
-	    };
-
-	    for (var o = 0; o < cm.state.overlays.length; ++o) loop( o );
-
-	    return {styles: st, classes: lineClasses.bgClass || lineClasses.textClass ? lineClasses : null}
-	  }
-
-	  function getLineStyles(cm, line, updateFrontier) {
-	    if (!line.styles || line.styles[0] != cm.state.modeGen) {
-	      var context = getContextBefore(cm, lineNo(line));
-	      var resetState = line.text.length > cm.options.maxHighlightLength && copyState(cm.doc.mode, context.state);
-	      var result = highlightLine(cm, line, context);
-	      if (resetState) { context.state = resetState; }
-	      line.stateAfter = context.save(!resetState);
-	      line.styles = result.styles;
-	      if (result.classes) { line.styleClasses = result.classes; }
-	      else if (line.styleClasses) { line.styleClasses = null; }
-	      if (updateFrontier === cm.doc.highlightFrontier)
-	        { cm.doc.modeFrontier = Math.max(cm.doc.modeFrontier, ++cm.doc.highlightFrontier); }
-	    }
-	    return line.styles
-	  }
-
-	  function getContextBefore(cm, n, precise) {
-	    var doc = cm.doc, display = cm.display;
-	    if (!doc.mode.startState) { return new Context(doc, true, n) }
-	    var start = findStartLine(cm, n, precise);
-	    var saved = start > doc.first && getLine(doc, start - 1).stateAfter;
-	    var context = saved ? Context.fromSaved(doc, saved, start) : new Context(doc, startState(doc.mode), start);
-
-	    doc.iter(start, n, function (line) {
-	      processLine(cm, line.text, context);
-	      var pos = context.line;
-	      line.stateAfter = pos == n - 1 || pos % 5 == 0 || pos >= display.viewFrom && pos < display.viewTo ? context.save() : null;
-	      context.nextLine();
-	    });
-	    if (precise) { doc.modeFrontier = context.line; }
-	    return context
-	  }
-
-	  // Lightweight form of highlight -- proceed over this line and
-	  // update state, but don't save a style array. Used for lines that
-	  // aren't currently visible.
-	  function processLine(cm, text, context, startAt) {
-	    var mode = cm.doc.mode;
-	    var stream = new StringStream(text, cm.options.tabSize, context);
-	    stream.start = stream.pos = startAt || 0;
-	    if (text == "") { callBlankLine(mode, context.state); }
-	    while (!stream.eol()) {
-	      readToken(mode, stream, context.state);
-	      stream.start = stream.pos;
-	    }
-	  }
-
-	  function callBlankLine(mode, state) {
-	    if (mode.blankLine) { return mode.blankLine(state) }
-	    if (!mode.innerMode) { return }
-	    var inner = innerMode(mode, state);
-	    if (inner.mode.blankLine) { return inner.mode.blankLine(inner.state) }
-	  }
-
-	  function readToken(mode, stream, state, inner) {
-	    for (var i = 0; i < 10; i++) {
-	      if (inner) { inner[0] = innerMode(mode, state).mode; }
-	      var style = mode.token(stream, state);
-	      if (stream.pos > stream.start) { return style }
-	    }
-	    throw new Error("Mode " + mode.name + " failed to advance stream.")
-	  }
-
-	  var Token = function(stream, type, state) {
-	    this.start = stream.start; this.end = stream.pos;
-	    this.string = stream.current();
-	    this.type = type || null;
-	    this.state = state;
-	  };
-
-	  // Utility for getTokenAt and getLineTokens
-	  function takeToken(cm, pos, precise, asArray) {
-	    var doc = cm.doc, mode = doc.mode, style;
-	    pos = clipPos(doc, pos);
-	    var line = getLine(doc, pos.line), context = getContextBefore(cm, pos.line, precise);
-	    var stream = new StringStream(line.text, cm.options.tabSize, context), tokens;
-	    if (asArray) { tokens = []; }
-	    while ((asArray || stream.pos < pos.ch) && !stream.eol()) {
-	      stream.start = stream.pos;
-	      style = readToken(mode, stream, context.state);
-	      if (asArray) { tokens.push(new Token(stream, style, copyState(doc.mode, context.state))); }
-	    }
-	    return asArray ? tokens : new Token(stream, style, context.state)
-	  }
-
-	  function extractLineClasses(type, output) {
-	    if (type) { for (;;) {
-	      var lineClass = type.match(/(?:^|\s+)line-(background-)?(\S+)/);
-	      if (!lineClass) { break }
-	      type = type.slice(0, lineClass.index) + type.slice(lineClass.index + lineClass[0].length);
-	      var prop = lineClass[1] ? "bgClass" : "textClass";
-	      if (output[prop] == null)
-	        { output[prop] = lineClass[2]; }
-	      else if (!(new RegExp("(?:^|\s)" + lineClass[2] + "(?:$|\s)")).test(output[prop]))
-	        { output[prop] += " " + lineClass[2]; }
-	    } }
-	    return type
-	  }
-
-	  // Run the given mode's parser over a line, calling f for each token.
-	  function runMode(cm, text, mode, context, f, lineClasses, forceToEnd) {
-	    var flattenSpans = mode.flattenSpans;
-	    if (flattenSpans == null) { flattenSpans = cm.options.flattenSpans; }
-	    var curStart = 0, curStyle = null;
-	    var stream = new StringStream(text, cm.options.tabSize, context), style;
-	    var inner = cm.options.addModeClass && [null];
-	    if (text == "") { extractLineClasses(callBlankLine(mode, context.state), lineClasses); }
-	    while (!stream.eol()) {
-	      if (stream.pos > cm.options.maxHighlightLength) {
-	        flattenSpans = false;
-	        if (forceToEnd) { processLine(cm, text, context, stream.pos); }
-	        stream.pos = text.length;
-	        style = null;
-	      } else {
-	        style = extractLineClasses(readToken(mode, stream, context.state, inner), lineClasses);
-	      }
-	      if (inner) {
-	        var mName = inner[0].name;
-	        if (mName) { style = "m-" + (style ? mName + " " + style : mName); }
-	      }
-	      if (!flattenSpans || curStyle != style) {
-	        while (curStart < stream.start) {
-	          curStart = Math.min(stream.start, curStart + 5000);
-	          f(curStart, curStyle);
-	        }
-	        curStyle = style;
-	      }
-	      stream.start = stream.pos;
-	    }
-	    while (curStart < stream.pos) {
-	      // Webkit seems to refuse to render text nodes longer than 57444
-	      // characters, and returns inaccurate measurements in nodes
-	      // starting around 5000 chars.
-	      var pos = Math.min(stream.pos, curStart + 5000);
-	      f(pos, curStyle);
-	      curStart = pos;
-	    }
-	  }
-
-	  // Finds the line to start with when starting a parse. Tries to
-	  // find a line with a stateAfter, so that it can start with a
-	  // valid state. If that fails, it returns the line with the
-	  // smallest indentation, which tends to need the least context to
-	  // parse correctly.
-	  function findStartLine(cm, n, precise) {
-	    var minindent, minline, doc = cm.doc;
-	    var lim = precise ? -1 : n - (cm.doc.mode.innerMode ? 1000 : 100);
-	    for (var search = n; search > lim; --search) {
-	      if (search <= doc.first) { return doc.first }
-	      var line = getLine(doc, search - 1), after = line.stateAfter;
-	      if (after && (!precise || search + (after instanceof SavedContext ? after.lookAhead : 0) <= doc.modeFrontier))
-	        { return search }
-	      var indented = countColumn(line.text, null, cm.options.tabSize);
-	      if (minline == null || minindent > indented) {
-	        minline = search - 1;
-	        minindent = indented;
-	      }
-	    }
-	    return minline
-	  }
-
-	  function retreatFrontier(doc, n) {
-	    doc.modeFrontier = Math.min(doc.modeFrontier, n);
-	    if (doc.highlightFrontier < n - 10) { return }
-	    var start = doc.first;
-	    for (var line = n - 1; line > start; line--) {
-	      var saved = getLine(doc, line).stateAfter;
-	      // change is on 3
-	      // state on line 1 looked ahead 2 -- so saw 3
-	      // test 1 + 2 < 3 should cover this
-	      if (saved && (!(saved instanceof SavedContext) || line + saved.lookAhead < n)) {
-	        start = line + 1;
-	        break
-	      }
-	    }
-	    doc.highlightFrontier = Math.min(doc.highlightFrontier, start);
 	  }
 
 	  // LINE DATA STRUCTURE
@@ -2290,8 +2202,8 @@
 	          elt("div", lineNumberFor(cm.options, lineN),
 	              "CodeMirror-linenumber CodeMirror-gutter-elt",
 	              ("left: " + (dims.gutterLeft["CodeMirror-linenumbers"]) + "px; width: " + (cm.display.lineNumInnerWidth) + "px"))); }
-	      if (markers) { for (var k = 0; k < cm.options.gutters.length; ++k) {
-	        var id = cm.options.gutters[k], found = markers.hasOwnProperty(id) && markers[id];
+	      if (markers) { for (var k = 0; k < cm.display.gutterSpecs.length; ++k) {
+	        var id = cm.display.gutterSpecs[k].className, found = markers.hasOwnProperty(id) && markers[id];
 	        if (found)
 	          { gutterWrap.appendChild(elt("div", [found], "CodeMirror-gutter-elt",
 	                                     ("left: " + (dims.gutterLeft[id]) + "px; width: " + (dims.gutterWidth[id]) + "px"))); }
@@ -2301,10 +2213,10 @@
 
 	  function updateLineWidgets(cm, lineView, dims) {
 	    if (lineView.alignable) { lineView.alignable = null; }
+	    var isWidget = classTest("CodeMirror-linewidget");
 	    for (var node = lineView.node.firstChild, next = (void 0); node; node = next) {
 	      next = node.nextSibling;
-	      if (node.className == "CodeMirror-linewidget")
-	        { lineView.node.removeChild(node); }
+	      if (isWidget.test(node.className)) { lineView.node.removeChild(node); }
 	    }
 	    insertLineWidgets(cm, lineView, dims);
 	  }
@@ -2334,7 +2246,7 @@
 	    if (!line.widgets) { return }
 	    var wrap = ensureLineWrapped(lineView);
 	    for (var i = 0, ws = line.widgets; i < ws.length; ++i) {
-	      var widget = ws[i], node = elt("div", [widget.node], "CodeMirror-linewidget");
+	      var widget = ws[i], node = elt("div", [widget.node], "CodeMirror-linewidget" + (widget.className ? " " + widget.className : ""));
 	      if (!widget.handleMouseEvents) { node.setAttribute("cm-ignore-events", "true"); }
 	      positionLineWidget(widget, node, lineView, dims);
 	      cm.display.input.setUneditable(node);
@@ -2394,7 +2306,7 @@
 	  function paddingVert(display) {return display.mover.offsetHeight - display.lineSpace.offsetHeight}
 	  function paddingH(display) {
 	    if (display.cachedPaddingH) { return display.cachedPaddingH }
-	    var e = removeChildrenAndAdd(display.measure, elt("pre", "x"));
+	    var e = removeChildrenAndAdd(display.measure, elt("pre", "x", "CodeMirror-line-like"));
 	    var style = window.getComputedStyle ? window.getComputedStyle(e) : e.currentStyle;
 	    var data = {left: parseInt(style.paddingLeft), right: parseInt(style.paddingRight)};
 	    if (!isNaN(data.left) && !isNaN(data.right)) { display.cachedPaddingH = data; }
@@ -2522,36 +2434,36 @@
 
 	  var nullRect = {left: 0, right: 0, top: 0, bottom: 0};
 
-	  function nodeAndOffsetInLineMap(map$$1, ch, bias) {
+	  function nodeAndOffsetInLineMap(map, ch, bias) {
 	    var node, start, end, collapse, mStart, mEnd;
 	    // First, search the line map for the text node corresponding to,
 	    // or closest to, the target character.
-	    for (var i = 0; i < map$$1.length; i += 3) {
-	      mStart = map$$1[i];
-	      mEnd = map$$1[i + 1];
+	    for (var i = 0; i < map.length; i += 3) {
+	      mStart = map[i];
+	      mEnd = map[i + 1];
 	      if (ch < mStart) {
 	        start = 0; end = 1;
 	        collapse = "left";
 	      } else if (ch < mEnd) {
 	        start = ch - mStart;
 	        end = start + 1;
-	      } else if (i == map$$1.length - 3 || ch == mEnd && map$$1[i + 3] > ch) {
+	      } else if (i == map.length - 3 || ch == mEnd && map[i + 3] > ch) {
 	        end = mEnd - mStart;
 	        start = end - 1;
 	        if (ch >= mEnd) { collapse = "right"; }
 	      }
 	      if (start != null) {
-	        node = map$$1[i + 2];
+	        node = map[i + 2];
 	        if (mStart == mEnd && bias == (node.insertLeft ? "left" : "right"))
 	          { collapse = bias; }
 	        if (bias == "left" && start == 0)
-	          { while (i && map$$1[i - 2] == map$$1[i - 3] && map$$1[i - 1].insertLeft) {
-	            node = map$$1[(i -= 3) + 2];
+	          { while (i && map[i - 2] == map[i - 3] && map[i - 1].insertLeft) {
+	            node = map[(i -= 3) + 2];
 	            collapse = "left";
 	          } }
 	        if (bias == "right" && start == mEnd - mStart)
-	          { while (i < map$$1.length - 3 && map$$1[i + 3] == map$$1[i + 4] && !map$$1[i + 5].insertLeft) {
-	            node = map$$1[(i += 3) + 2];
+	          { while (i < map.length - 3 && map[i + 3] == map[i + 4] && !map[i + 5].insertLeft) {
+	            node = map[(i += 3) + 2];
 	            collapse = "right";
 	          } }
 	        break
@@ -2788,7 +2700,7 @@
 	  function PosWithInfo(line, ch, sticky, outside, xRel) {
 	    var pos = Pos(line, ch, sticky);
 	    pos.xRel = xRel;
-	    if (outside) { pos.outside = true; }
+	    if (outside) { pos.outside = outside; }
 	    return pos
 	  }
 
@@ -2797,16 +2709,16 @@
 	  function coordsChar(cm, x, y) {
 	    var doc = cm.doc;
 	    y += cm.display.viewOffset;
-	    if (y < 0) { return PosWithInfo(doc.first, 0, null, true, -1) }
+	    if (y < 0) { return PosWithInfo(doc.first, 0, null, -1, -1) }
 	    var lineN = lineAtHeight(doc, y), last = doc.first + doc.size - 1;
 	    if (lineN > last)
-	      { return PosWithInfo(doc.first + doc.size - 1, getLine(doc, last).text.length, null, true, 1) }
+	      { return PosWithInfo(doc.first + doc.size - 1, getLine(doc, last).text.length, null, 1, 1) }
 	    if (x < 0) { x = 0; }
 
 	    var lineObj = getLine(doc, lineN);
 	    for (;;) {
 	      var found = coordsCharInner(cm, lineObj, lineN, x, y);
-	      var collapsed = collapsedSpanAround(lineObj, found.ch + (found.xRel > 0 ? 1 : 0));
+	      var collapsed = collapsedSpanAround(lineObj, found.ch + (found.xRel > 0 || found.outside > 0 ? 1 : 0));
 	      if (!collapsed) { return found }
 	      var rangeEnd = collapsed.find(1);
 	      if (rangeEnd.line == lineN) { return rangeEnd }
@@ -2834,13 +2746,13 @@
 	    return box.bottom <= y ? false : box.top > y ? true : (left ? box.left : box.right) > x
 	  }
 
-	  function coordsCharInner(cm, lineObj, lineNo$$1, x, y) {
+	  function coordsCharInner(cm, lineObj, lineNo, x, y) {
 	    // Move y into line-local coordinate space
 	    y -= heightAtLine(lineObj);
 	    var preparedMeasure = prepareMeasureForLine(cm, lineObj);
 	    // When directly calling `measureCharPrepared`, we have to adjust
 	    // for the widgets at this line.
-	    var widgetHeight$$1 = widgetTopHeight(lineObj);
+	    var widgetHeight = widgetTopHeight(lineObj);
 	    var begin = 0, end = lineObj.text.length, ltr = true;
 
 	    var order = getOrder(lineObj, cm.doc.direction);
@@ -2848,7 +2760,7 @@
 	    // which bidi section the coordinates fall into.
 	    if (order) {
 	      var part = (cm.options.lineWrapping ? coordsBidiPartWrapped : coordsBidiPart)
-	                   (cm, lineObj, lineNo$$1, preparedMeasure, order, x, y);
+	                   (cm, lineObj, lineNo, preparedMeasure, order, x, y);
 	      ltr = part.level != 1;
 	      // The awkward -1 offsets are needed because findFirst (called
 	      // on these below) will treat its first bound as inclusive,
@@ -2864,7 +2776,7 @@
 	    var chAround = null, boxAround = null;
 	    var ch = findFirst(function (ch) {
 	      var box = measureCharPrepared(cm, preparedMeasure, ch);
-	      box.top += widgetHeight$$1; box.bottom += widgetHeight$$1;
+	      box.top += widgetHeight; box.bottom += widgetHeight;
 	      if (!boxIsAfter(box, x, y, false)) { return false }
 	      if (box.top <= y && box.left <= x) {
 	        chAround = ch;
@@ -2888,27 +2800,27 @@
 	      // left of the character and compare it's vertical position to the
 	      // coordinates
 	      sticky = ch == 0 ? "after" : ch == lineObj.text.length ? "before" :
-	        (measureCharPrepared(cm, preparedMeasure, ch - (ltr ? 1 : 0)).bottom + widgetHeight$$1 <= y) == ltr ?
+	        (measureCharPrepared(cm, preparedMeasure, ch - (ltr ? 1 : 0)).bottom + widgetHeight <= y) == ltr ?
 	        "after" : "before";
 	      // Now get accurate coordinates for this place, in order to get a
 	      // base X position
-	      var coords = cursorCoords(cm, Pos(lineNo$$1, ch, sticky), "line", lineObj, preparedMeasure);
+	      var coords = cursorCoords(cm, Pos(lineNo, ch, sticky), "line", lineObj, preparedMeasure);
 	      baseX = coords.left;
-	      outside = y < coords.top || y >= coords.bottom;
+	      outside = y < coords.top ? -1 : y >= coords.bottom ? 1 : 0;
 	    }
 
 	    ch = skipExtendingChars(lineObj.text, ch, 1);
-	    return PosWithInfo(lineNo$$1, ch, sticky, outside, x - baseX)
+	    return PosWithInfo(lineNo, ch, sticky, outside, x - baseX)
 	  }
 
-	  function coordsBidiPart(cm, lineObj, lineNo$$1, preparedMeasure, order, x, y) {
+	  function coordsBidiPart(cm, lineObj, lineNo, preparedMeasure, order, x, y) {
 	    // Bidi parts are sorted left-to-right, and in a non-line-wrapping
 	    // situation, we can take this ordering to correspond to the visual
 	    // ordering. This finds the first part whose end is after the given
 	    // coordinates.
 	    var index = findFirst(function (i) {
 	      var part = order[i], ltr = part.level != 1;
-	      return boxIsAfter(cursorCoords(cm, Pos(lineNo$$1, ltr ? part.to : part.from, ltr ? "before" : "after"),
+	      return boxIsAfter(cursorCoords(cm, Pos(lineNo, ltr ? part.to : part.from, ltr ? "before" : "after"),
 	                                     "line", lineObj, preparedMeasure), x, y, true)
 	    }, 0, order.length - 1);
 	    var part = order[index];
@@ -2917,7 +2829,7 @@
 	    // that start, move one part back.
 	    if (index > 0) {
 	      var ltr = part.level != 1;
-	      var start = cursorCoords(cm, Pos(lineNo$$1, ltr ? part.from : part.to, ltr ? "after" : "before"),
+	      var start = cursorCoords(cm, Pos(lineNo, ltr ? part.from : part.to, ltr ? "after" : "before"),
 	                               "line", lineObj, preparedMeasure);
 	      if (boxIsAfter(start, x, y, true) && start.top > y)
 	        { part = order[index - 1]; }
@@ -2963,7 +2875,7 @@
 	  function textHeight(display) {
 	    if (display.cachedTextHeight != null) { return display.cachedTextHeight }
 	    if (measureText == null) {
-	      measureText = elt("pre");
+	      measureText = elt("pre", null, "CodeMirror-line-like");
 	      // Measure a bunch of lines, for browsers that compute
 	      // fractional heights.
 	      for (var i = 0; i < 49; ++i) {
@@ -2983,7 +2895,7 @@
 	  function charWidth(display) {
 	    if (display.cachedCharWidth != null) { return display.cachedCharWidth }
 	    var anchor = elt("span", "xxxxxxxxxx");
-	    var pre = elt("pre", [anchor]);
+	    var pre = elt("pre", [anchor], "CodeMirror-line-like");
 	    removeChildrenAndAdd(display.measure, pre);
 	    var rect = anchor.getBoundingClientRect(), width = (rect.right - rect.left) / 10;
 	    if (width > 2) { display.cachedCharWidth = width; }
@@ -2996,8 +2908,9 @@
 	    var d = cm.display, left = {}, width = {};
 	    var gutterLeft = d.gutters.clientLeft;
 	    for (var n = d.gutters.firstChild, i = 0; n; n = n.nextSibling, ++i) {
-	      left[cm.options.gutters[i]] = n.offsetLeft + n.clientLeft + gutterLeft;
-	      width[cm.options.gutters[i]] = n.clientWidth;
+	      var id = cm.display.gutterSpecs[i].className;
+	      left[id] = n.offsetLeft + n.clientLeft + gutterLeft;
+	      width[id] = n.clientWidth;
 	    }
 	    return {fixedPos: compensateForHScroll(d),
 	            gutterTotalWidth: d.gutters.offsetWidth,
@@ -3054,9 +2967,9 @@
 	    var x, y, space = display.lineSpace.getBoundingClientRect();
 	    // Fails unpredictably on IE[67] when mouse is dragged around quickly.
 	    try { x = e.clientX - space.left; y = e.clientY - space.top; }
-	    catch (e) { return null }
+	    catch (e$1) { return null }
 	    var coords = coordsChar(cm, x, y), line;
-	    if (forRect && coords.xRel == 1 && (line = getLine(cm.doc, coords.line).text).length == coords.ch) {
+	    if (forRect && coords.xRel > 0 && (line = getLine(cm.doc, coords.line).text).length == coords.ch) {
 	      var colDiff = countColumn(line, line.length, cm.options.tabSize) - line.length;
 	      coords = Pos(coords.line, Math.max(0, Math.round((x - paddingH(cm.display).left) / charWidth(cm.display)) - colDiff));
 	    }
@@ -3076,6 +2989,154 @@
 	    }
 	  }
 
+	  // Updates the display.view data structure for a given change to the
+	  // document. From and to are in pre-change coordinates. Lendiff is
+	  // the amount of lines added or subtracted by the change. This is
+	  // used for changes that span multiple lines, or change the way
+	  // lines are divided into visual lines. regLineChange (below)
+	  // registers single-line changes.
+	  function regChange(cm, from, to, lendiff) {
+	    if (from == null) { from = cm.doc.first; }
+	    if (to == null) { to = cm.doc.first + cm.doc.size; }
+	    if (!lendiff) { lendiff = 0; }
+
+	    var display = cm.display;
+	    if (lendiff && to < display.viewTo &&
+	        (display.updateLineNumbers == null || display.updateLineNumbers > from))
+	      { display.updateLineNumbers = from; }
+
+	    cm.curOp.viewChanged = true;
+
+	    if (from >= display.viewTo) { // Change after
+	      if (sawCollapsedSpans && visualLineNo(cm.doc, from) < display.viewTo)
+	        { resetView(cm); }
+	    } else if (to <= display.viewFrom) { // Change before
+	      if (sawCollapsedSpans && visualLineEndNo(cm.doc, to + lendiff) > display.viewFrom) {
+	        resetView(cm);
+	      } else {
+	        display.viewFrom += lendiff;
+	        display.viewTo += lendiff;
+	      }
+	    } else if (from <= display.viewFrom && to >= display.viewTo) { // Full overlap
+	      resetView(cm);
+	    } else if (from <= display.viewFrom) { // Top overlap
+	      var cut = viewCuttingPoint(cm, to, to + lendiff, 1);
+	      if (cut) {
+	        display.view = display.view.slice(cut.index);
+	        display.viewFrom = cut.lineN;
+	        display.viewTo += lendiff;
+	      } else {
+	        resetView(cm);
+	      }
+	    } else if (to >= display.viewTo) { // Bottom overlap
+	      var cut$1 = viewCuttingPoint(cm, from, from, -1);
+	      if (cut$1) {
+	        display.view = display.view.slice(0, cut$1.index);
+	        display.viewTo = cut$1.lineN;
+	      } else {
+	        resetView(cm);
+	      }
+	    } else { // Gap in the middle
+	      var cutTop = viewCuttingPoint(cm, from, from, -1);
+	      var cutBot = viewCuttingPoint(cm, to, to + lendiff, 1);
+	      if (cutTop && cutBot) {
+	        display.view = display.view.slice(0, cutTop.index)
+	          .concat(buildViewArray(cm, cutTop.lineN, cutBot.lineN))
+	          .concat(display.view.slice(cutBot.index));
+	        display.viewTo += lendiff;
+	      } else {
+	        resetView(cm);
+	      }
+	    }
+
+	    var ext = display.externalMeasured;
+	    if (ext) {
+	      if (to < ext.lineN)
+	        { ext.lineN += lendiff; }
+	      else if (from < ext.lineN + ext.size)
+	        { display.externalMeasured = null; }
+	    }
+	  }
+
+	  // Register a change to a single line. Type must be one of "text",
+	  // "gutter", "class", "widget"
+	  function regLineChange(cm, line, type) {
+	    cm.curOp.viewChanged = true;
+	    var display = cm.display, ext = cm.display.externalMeasured;
+	    if (ext && line >= ext.lineN && line < ext.lineN + ext.size)
+	      { display.externalMeasured = null; }
+
+	    if (line < display.viewFrom || line >= display.viewTo) { return }
+	    var lineView = display.view[findViewIndex(cm, line)];
+	    if (lineView.node == null) { return }
+	    var arr = lineView.changes || (lineView.changes = []);
+	    if (indexOf(arr, type) == -1) { arr.push(type); }
+	  }
+
+	  // Clear the view.
+	  function resetView(cm) {
+	    cm.display.viewFrom = cm.display.viewTo = cm.doc.first;
+	    cm.display.view = [];
+	    cm.display.viewOffset = 0;
+	  }
+
+	  function viewCuttingPoint(cm, oldN, newN, dir) {
+	    var index = findViewIndex(cm, oldN), diff, view = cm.display.view;
+	    if (!sawCollapsedSpans || newN == cm.doc.first + cm.doc.size)
+	      { return {index: index, lineN: newN} }
+	    var n = cm.display.viewFrom;
+	    for (var i = 0; i < index; i++)
+	      { n += view[i].size; }
+	    if (n != oldN) {
+	      if (dir > 0) {
+	        if (index == view.length - 1) { return null }
+	        diff = (n + view[index].size) - oldN;
+	        index++;
+	      } else {
+	        diff = n - oldN;
+	      }
+	      oldN += diff; newN += diff;
+	    }
+	    while (visualLineNo(cm.doc, newN) != newN) {
+	      if (index == (dir < 0 ? 0 : view.length - 1)) { return null }
+	      newN += dir * view[index - (dir < 0 ? 1 : 0)].size;
+	      index += dir;
+	    }
+	    return {index: index, lineN: newN}
+	  }
+
+	  // Force the view to cover a given range, adding empty view element
+	  // or clipping off existing ones as needed.
+	  function adjustView(cm, from, to) {
+	    var display = cm.display, view = display.view;
+	    if (view.length == 0 || from >= display.viewTo || to <= display.viewFrom) {
+	      display.view = buildViewArray(cm, from, to);
+	      display.viewFrom = from;
+	    } else {
+	      if (display.viewFrom > from)
+	        { display.view = buildViewArray(cm, from, display.viewFrom).concat(display.view); }
+	      else if (display.viewFrom < from)
+	        { display.view = display.view.slice(findViewIndex(cm, from)); }
+	      display.viewFrom = from;
+	      if (display.viewTo < to)
+	        { display.view = display.view.concat(buildViewArray(cm, display.viewTo, to)); }
+	      else if (display.viewTo > to)
+	        { display.view = display.view.slice(0, findViewIndex(cm, to)); }
+	    }
+	    display.viewTo = to;
+	  }
+
+	  // Count the number of lines in the view whose DOM representation is
+	  // out of date (or nonexistent).
+	  function countDirtyView(cm) {
+	    var view = cm.display.view, dirty = 0;
+	    for (var i = 0; i < view.length; i++) {
+	      var lineView = view[i];
+	      if (!lineView.hidden && (!lineView.node || lineView.changes)) { ++dirty; }
+	    }
+	    return dirty
+	  }
+
 	  function updateSelection(cm) {
 	    cm.display.input.showSelection(cm.display.input.prepareSelection());
 	  }
@@ -3089,13 +3150,13 @@
 
 	    for (var i = 0; i < doc.sel.ranges.length; i++) {
 	      if (!primary && i == doc.sel.primIndex) { continue }
-	      var range$$1 = doc.sel.ranges[i];
-	      if (range$$1.from().line >= cm.display.viewTo || range$$1.to().line < cm.display.viewFrom) { continue }
-	      var collapsed = range$$1.empty();
+	      var range = doc.sel.ranges[i];
+	      if (range.from().line >= cm.display.viewTo || range.to().line < cm.display.viewFrom) { continue }
+	      var collapsed = range.empty();
 	      if (collapsed || cm.options.showCursorWhenSelecting)
-	        { drawSelectionCursor(cm, range$$1.head, curFragment); }
+	        { drawSelectionCursor(cm, range.head, curFragment); }
 	      if (!collapsed)
-	        { drawSelectionRange(cm, range$$1, selFragment); }
+	        { drawSelectionRange(cm, range, selFragment); }
 	    }
 	    return result
 	  }
@@ -3122,7 +3183,7 @@
 	  function cmpCoords(a, b) { return a.top - b.top || a.left - b.left }
 
 	  // Draws the given range as a highlighted selection
-	  function drawSelectionRange(cm, range$$1, output) {
+	  function drawSelectionRange(cm, range, output) {
 	    var display = cm.display, doc = cm.doc;
 	    var fragment = document.createDocumentFragment();
 	    var padding = paddingH(cm.display), leftSide = padding.left;
@@ -3191,7 +3252,7 @@
 	      return {start: start, end: end}
 	    }
 
-	    var sFrom = range$$1.from(), sTo = range$$1.to();
+	    var sFrom = range.from(), sTo = range.to();
 	    if (sFrom.line == sTo.line) {
 	      drawForLine(sFrom.line, sFrom.ch, sTo.ch);
 	    } else {
@@ -3343,49 +3404,6 @@
 	    return {from: from, to: Math.max(to, from + 1)}
 	  }
 
-	  // Re-align line numbers and gutter marks to compensate for
-	  // horizontal scrolling.
-	  function alignHorizontally(cm) {
-	    var display = cm.display, view = display.view;
-	    if (!display.alignWidgets && (!display.gutters.firstChild || !cm.options.fixedGutter)) { return }
-	    var comp = compensateForHScroll(display) - display.scroller.scrollLeft + cm.doc.scrollLeft;
-	    var gutterW = display.gutters.offsetWidth, left = comp + "px";
-	    for (var i = 0; i < view.length; i++) { if (!view[i].hidden) {
-	      if (cm.options.fixedGutter) {
-	        if (view[i].gutter)
-	          { view[i].gutter.style.left = left; }
-	        if (view[i].gutterBackground)
-	          { view[i].gutterBackground.style.left = left; }
-	      }
-	      var align = view[i].alignable;
-	      if (align) { for (var j = 0; j < align.length; j++)
-	        { align[j].style.left = left; } }
-	    } }
-	    if (cm.options.fixedGutter)
-	      { display.gutters.style.left = (comp + gutterW) + "px"; }
-	  }
-
-	  // Used to ensure that the line number gutter is still the right
-	  // size for the current document size. Returns true when an update
-	  // is needed.
-	  function maybeUpdateLineNumberWidth(cm) {
-	    if (!cm.options.lineNumbers) { return false }
-	    var doc = cm.doc, last = lineNumberFor(cm.options, doc.first + doc.size - 1), display = cm.display;
-	    if (last.length != display.lineNumChars) {
-	      var test = display.measure.appendChild(elt("div", [elt("div", last)],
-	                                                 "CodeMirror-linenumber CodeMirror-gutter-elt"));
-	      var innerW = test.firstChild.offsetWidth, padding = test.offsetWidth - innerW;
-	      display.lineGutter.style.width = "";
-	      display.lineNumInnerWidth = Math.max(innerW, display.lineGutter.offsetWidth - padding) + 1;
-	      display.lineNumWidth = display.lineNumInnerWidth + padding;
-	      display.lineNumChars = display.lineNumInnerWidth ? last.length : -1;
-	      display.lineGutter.style.width = display.lineNumWidth + "px";
-	      updateGutterSpace(cm);
-	      return true
-	    }
-	    return false
-	  }
-
 	  // SCROLLING THINGS INTO VIEW
 
 	  // If an editor sits on the top or bottom of the window, partially
@@ -3501,9 +3519,9 @@
 	    if (y != null) { cm.curOp.scrollTop = y; }
 	  }
 
-	  function scrollToRange(cm, range$$1) {
+	  function scrollToRange(cm, range) {
 	    resolveScrollToPos(cm);
-	    cm.curOp.scrollToPos = range$$1;
+	    cm.curOp.scrollToPos = range;
 	  }
 
 	  // When an operation has its scrollToPos property set, and another
@@ -3511,11 +3529,11 @@
 	  // 'simulates' scrolling that position into view in a cheap way, so
 	  // that the effect of intermediate scroll commands is not ignored.
 	  function resolveScrollToPos(cm) {
-	    var range$$1 = cm.curOp.scrollToPos;
-	    if (range$$1) {
+	    var range = cm.curOp.scrollToPos;
+	    if (range) {
 	      cm.curOp.scrollToPos = null;
-	      var from = estimateCoords(cm, range$$1.from), to = estimateCoords(cm, range$$1.to);
-	      scrollToCoordsRange(cm, from, to, range$$1.margin);
+	      var from = estimateCoords(cm, range.from), to = estimateCoords(cm, range.to);
+	      scrollToCoordsRange(cm, from, to, range.margin);
 	    }
 	  }
 
@@ -3540,7 +3558,7 @@
 	  }
 
 	  function setScrollTop(cm, val, forceScroll) {
-	    val = Math.min(cm.display.scroller.scrollHeight - cm.display.scroller.clientHeight, val);
+	    val = Math.max(0, Math.min(cm.display.scroller.scrollHeight - cm.display.scroller.clientHeight, val));
 	    if (cm.display.scroller.scrollTop == val && !forceScroll) { return }
 	    cm.doc.scrollTop = val;
 	    cm.display.scrollbars.setScrollTop(val);
@@ -3550,7 +3568,7 @@
 	  // Sync scroller and scrollbar, ensure the gutter elements are
 	  // aligned.
 	  function setScrollLeft(cm, val, isScroller, forceScroll) {
-	    val = Math.min(val, cm.display.scroller.scrollWidth - cm.display.scroller.clientWidth);
+	    val = Math.max(0, Math.min(val, cm.display.scroller.scrollWidth - cm.display.scroller.clientWidth));
 	    if ((isScroller ? val == cm.doc.scrollLeft : Math.abs(cm.doc.scrollLeft - val) < 2) && !forceScroll) { return }
 	    cm.doc.scrollLeft = val;
 	    alignHorizontally(cm);
@@ -3662,9 +3680,9 @@
 	      // (when the bar is hidden). If it is still visible, we keep
 	      // it enabled, if it's hidden, we disable pointer events.
 	      var box = bar.getBoundingClientRect();
-	      var elt$$1 = type == "vert" ? document.elementFromPoint(box.right - 1, (box.top + box.bottom) / 2)
+	      var elt = type == "vert" ? document.elementFromPoint(box.right - 1, (box.top + box.bottom) / 2)
 	          : document.elementFromPoint((box.right + box.left) / 2, box.bottom - 1);
-	      if (elt$$1 != bar) { bar.style.pointerEvents = "none"; }
+	      if (elt != bar) { bar.style.pointerEvents = "none"; }
 	      else { delay.set(1000, maybeDisable); }
 	    }
 	    delay.set(1000, maybeDisable);
@@ -3933,154 +3951,6 @@
 	    }
 	  }
 
-	  // Updates the display.view data structure for a given change to the
-	  // document. From and to are in pre-change coordinates. Lendiff is
-	  // the amount of lines added or subtracted by the change. This is
-	  // used for changes that span multiple lines, or change the way
-	  // lines are divided into visual lines. regLineChange (below)
-	  // registers single-line changes.
-	  function regChange(cm, from, to, lendiff) {
-	    if (from == null) { from = cm.doc.first; }
-	    if (to == null) { to = cm.doc.first + cm.doc.size; }
-	    if (!lendiff) { lendiff = 0; }
-
-	    var display = cm.display;
-	    if (lendiff && to < display.viewTo &&
-	        (display.updateLineNumbers == null || display.updateLineNumbers > from))
-	      { display.updateLineNumbers = from; }
-
-	    cm.curOp.viewChanged = true;
-
-	    if (from >= display.viewTo) { // Change after
-	      if (sawCollapsedSpans && visualLineNo(cm.doc, from) < display.viewTo)
-	        { resetView(cm); }
-	    } else if (to <= display.viewFrom) { // Change before
-	      if (sawCollapsedSpans && visualLineEndNo(cm.doc, to + lendiff) > display.viewFrom) {
-	        resetView(cm);
-	      } else {
-	        display.viewFrom += lendiff;
-	        display.viewTo += lendiff;
-	      }
-	    } else if (from <= display.viewFrom && to >= display.viewTo) { // Full overlap
-	      resetView(cm);
-	    } else if (from <= display.viewFrom) { // Top overlap
-	      var cut = viewCuttingPoint(cm, to, to + lendiff, 1);
-	      if (cut) {
-	        display.view = display.view.slice(cut.index);
-	        display.viewFrom = cut.lineN;
-	        display.viewTo += lendiff;
-	      } else {
-	        resetView(cm);
-	      }
-	    } else if (to >= display.viewTo) { // Bottom overlap
-	      var cut$1 = viewCuttingPoint(cm, from, from, -1);
-	      if (cut$1) {
-	        display.view = display.view.slice(0, cut$1.index);
-	        display.viewTo = cut$1.lineN;
-	      } else {
-	        resetView(cm);
-	      }
-	    } else { // Gap in the middle
-	      var cutTop = viewCuttingPoint(cm, from, from, -1);
-	      var cutBot = viewCuttingPoint(cm, to, to + lendiff, 1);
-	      if (cutTop && cutBot) {
-	        display.view = display.view.slice(0, cutTop.index)
-	          .concat(buildViewArray(cm, cutTop.lineN, cutBot.lineN))
-	          .concat(display.view.slice(cutBot.index));
-	        display.viewTo += lendiff;
-	      } else {
-	        resetView(cm);
-	      }
-	    }
-
-	    var ext = display.externalMeasured;
-	    if (ext) {
-	      if (to < ext.lineN)
-	        { ext.lineN += lendiff; }
-	      else if (from < ext.lineN + ext.size)
-	        { display.externalMeasured = null; }
-	    }
-	  }
-
-	  // Register a change to a single line. Type must be one of "text",
-	  // "gutter", "class", "widget"
-	  function regLineChange(cm, line, type) {
-	    cm.curOp.viewChanged = true;
-	    var display = cm.display, ext = cm.display.externalMeasured;
-	    if (ext && line >= ext.lineN && line < ext.lineN + ext.size)
-	      { display.externalMeasured = null; }
-
-	    if (line < display.viewFrom || line >= display.viewTo) { return }
-	    var lineView = display.view[findViewIndex(cm, line)];
-	    if (lineView.node == null) { return }
-	    var arr = lineView.changes || (lineView.changes = []);
-	    if (indexOf(arr, type) == -1) { arr.push(type); }
-	  }
-
-	  // Clear the view.
-	  function resetView(cm) {
-	    cm.display.viewFrom = cm.display.viewTo = cm.doc.first;
-	    cm.display.view = [];
-	    cm.display.viewOffset = 0;
-	  }
-
-	  function viewCuttingPoint(cm, oldN, newN, dir) {
-	    var index = findViewIndex(cm, oldN), diff, view = cm.display.view;
-	    if (!sawCollapsedSpans || newN == cm.doc.first + cm.doc.size)
-	      { return {index: index, lineN: newN} }
-	    var n = cm.display.viewFrom;
-	    for (var i = 0; i < index; i++)
-	      { n += view[i].size; }
-	    if (n != oldN) {
-	      if (dir > 0) {
-	        if (index == view.length - 1) { return null }
-	        diff = (n + view[index].size) - oldN;
-	        index++;
-	      } else {
-	        diff = n - oldN;
-	      }
-	      oldN += diff; newN += diff;
-	    }
-	    while (visualLineNo(cm.doc, newN) != newN) {
-	      if (index == (dir < 0 ? 0 : view.length - 1)) { return null }
-	      newN += dir * view[index - (dir < 0 ? 1 : 0)].size;
-	      index += dir;
-	    }
-	    return {index: index, lineN: newN}
-	  }
-
-	  // Force the view to cover a given range, adding empty view element
-	  // or clipping off existing ones as needed.
-	  function adjustView(cm, from, to) {
-	    var display = cm.display, view = display.view;
-	    if (view.length == 0 || from >= display.viewTo || to <= display.viewFrom) {
-	      display.view = buildViewArray(cm, from, to);
-	      display.viewFrom = from;
-	    } else {
-	      if (display.viewFrom > from)
-	        { display.view = buildViewArray(cm, from, display.viewFrom).concat(display.view); }
-	      else if (display.viewFrom < from)
-	        { display.view = display.view.slice(findViewIndex(cm, from)); }
-	      display.viewFrom = from;
-	      if (display.viewTo < to)
-	        { display.view = display.view.concat(buildViewArray(cm, display.viewTo, to)); }
-	      else if (display.viewTo > to)
-	        { display.view = display.view.slice(0, findViewIndex(cm, to)); }
-	    }
-	    display.viewTo = to;
-	  }
-
-	  // Count the number of lines in the view whose DOM representation is
-	  // out of date (or nonexistent).
-	  function countDirtyView(cm) {
-	    var view = cm.display.view, dirty = 0;
-	    for (var i = 0; i < view.length; i++) {
-	      var lineView = view[i];
-	      if (!lineView.hidden && (!lineView.node || lineView.changes)) { ++dirty; }
-	    }
-	    return dirty
-	  }
-
 	  // HIGHLIGHT WORKER
 
 	  function startWorker(cm, time) {
@@ -4152,10 +4022,8 @@
 	      { this.events.push(arguments); }
 	  };
 	  DisplayUpdate.prototype.finish = function () {
-	      var this$1 = this;
-
 	    for (var i = 0; i < this.events.length; i++)
-	      { signal.apply(null, this$1.events[i]); }
+	      { signal.apply(null, this.events[i]); }
 	  };
 
 	  function maybeClipScrollbars(cm) {
@@ -4189,12 +4057,13 @@
 	  function restoreSelection(snapshot) {
 	    if (!snapshot || !snapshot.activeElt || snapshot.activeElt == activeElt()) { return }
 	    snapshot.activeElt.focus();
-	    if (snapshot.anchorNode && contains(document.body, snapshot.anchorNode) && contains(document.body, snapshot.focusNode)) {
-	      var sel = window.getSelection(), range$$1 = document.createRange();
-	      range$$1.setEnd(snapshot.anchorNode, snapshot.anchorOffset);
-	      range$$1.collapse(false);
+	    if (!/^(INPUT|TEXTAREA)$/.test(snapshot.activeElt.nodeName) &&
+	        snapshot.anchorNode && contains(document.body, snapshot.anchorNode) && contains(document.body, snapshot.focusNode)) {
+	      var sel = window.getSelection(), range = document.createRange();
+	      range.setEnd(snapshot.anchorNode, snapshot.anchorOffset);
+	      range.collapse(false);
 	      sel.removeAllRanges();
-	      sel.addRange(range$$1);
+	      sel.addRange(range);
 	      sel.extend(snapshot.focusNode, snapshot.focusOffset);
 	    }
 	  }
@@ -4287,6 +4156,8 @@
 	        update.visible = visibleLines(cm.display, cm.doc, viewport);
 	        if (update.visible.from >= cm.display.viewFrom && update.visible.to <= cm.display.viewTo)
 	          { break }
+	      } else if (first) {
+	        update.visible = visibleLines(cm.display, cm.doc, viewport);
 	      }
 	      if (!updateDisplayIfNeeded(cm, update)) { break }
 	      updateHeightsInViewport(cm);
@@ -4362,9 +4233,9 @@
 	    while (cur) { cur = rm(cur); }
 	  }
 
-	  function updateGutterSpace(cm) {
-	    var width = cm.display.gutters.offsetWidth;
-	    cm.display.sizer.style.marginLeft = width + "px";
+	  function updateGutterSpace(display) {
+	    var width = display.gutters.offsetWidth;
+	    display.sizer.style.marginLeft = width + "px";
 	  }
 
 	  function setDocumentHeight(cm, measure) {
@@ -4373,34 +4244,195 @@
 	    cm.display.gutters.style.height = (measure.docHeight + cm.display.barHeight + scrollGap(cm)) + "px";
 	  }
 
-	  // Rebuild the gutter elements, ensure the margin to the left of the
-	  // code matches their width.
-	  function updateGutters(cm) {
-	    var gutters = cm.display.gutters, specs = cm.options.gutters;
-	    removeChildren(gutters);
-	    var i = 0;
-	    for (; i < specs.length; ++i) {
-	      var gutterClass = specs[i];
-	      var gElt = gutters.appendChild(elt("div", null, "CodeMirror-gutter " + gutterClass));
-	      if (gutterClass == "CodeMirror-linenumbers") {
-	        cm.display.lineGutter = gElt;
-	        gElt.style.width = (cm.display.lineNumWidth || 1) + "px";
+	  // Re-align line numbers and gutter marks to compensate for
+	  // horizontal scrolling.
+	  function alignHorizontally(cm) {
+	    var display = cm.display, view = display.view;
+	    if (!display.alignWidgets && (!display.gutters.firstChild || !cm.options.fixedGutter)) { return }
+	    var comp = compensateForHScroll(display) - display.scroller.scrollLeft + cm.doc.scrollLeft;
+	    var gutterW = display.gutters.offsetWidth, left = comp + "px";
+	    for (var i = 0; i < view.length; i++) { if (!view[i].hidden) {
+	      if (cm.options.fixedGutter) {
+	        if (view[i].gutter)
+	          { view[i].gutter.style.left = left; }
+	        if (view[i].gutterBackground)
+	          { view[i].gutterBackground.style.left = left; }
 	      }
-	    }
-	    gutters.style.display = i ? "" : "none";
-	    updateGutterSpace(cm);
+	      var align = view[i].alignable;
+	      if (align) { for (var j = 0; j < align.length; j++)
+	        { align[j].style.left = left; } }
+	    } }
+	    if (cm.options.fixedGutter)
+	      { display.gutters.style.left = (comp + gutterW) + "px"; }
 	  }
 
-	  // Make sure the gutters options contains the element
-	  // "CodeMirror-linenumbers" when the lineNumbers option is true.
-	  function setGuttersForLineNumbers(options) {
-	    var found = indexOf(options.gutters, "CodeMirror-linenumbers");
-	    if (found == -1 && options.lineNumbers) {
-	      options.gutters = options.gutters.concat(["CodeMirror-linenumbers"]);
-	    } else if (found > -1 && !options.lineNumbers) {
-	      options.gutters = options.gutters.slice(0);
-	      options.gutters.splice(found, 1);
+	  // Used to ensure that the line number gutter is still the right
+	  // size for the current document size. Returns true when an update
+	  // is needed.
+	  function maybeUpdateLineNumberWidth(cm) {
+	    if (!cm.options.lineNumbers) { return false }
+	    var doc = cm.doc, last = lineNumberFor(cm.options, doc.first + doc.size - 1), display = cm.display;
+	    if (last.length != display.lineNumChars) {
+	      var test = display.measure.appendChild(elt("div", [elt("div", last)],
+	                                                 "CodeMirror-linenumber CodeMirror-gutter-elt"));
+	      var innerW = test.firstChild.offsetWidth, padding = test.offsetWidth - innerW;
+	      display.lineGutter.style.width = "";
+	      display.lineNumInnerWidth = Math.max(innerW, display.lineGutter.offsetWidth - padding) + 1;
+	      display.lineNumWidth = display.lineNumInnerWidth + padding;
+	      display.lineNumChars = display.lineNumInnerWidth ? last.length : -1;
+	      display.lineGutter.style.width = display.lineNumWidth + "px";
+	      updateGutterSpace(cm.display);
+	      return true
 	    }
+	    return false
+	  }
+
+	  function getGutters(gutters, lineNumbers) {
+	    var result = [], sawLineNumbers = false;
+	    for (var i = 0; i < gutters.length; i++) {
+	      var name = gutters[i], style = null;
+	      if (typeof name != "string") { style = name.style; name = name.className; }
+	      if (name == "CodeMirror-linenumbers") {
+	        if (!lineNumbers) { continue }
+	        else { sawLineNumbers = true; }
+	      }
+	      result.push({className: name, style: style});
+	    }
+	    if (lineNumbers && !sawLineNumbers) { result.push({className: "CodeMirror-linenumbers", style: null}); }
+	    return result
+	  }
+
+	  // Rebuild the gutter elements, ensure the margin to the left of the
+	  // code matches their width.
+	  function renderGutters(display) {
+	    var gutters = display.gutters, specs = display.gutterSpecs;
+	    removeChildren(gutters);
+	    display.lineGutter = null;
+	    for (var i = 0; i < specs.length; ++i) {
+	      var ref = specs[i];
+	      var className = ref.className;
+	      var style = ref.style;
+	      var gElt = gutters.appendChild(elt("div", null, "CodeMirror-gutter " + className));
+	      if (style) { gElt.style.cssText = style; }
+	      if (className == "CodeMirror-linenumbers") {
+	        display.lineGutter = gElt;
+	        gElt.style.width = (display.lineNumWidth || 1) + "px";
+	      }
+	    }
+	    gutters.style.display = specs.length ? "" : "none";
+	    updateGutterSpace(display);
+	  }
+
+	  function updateGutters(cm) {
+	    renderGutters(cm.display);
+	    regChange(cm);
+	    alignHorizontally(cm);
+	  }
+
+	  // The display handles the DOM integration, both for input reading
+	  // and content drawing. It holds references to DOM nodes and
+	  // display-related state.
+
+	  function Display(place, doc, input, options) {
+	    var d = this;
+	    this.input = input;
+
+	    // Covers bottom-right square when both scrollbars are present.
+	    d.scrollbarFiller = elt("div", null, "CodeMirror-scrollbar-filler");
+	    d.scrollbarFiller.setAttribute("cm-not-content", "true");
+	    // Covers bottom of gutter when coverGutterNextToScrollbar is on
+	    // and h scrollbar is present.
+	    d.gutterFiller = elt("div", null, "CodeMirror-gutter-filler");
+	    d.gutterFiller.setAttribute("cm-not-content", "true");
+	    // Will contain the actual code, positioned to cover the viewport.
+	    d.lineDiv = eltP("div", null, "CodeMirror-code");
+	    // Elements are added to these to represent selection and cursors.
+	    d.selectionDiv = elt("div", null, null, "position: relative; z-index: 1");
+	    d.cursorDiv = elt("div", null, "CodeMirror-cursors");
+	    // A visibility: hidden element used to find the size of things.
+	    d.measure = elt("div", null, "CodeMirror-measure");
+	    // When lines outside of the viewport are measured, they are drawn in this.
+	    d.lineMeasure = elt("div", null, "CodeMirror-measure");
+	    // Wraps everything that needs to exist inside the vertically-padded coordinate system
+	    d.lineSpace = eltP("div", [d.measure, d.lineMeasure, d.selectionDiv, d.cursorDiv, d.lineDiv],
+	                      null, "position: relative; outline: none");
+	    var lines = eltP("div", [d.lineSpace], "CodeMirror-lines");
+	    // Moved around its parent to cover visible view.
+	    d.mover = elt("div", [lines], null, "position: relative");
+	    // Set to the height of the document, allowing scrolling.
+	    d.sizer = elt("div", [d.mover], "CodeMirror-sizer");
+	    d.sizerWidth = null;
+	    // Behavior of elts with overflow: auto and padding is
+	    // inconsistent across browsers. This is used to ensure the
+	    // scrollable area is big enough.
+	    d.heightForcer = elt("div", null, null, "position: absolute; height: " + scrollerGap + "px; width: 1px;");
+	    // Will contain the gutters, if any.
+	    d.gutters = elt("div", null, "CodeMirror-gutters");
+	    d.lineGutter = null;
+	    // Actual scrollable element.
+	    d.scroller = elt("div", [d.sizer, d.heightForcer, d.gutters], "CodeMirror-scroll");
+	    d.scroller.setAttribute("tabIndex", "-1");
+	    // The element in which the editor lives.
+	    d.wrapper = elt("div", [d.scrollbarFiller, d.gutterFiller, d.scroller], "CodeMirror");
+
+	    // Work around IE7 z-index bug (not perfect, hence IE7 not really being supported)
+	    if (ie && ie_version < 8) { d.gutters.style.zIndex = -1; d.scroller.style.paddingRight = 0; }
+	    if (!webkit && !(gecko && mobile)) { d.scroller.draggable = true; }
+
+	    if (place) {
+	      if (place.appendChild) { place.appendChild(d.wrapper); }
+	      else { place(d.wrapper); }
+	    }
+
+	    // Current rendered range (may be bigger than the view window).
+	    d.viewFrom = d.viewTo = doc.first;
+	    d.reportedViewFrom = d.reportedViewTo = doc.first;
+	    // Information about the rendered lines.
+	    d.view = [];
+	    d.renderedView = null;
+	    // Holds info about a single rendered line when it was rendered
+	    // for measurement, while not in view.
+	    d.externalMeasured = null;
+	    // Empty space (in pixels) above the view
+	    d.viewOffset = 0;
+	    d.lastWrapHeight = d.lastWrapWidth = 0;
+	    d.updateLineNumbers = null;
+
+	    d.nativeBarWidth = d.barHeight = d.barWidth = 0;
+	    d.scrollbarsClipped = false;
+
+	    // Used to only resize the line number gutter when necessary (when
+	    // the amount of lines crosses a boundary that makes its width change)
+	    d.lineNumWidth = d.lineNumInnerWidth = d.lineNumChars = null;
+	    // Set to true when a non-horizontal-scrolling line widget is
+	    // added. As an optimization, line widget aligning is skipped when
+	    // this is false.
+	    d.alignWidgets = false;
+
+	    d.cachedCharWidth = d.cachedTextHeight = d.cachedPaddingH = null;
+
+	    // Tracks the maximum line length so that the horizontal scrollbar
+	    // can be kept static when scrolling.
+	    d.maxLine = null;
+	    d.maxLineLength = 0;
+	    d.maxLineChanged = false;
+
+	    // Used for measuring wheel scrolling granularity
+	    d.wheelDX = d.wheelDY = d.wheelStartX = d.wheelStartY = null;
+
+	    // True when shift is held down.
+	    d.shift = false;
+
+	    // Used to track whether anything happened since the context menu
+	    // was opened.
+	    d.selForContextMenu = null;
+
+	    d.activeTouch = null;
+
+	    d.gutterSpecs = getGutters(options.gutters, options.lineNumbers);
+	    renderGutters(d);
+
+	    input.init(d);
 	  }
 
 	  // Since the delta values reported on mouse wheel events are
@@ -4526,40 +4558,32 @@
 	  Selection.prototype.primary = function () { return this.ranges[this.primIndex] };
 
 	  Selection.prototype.equals = function (other) {
-	      var this$1 = this;
-
 	    if (other == this) { return true }
 	    if (other.primIndex != this.primIndex || other.ranges.length != this.ranges.length) { return false }
 	    for (var i = 0; i < this.ranges.length; i++) {
-	      var here = this$1.ranges[i], there = other.ranges[i];
+	      var here = this.ranges[i], there = other.ranges[i];
 	      if (!equalCursorPos(here.anchor, there.anchor) || !equalCursorPos(here.head, there.head)) { return false }
 	    }
 	    return true
 	  };
 
 	  Selection.prototype.deepCopy = function () {
-	      var this$1 = this;
-
 	    var out = [];
 	    for (var i = 0; i < this.ranges.length; i++)
-	      { out[i] = new Range(copyPos(this$1.ranges[i].anchor), copyPos(this$1.ranges[i].head)); }
+	      { out[i] = new Range(copyPos(this.ranges[i].anchor), copyPos(this.ranges[i].head)); }
 	    return new Selection(out, this.primIndex)
 	  };
 
 	  Selection.prototype.somethingSelected = function () {
-	      var this$1 = this;
-
 	    for (var i = 0; i < this.ranges.length; i++)
-	      { if (!this$1.ranges[i].empty()) { return true } }
+	      { if (!this.ranges[i].empty()) { return true } }
 	    return false
 	  };
 
 	  Selection.prototype.contains = function (pos, end) {
-	      var this$1 = this;
-
 	    if (!end) { end = pos; }
 	    for (var i = 0; i < this.ranges.length; i++) {
-	      var range = this$1.ranges[i];
+	      var range = this.ranges[i];
 	      if (cmp(end, range.from()) >= 0 && cmp(pos, range.to()) <= 0)
 	        { return i }
 	    }
@@ -4685,16 +4709,16 @@
 	  }
 
 	  // Perform a change on the document data structure.
-	  function updateDoc(doc, change, markedSpans, estimateHeight$$1) {
+	  function updateDoc(doc, change, markedSpans, estimateHeight) {
 	    function spansFor(n) {return markedSpans ? markedSpans[n] : null}
 	    function update(line, text, spans) {
-	      updateLine(line, text, spans, estimateHeight$$1);
+	      updateLine(line, text, spans, estimateHeight);
 	      signalLater(line, "change", line, change);
 	    }
 	    function linesFor(start, end) {
 	      var result = [];
 	      for (var i = start; i < end; ++i)
-	        { result.push(new Line(text[i], spansFor(i), estimateHeight$$1)); }
+	        { result.push(new Line(text[i], spansFor(i), estimateHeight)); }
 	      return result
 	    }
 
@@ -4718,7 +4742,7 @@
 	        update(firstLine, firstLine.text.slice(0, from.ch) + lastText + firstLine.text.slice(to.ch), lastSpans);
 	      } else {
 	        var added$1 = linesFor(1, text.length - 1);
-	        added$1.push(new Line(lastText + firstLine.text.slice(to.ch), lastSpans, estimateHeight$$1));
+	        added$1.push(new Line(lastText + firstLine.text.slice(to.ch), lastSpans, estimateHeight));
 	        update(firstLine, firstLine.text.slice(0, from.ch) + text[0], spansFor(0));
 	        doc.insert(from.line + 1, added$1);
 	      }
@@ -5055,11 +5079,9 @@
 	    var obj = {
 	      ranges: sel.ranges,
 	      update: function(ranges) {
-	        var this$1 = this;
-
 	        this.ranges = [];
 	        for (var i = 0; i < ranges.length; i++)
-	          { this$1.ranges[i] = new Range(clipPos(doc, ranges[i].anchor),
+	          { this.ranges[i] = new Range(clipPos(doc, ranges[i].anchor),
 	                                     clipPos(doc, ranges[i].head)); }
 	      },
 	      origin: options && options.origin
@@ -5138,8 +5160,15 @@
 	    var line = getLine(doc, pos.line);
 	    if (line.markedSpans) { for (var i = 0; i < line.markedSpans.length; ++i) {
 	      var sp = line.markedSpans[i], m = sp.marker;
-	      if ((sp.from == null || (m.inclusiveLeft ? sp.from <= pos.ch : sp.from < pos.ch)) &&
-	          (sp.to == null || (m.inclusiveRight ? sp.to >= pos.ch : sp.to > pos.ch))) {
+
+	      // Determine if we should prevent the cursor being placed to the left/right of an atomic marker
+	      // Historically this was determined using the inclusiveLeft/Right option, but the new way to control it
+	      // is with selectLeft/Right
+	      var preventCursorLeft = ("selectLeft" in m) ? !m.selectLeft : m.inclusiveLeft;
+	      var preventCursorRight = ("selectRight" in m) ? !m.selectRight : m.inclusiveRight;
+
+	      if ((sp.from == null || (preventCursorLeft ? sp.from <= pos.ch : sp.from < pos.ch)) &&
+	          (sp.to == null || (preventCursorRight ? sp.to >= pos.ch : sp.to > pos.ch))) {
 	        if (mayClear) {
 	          signal(m, "beforeCursorEnter");
 	          if (m.explicitlyCleared) {
@@ -5151,14 +5180,14 @@
 
 	        if (oldPos) {
 	          var near = m.find(dir < 0 ? 1 : -1), diff = (void 0);
-	          if (dir < 0 ? m.inclusiveRight : m.inclusiveLeft)
+	          if (dir < 0 ? preventCursorRight : preventCursorLeft)
 	            { near = movePos(doc, near, -dir, near && near.line == pos.line ? line : null); }
 	          if (near && near.line == pos.line && (diff = cmp(near, oldPos)) && (dir < 0 ? diff < 0 : diff > 0))
 	            { return skipAtomicInner(doc, near, pos, dir, mayClear) }
 	        }
 
 	        var far = m.find(dir < 0 ? -1 : 1);
-	        if (dir < 0 ? m.inclusiveLeft : m.inclusiveRight)
+	        if (dir < 0 ? preventCursorLeft : preventCursorRight)
 	          { far = movePos(doc, far, dir, far.line == pos.line ? line : null); }
 	        return far ? skipAtomicInner(doc, far, pos, dir, mayClear) : null
 	      }
@@ -5387,6 +5416,9 @@
 	    if (doc.cm) { makeChangeSingleDocInEditor(doc.cm, change, spans); }
 	    else { updateDoc(doc, change, spans); }
 	    setSelectionNoUndo(doc, selAfter, sel_dontScroll);
+
+	    if (doc.cantEdit && skipAtomic(doc, Pos(doc.firstLine(), 0)))
+	      { doc.cantEdit = false; }
 	  }
 
 	  // Handle the interaction of a change to a document with the editor
@@ -5536,13 +5568,11 @@
 	  // See also http://marijnhaverbeke.nl/blog/codemirror-line-tree.html
 
 	  function LeafChunk(lines) {
-	    var this$1 = this;
-
 	    this.lines = lines;
 	    this.parent = null;
 	    var height = 0;
 	    for (var i = 0; i < lines.length; ++i) {
-	      lines[i].parent = this$1;
+	      lines[i].parent = this;
 	      height += lines[i].height;
 	    }
 	    this.height = height;
@@ -5553,11 +5583,9 @@
 
 	    // Remove the n lines at offset 'at'.
 	    removeInner: function(at, n) {
-	      var this$1 = this;
-
 	      for (var i = at, e = at + n; i < e; ++i) {
-	        var line = this$1.lines[i];
-	        this$1.height -= line.height;
+	        var line = this.lines[i];
+	        this.height -= line.height;
 	        cleanUpLine(line);
 	        signalLater(line, "delete");
 	      }
@@ -5572,31 +5600,25 @@
 	    // Insert the given array of lines at offset 'at', count them as
 	    // having the given height.
 	    insertInner: function(at, lines, height) {
-	      var this$1 = this;
-
 	      this.height += height;
 	      this.lines = this.lines.slice(0, at).concat(lines).concat(this.lines.slice(at));
-	      for (var i = 0; i < lines.length; ++i) { lines[i].parent = this$1; }
+	      for (var i = 0; i < lines.length; ++i) { lines[i].parent = this; }
 	    },
 
 	    // Used to iterate over a part of the tree.
 	    iterN: function(at, n, op) {
-	      var this$1 = this;
-
 	      for (var e = at + n; at < e; ++at)
-	        { if (op(this$1.lines[at])) { return true } }
+	        { if (op(this.lines[at])) { return true } }
 	    }
 	  };
 
 	  function BranchChunk(children) {
-	    var this$1 = this;
-
 	    this.children = children;
 	    var size = 0, height = 0;
 	    for (var i = 0; i < children.length; ++i) {
 	      var ch = children[i];
 	      size += ch.chunkSize(); height += ch.height;
-	      ch.parent = this$1;
+	      ch.parent = this;
 	    }
 	    this.size = size;
 	    this.height = height;
@@ -5607,16 +5629,14 @@
 	    chunkSize: function() { return this.size },
 
 	    removeInner: function(at, n) {
-	      var this$1 = this;
-
 	      this.size -= n;
 	      for (var i = 0; i < this.children.length; ++i) {
-	        var child = this$1.children[i], sz = child.chunkSize();
+	        var child = this.children[i], sz = child.chunkSize();
 	        if (at < sz) {
 	          var rm = Math.min(n, sz - at), oldHeight = child.height;
 	          child.removeInner(at, rm);
-	          this$1.height -= oldHeight - child.height;
-	          if (sz == rm) { this$1.children.splice(i--, 1); child.parent = null; }
+	          this.height -= oldHeight - child.height;
+	          if (sz == rm) { this.children.splice(i--, 1); child.parent = null; }
 	          if ((n -= rm) == 0) { break }
 	          at = 0;
 	        } else { at -= sz; }
@@ -5633,18 +5653,14 @@
 	    },
 
 	    collapse: function(lines) {
-	      var this$1 = this;
-
-	      for (var i = 0; i < this.children.length; ++i) { this$1.children[i].collapse(lines); }
+	      for (var i = 0; i < this.children.length; ++i) { this.children[i].collapse(lines); }
 	    },
 
 	    insertInner: function(at, lines, height) {
-	      var this$1 = this;
-
 	      this.size += lines.length;
 	      this.height += height;
 	      for (var i = 0; i < this.children.length; ++i) {
-	        var child = this$1.children[i], sz = child.chunkSize();
+	        var child = this.children[i], sz = child.chunkSize();
 	        if (at <= sz) {
 	          child.insertInner(at, lines, height);
 	          if (child.lines && child.lines.length > 50) {
@@ -5654,11 +5670,11 @@
 	            for (var pos = remaining; pos < child.lines.length;) {
 	              var leaf = new LeafChunk(child.lines.slice(pos, pos += 25));
 	              child.height -= leaf.height;
-	              this$1.children.splice(++i, 0, leaf);
-	              leaf.parent = this$1;
+	              this.children.splice(++i, 0, leaf);
+	              leaf.parent = this;
 	            }
 	            child.lines = child.lines.slice(0, remaining);
-	            this$1.maybeSpill();
+	            this.maybeSpill();
 	          }
 	          break
 	        }
@@ -5690,10 +5706,8 @@
 	    },
 
 	    iterN: function(at, n, op) {
-	      var this$1 = this;
-
 	      for (var i = 0; i < this.children.length; ++i) {
-	        var child = this$1.children[i], sz = child.chunkSize();
+	        var child = this.children[i], sz = child.chunkSize();
 	        if (at < sz) {
 	          var used = Math.min(n, sz - at);
 	          if (child.iterN(at, used, op)) { return true }
@@ -5707,20 +5721,16 @@
 	  // Line widgets are block elements displayed above or below a line.
 
 	  var LineWidget = function(doc, node, options) {
-	    var this$1 = this;
-
 	    if (options) { for (var opt in options) { if (options.hasOwnProperty(opt))
-	      { this$1[opt] = options[opt]; } } }
+	      { this[opt] = options[opt]; } } }
 	    this.doc = doc;
 	    this.node = node;
 	  };
 
 	  LineWidget.prototype.clear = function () {
-	      var this$1 = this;
-
 	    var cm = this.doc.cm, ws = this.line.widgets, line = this.line, no = lineNo(line);
 	    if (no == null || !ws) { return }
-	    for (var i = 0; i < ws.length; ++i) { if (ws[i] == this$1) { ws.splice(i--, 1); } }
+	    for (var i = 0; i < ws.length; ++i) { if (ws[i] == this) { ws.splice(i--, 1); } }
 	    if (!ws.length) { line.widgets = null; }
 	    var height = widgetHeight(this);
 	    updateLineHeight(line, Math.max(0, line.height - height));
@@ -5803,8 +5813,6 @@
 
 	  // Clear the marker.
 	  TextMarker.prototype.clear = function () {
-	      var this$1 = this;
-
 	    if (this.explicitlyCleared) { return }
 	    var cm = this.doc.cm, withOp = cm && !cm.curOp;
 	    if (withOp) { startOperation(cm); }
@@ -5814,19 +5822,19 @@
 	    }
 	    var min = null, max = null;
 	    for (var i = 0; i < this.lines.length; ++i) {
-	      var line = this$1.lines[i];
-	      var span = getMarkedSpanFor(line.markedSpans, this$1);
-	      if (cm && !this$1.collapsed) { regLineChange(cm, lineNo(line), "text"); }
+	      var line = this.lines[i];
+	      var span = getMarkedSpanFor(line.markedSpans, this);
+	      if (cm && !this.collapsed) { regLineChange(cm, lineNo(line), "text"); }
 	      else if (cm) {
 	        if (span.to != null) { max = lineNo(line); }
 	        if (span.from != null) { min = lineNo(line); }
 	      }
 	      line.markedSpans = removeMarkedSpan(line.markedSpans, span);
-	      if (span.from == null && this$1.collapsed && !lineIsHidden(this$1.doc, line) && cm)
+	      if (span.from == null && this.collapsed && !lineIsHidden(this.doc, line) && cm)
 	        { updateLineHeight(line, textHeight(cm.display)); }
 	    }
 	    if (cm && this.collapsed && !cm.options.lineWrapping) { for (var i$1 = 0; i$1 < this.lines.length; ++i$1) {
-	      var visual = visualLine(this$1.lines[i$1]), len = lineLength(visual);
+	      var visual = visualLine(this.lines[i$1]), len = lineLength(visual);
 	      if (len > cm.display.maxLineLength) {
 	        cm.display.maxLine = visual;
 	        cm.display.maxLineLength = len;
@@ -5852,13 +5860,11 @@
 	  // Pos objects returned contain a line object, rather than a line
 	  // number (used to prevent looking up the same line twice).
 	  TextMarker.prototype.find = function (side, lineObj) {
-	      var this$1 = this;
-
 	    if (side == null && this.type == "bookmark") { side = 1; }
 	    var from, to;
 	    for (var i = 0; i < this.lines.length; ++i) {
-	      var line = this$1.lines[i];
-	      var span = getMarkedSpanFor(line.markedSpans, this$1);
+	      var line = this.lines[i];
+	      var span = getMarkedSpanFor(line.markedSpans, this);
 	      if (span.from != null) {
 	        from = Pos(lineObj ? line : lineNo(line), span.from);
 	        if (side == -1) { return from }
@@ -5992,21 +5998,17 @@
 	  // implemented as a meta-marker-object controlling multiple normal
 	  // markers.
 	  var SharedTextMarker = function(markers, primary) {
-	    var this$1 = this;
-
 	    this.markers = markers;
 	    this.primary = primary;
 	    for (var i = 0; i < markers.length; ++i)
-	      { markers[i].parent = this$1; }
+	      { markers[i].parent = this; }
 	  };
 
 	  SharedTextMarker.prototype.clear = function () {
-	      var this$1 = this;
-
 	    if (this.explicitlyCleared) { return }
 	    this.explicitlyCleared = true;
 	    for (var i = 0; i < this.markers.length; ++i)
-	      { this$1.markers[i].clear(); }
+	      { this.markers[i].clear(); }
 	    signalLater(this, "clear");
 	  };
 
@@ -6149,11 +6151,11 @@
 	    clipPos: function(pos) {return clipPos(this, pos)},
 
 	    getCursor: function(start) {
-	      var range$$1 = this.sel.primary(), pos;
-	      if (start == null || start == "head") { pos = range$$1.head; }
-	      else if (start == "anchor") { pos = range$$1.anchor; }
-	      else if (start == "end" || start == "to" || start === false) { pos = range$$1.to(); }
-	      else { pos = range$$1.from(); }
+	      var range = this.sel.primary(), pos;
+	      if (start == null || start == "head") { pos = range.head; }
+	      else if (start == "anchor") { pos = range.anchor; }
+	      else if (start == "end" || start == "to" || start === false) { pos = range.to(); }
+	      else { pos = range.from(); }
 	      return pos
 	    },
 	    listSelections: function() { return this.sel.ranges },
@@ -6176,13 +6178,11 @@
 	      extendSelections(this, clipPosArray(this, heads), options);
 	    }),
 	    setSelections: docMethodOp(function(ranges, primary, options) {
-	      var this$1 = this;
-
 	      if (!ranges.length) { return }
 	      var out = [];
 	      for (var i = 0; i < ranges.length; i++)
-	        { out[i] = new Range(clipPos(this$1, ranges[i].anchor),
-	                           clipPos(this$1, ranges[i].head)); }
+	        { out[i] = new Range(clipPos(this, ranges[i].anchor),
+	                           clipPos(this, ranges[i].head)); }
 	      if (primary == null) { primary = Math.min(ranges.length - 1, this.sel.primIndex); }
 	      setSelection(this, normalizeSelection(this.cm, out, primary), options);
 	    }),
@@ -6193,23 +6193,19 @@
 	    }),
 
 	    getSelection: function(lineSep) {
-	      var this$1 = this;
-
 	      var ranges = this.sel.ranges, lines;
 	      for (var i = 0; i < ranges.length; i++) {
-	        var sel = getBetween(this$1, ranges[i].from(), ranges[i].to());
+	        var sel = getBetween(this, ranges[i].from(), ranges[i].to());
 	        lines = lines ? lines.concat(sel) : sel;
 	      }
 	      if (lineSep === false) { return lines }
 	      else { return lines.join(lineSep || this.lineSeparator()) }
 	    },
 	    getSelections: function(lineSep) {
-	      var this$1 = this;
-
 	      var parts = [], ranges = this.sel.ranges;
 	      for (var i = 0; i < ranges.length; i++) {
-	        var sel = getBetween(this$1, ranges[i].from(), ranges[i].to());
-	        if (lineSep !== false) { sel = sel.join(lineSep || this$1.lineSeparator()); }
+	        var sel = getBetween(this, ranges[i].from(), ranges[i].to());
+	        if (lineSep !== false) { sel = sel.join(lineSep || this.lineSeparator()); }
 	        parts[i] = sel;
 	      }
 	      return parts
@@ -6221,16 +6217,14 @@
 	      this.replaceSelections(dup, collapse, origin || "+input");
 	    },
 	    replaceSelections: docMethodOp(function(code, collapse, origin) {
-	      var this$1 = this;
-
 	      var changes = [], sel = this.sel;
 	      for (var i = 0; i < sel.ranges.length; i++) {
-	        var range$$1 = sel.ranges[i];
-	        changes[i] = {from: range$$1.from(), to: range$$1.to(), text: this$1.splitLines(code[i]), origin: origin};
+	        var range = sel.ranges[i];
+	        changes[i] = {from: range.from(), to: range.to(), text: this.splitLines(code[i]), origin: origin};
 	      }
 	      var newSel = collapse && collapse != "end" && computeReplacedSel(this, changes, collapse);
 	      for (var i$1 = changes.length - 1; i$1 >= 0; i$1--)
-	        { makeChange(this$1, changes[i$1]); }
+	        { makeChange(this, changes[i$1]); }
 	      if (newSel) { setSelectionReplaceHistory(this, newSel); }
 	      else if (this.cm) { ensureCursorVisible(this.cm); }
 	    }),
@@ -6248,7 +6242,12 @@
 	      for (var i$1 = 0; i$1 < hist.undone.length; i$1++) { if (!hist.undone[i$1].ranges) { ++undone; } }
 	      return {undo: done, redo: undone}
 	    },
-	    clearHistory: function() {this.history = new History(this.history.maxGeneration);},
+	    clearHistory: function() {
+	      var this$1 = this;
+
+	      this.history = new History(this.history.maxGeneration);
+	      linkedDocs(this, function (doc) { return doc.history = this$1.history; }, true);
+	    },
 
 	    markClean: function() {
 	      this.cleanGeneration = this.changeGeneration(true);
@@ -6369,18 +6368,18 @@
 	    },
 	    findMarks: function(from, to, filter) {
 	      from = clipPos(this, from); to = clipPos(this, to);
-	      var found = [], lineNo$$1 = from.line;
+	      var found = [], lineNo = from.line;
 	      this.iter(from.line, to.line + 1, function (line) {
 	        var spans = line.markedSpans;
 	        if (spans) { for (var i = 0; i < spans.length; i++) {
 	          var span = spans[i];
-	          if (!(span.to != null && lineNo$$1 == from.line && from.ch >= span.to ||
-	                span.from == null && lineNo$$1 != from.line ||
-	                span.from != null && lineNo$$1 == to.line && span.from >= to.ch) &&
+	          if (!(span.to != null && lineNo == from.line && from.ch >= span.to ||
+	                span.from == null && lineNo != from.line ||
+	                span.from != null && lineNo == to.line && span.from >= to.ch) &&
 	              (!filter || filter(span.marker)))
 	            { found.push(span.marker.parent || span.marker); }
 	        } }
-	        ++lineNo$$1;
+	        ++lineNo;
 	      });
 	      return found
 	    },
@@ -6395,14 +6394,14 @@
 	    },
 
 	    posFromIndex: function(off) {
-	      var ch, lineNo$$1 = this.first, sepSize = this.lineSeparator().length;
+	      var ch, lineNo = this.first, sepSize = this.lineSeparator().length;
 	      this.iter(function (line) {
 	        var sz = line.text.length + sepSize;
 	        if (sz > off) { ch = off; return true }
 	        off -= sz;
-	        ++lineNo$$1;
+	        ++lineNo;
 	      });
-	      return clipPos(this, Pos(lineNo$$1, ch))
+	      return clipPos(this, Pos(lineNo, ch))
 	    },
 	    indexFromPos: function (coords) {
 	      coords = clipPos(this, coords);
@@ -6441,15 +6440,13 @@
 	      return copy
 	    },
 	    unlinkDoc: function(other) {
-	      var this$1 = this;
-
 	      if (other instanceof CodeMirror) { other = other.doc; }
 	      if (this.linked) { for (var i = 0; i < this.linked.length; ++i) {
-	        var link = this$1.linked[i];
+	        var link = this.linked[i];
 	        if (link.doc != other) { continue }
-	        this$1.linked.splice(i, 1);
-	        other.unlinkDoc(this$1);
-	        detachSharedMarkers(findSharedMarkers(this$1));
+	        this.linked.splice(i, 1);
+	        other.unlinkDoc(this);
+	        detachSharedMarkers(findSharedMarkers(this));
 	        break
 	      } }
 	      // If the histories were shared, split them again
@@ -6501,28 +6498,39 @@
 	    // and insert it.
 	    if (files && files.length && window.FileReader && window.File) {
 	      var n = files.length, text = Array(n), read = 0;
-	      var loadFile = function (file, i) {
-	        if (cm.options.allowDropFileTypes &&
-	            indexOf(cm.options.allowDropFileTypes, file.type) == -1)
-	          { return }
-
-	        var reader = new FileReader;
-	        reader.onload = operation(cm, function () {
-	          var content = reader.result;
-	          if (/[\x00-\x08\x0e-\x1f]{2}/.test(content)) { content = ""; }
-	          text[i] = content;
-	          if (++read == n) {
+	      var markAsReadAndPasteIfAllFilesAreRead = function () {
+	        if (++read == n) {
+	          operation(cm, function () {
 	            pos = clipPos(cm.doc, pos);
 	            var change = {from: pos, to: pos,
-	                          text: cm.doc.splitLines(text.join(cm.doc.lineSeparator())),
+	                          text: cm.doc.splitLines(
+	                              text.filter(function (t) { return t != null; }).join(cm.doc.lineSeparator())),
 	                          origin: "paste"};
 	            makeChange(cm.doc, change);
-	            setSelectionReplaceHistory(cm.doc, simpleSelection(pos, changeEnd(change)));
+	            setSelectionReplaceHistory(cm.doc, simpleSelection(clipPos(cm.doc, pos), clipPos(cm.doc, changeEnd(change))));
+	          })();
+	        }
+	      };
+	      var readTextFromFile = function (file, i) {
+	        if (cm.options.allowDropFileTypes &&
+	            indexOf(cm.options.allowDropFileTypes, file.type) == -1) {
+	          markAsReadAndPasteIfAllFilesAreRead();
+	          return
+	        }
+	        var reader = new FileReader;
+	        reader.onerror = function () { return markAsReadAndPasteIfAllFilesAreRead(); };
+	        reader.onload = function () {
+	          var content = reader.result;
+	          if (/[\x00-\x08\x0e-\x1f]{2}/.test(content)) {
+	            markAsReadAndPasteIfAllFilesAreRead();
+	            return
 	          }
-	        });
+	          text[i] = content;
+	          markAsReadAndPasteIfAllFilesAreRead();
+	        };
 	        reader.readAsText(file);
 	      };
-	      for (var i = 0; i < n; ++i) { loadFile(files[i], i); }
+	      for (var i = 0; i < files.length; i++) { readTextFromFile(files[i], i); }
 	    } else { // Normal drop
 	      // Don't do a replace if the drop happened inside of the selected text.
 	      if (cm.state.draggingText && cm.doc.sel.contains(pos) > -1) {
@@ -6544,7 +6552,7 @@
 	          cm.display.input.focus();
 	        }
 	      }
-	      catch(e){}
+	      catch(e$1){}
 	    }
 	  }
 
@@ -6638,7 +6646,7 @@
 	    19: "Pause", 20: "CapsLock", 27: "Esc", 32: "Space", 33: "PageUp", 34: "PageDown", 35: "End",
 	    36: "Home", 37: "Left", 38: "Up", 39: "Right", 40: "Down", 44: "PrintScrn", 45: "Insert",
 	    46: "Delete", 59: ";", 61: "=", 91: "Mod", 92: "Mod", 93: "Mod",
-	    106: "*", 107: "=", 109: "-", 110: ".", 111: "/", 127: "Delete", 145: "ScrollLock",
+	    106: "*", 107: "=", 109: "-", 110: ".", 111: "/", 145: "ScrollLock",
 	    173: "-", 186: ";", 187: "=", 188: ",", 189: "-", 190: ".", 191: "/", 192: "`", 219: "[", 220: "\\",
 	    221: "]", 222: "'", 63232: "Up", 63233: "Down", 63234: "Left", 63235: "Right", 63272: "Delete",
 	    63273: "Home", 63275: "End", 63276: "PageUp", 63277: "PageDown", 63302: "Insert"
@@ -6747,18 +6755,18 @@
 	    return keymap
 	  }
 
-	  function lookupKey(key, map$$1, handle, context) {
-	    map$$1 = getKeyMap(map$$1);
-	    var found = map$$1.call ? map$$1.call(key, context) : map$$1[key];
+	  function lookupKey(key, map, handle, context) {
+	    map = getKeyMap(map);
+	    var found = map.call ? map.call(key, context) : map[key];
 	    if (found === false) { return "nothing" }
 	    if (found === "...") { return "multi" }
 	    if (found != null && handle(found)) { return "handled" }
 
-	    if (map$$1.fallthrough) {
-	      if (Object.prototype.toString.call(map$$1.fallthrough) != "[object Array]")
-	        { return lookupKey(key, map$$1.fallthrough, handle, context) }
-	      for (var i = 0; i < map$$1.fallthrough.length; i++) {
-	        var result = lookupKey(key, map$$1.fallthrough[i], handle, context);
+	    if (map.fallthrough) {
+	      if (Object.prototype.toString.call(map.fallthrough) != "[object Array]")
+	        { return lookupKey(key, map.fallthrough, handle, context) }
+	      for (var i = 0; i < map.fallthrough.length; i++) {
+	        var result = lookupKey(key, map.fallthrough[i], handle, context);
 	        if (result) { return result }
 	      }
 	    }
@@ -6832,6 +6840,7 @@
 
 	  function endOfLine(visually, cm, lineObj, lineNo, dir) {
 	    if (visually) {
+	      if (cm.doc.direction == "rtl") { dir = -dir; }
 	      var order = getOrder(lineObj, cm.doc.direction);
 	      if (order) {
 	        var part = dir < 0 ? lst(order) : order[0];
@@ -7086,7 +7095,7 @@
 	    var line = getLine(cm.doc, start.line);
 	    var order = getOrder(line, cm.doc.direction);
 	    if (!order || order[0].level == 0) {
-	      var firstNonWS = Math.max(0, line.text.search(/\S/));
+	      var firstNonWS = Math.max(start.ch, line.text.search(/\S/));
 	      var inWS = pos.line == start.line && pos.ch <= firstNonWS && pos.ch;
 	      return Pos(start.line, inWS ? 0 : firstNonWS, start.sticky)
 	    }
@@ -7189,6 +7198,7 @@
 	  var lastStoppedKey = null;
 	  function onKeyDown(e) {
 	    var cm = this;
+	    if (e.target && e.target != cm.display.input.getField()) { return }
 	    cm.curOp.focus = activeElt();
 	    if (signalDOMEvent(cm, e)) { return }
 	    // IE does strange things with escape.
@@ -7202,6 +7212,8 @@
 	      if (!handled && code == 88 && !hasCopyEvent && (mac ? e.metaKey : e.ctrlKey))
 	        { cm.replaceSelection("", null, "cut"); }
 	    }
+	    if (gecko && !mac && !handled && code == 46 && e.shiftKey && !e.ctrlKey && document.execCommand)
+	      { document.execCommand("cut"); }
 
 	    // Turn mouse into crosshair when Alt is held on Mac.
 	    if (code == 18 && !/\bCodeMirror-crosshair\b/.test(cm.display.lineDiv.className))
@@ -7230,6 +7242,7 @@
 
 	  function onKeyPress(e) {
 	    var cm = this;
+	    if (e.target && e.target != cm.display.input.getField()) { return }
 	    if (eventInWidget(cm.display, e) || signalDOMEvent(cm, e) || e.ctrlKey && !e.altKey || mac && e.metaKey) { return }
 	    var keyCode = e.keyCode, charCode = e.charCode;
 	    if (presto && keyCode == lastStoppedKey) {lastStoppedKey = null; e_preventDefault(e); return}
@@ -7378,8 +7391,8 @@
 	        if (!behavior.addNew)
 	          { extendSelection(cm.doc, pos, null, null, behavior.extend); }
 	        // Work around unexplainable focus problem in IE9 (#2127) and Chrome (#3081)
-	        if (webkit || ie && ie_version == 9)
-	          { setTimeout(function () {display.wrapper.ownerDocument.body.focus(); display.input.focus();}, 20); }
+	        if ((webkit && !safari) || ie && ie_version == 9)
+	          { setTimeout(function () {display.wrapper.ownerDocument.body.focus({preventScroll: true}); display.input.focus();}, 20); }
 	        else
 	          { display.input.focus(); }
 	      }
@@ -7433,11 +7446,11 @@
 	      start = posFromMouse(cm, event, true, true);
 	      ourIndex = -1;
 	    } else {
-	      var range$$1 = rangeForUnit(cm, start, behavior.unit);
+	      var range = rangeForUnit(cm, start, behavior.unit);
 	      if (behavior.extend)
-	        { ourRange = extendRange(ourRange, range$$1.anchor, range$$1.head, behavior.extend); }
+	        { ourRange = extendRange(ourRange, range.anchor, range.head, behavior.extend); }
 	      else
-	        { ourRange = range$$1; }
+	        { ourRange = range; }
 	    }
 
 	    if (!behavior.addNew) {
@@ -7480,14 +7493,14 @@
 	        cm.scrollIntoView(pos);
 	      } else {
 	        var oldRange = ourRange;
-	        var range$$1 = rangeForUnit(cm, pos, behavior.unit);
+	        var range = rangeForUnit(cm, pos, behavior.unit);
 	        var anchor = oldRange.anchor, head;
-	        if (cmp(range$$1.anchor, anchor) > 0) {
-	          head = range$$1.head;
-	          anchor = minPos(oldRange.from(), range$$1.anchor);
+	        if (cmp(range.anchor, anchor) > 0) {
+	          head = range.head;
+	          anchor = minPos(oldRange.from(), range.anchor);
 	        } else {
-	          head = range$$1.anchor;
-	          anchor = maxPos(oldRange.to(), range$$1.head);
+	          head = range.anchor;
+	          anchor = maxPos(oldRange.to(), range.head);
 	        }
 	        var ranges$1 = startSel.ranges.slice(0);
 	        ranges$1[ourIndex] = bidiSimplify(cm, new Range(clipPos(doc, anchor), head));
@@ -7525,8 +7538,13 @@
 	    function done(e) {
 	      cm.state.selectingText = false;
 	      counter = Infinity;
-	      e_preventDefault(e);
-	      display.input.focus();
+	      // If e is null or undefined we interpret this as someone trying
+	      // to explicitly cancel the selection rather than the user
+	      // letting go of the mouse button.
+	      if (e) {
+	        e_preventDefault(e);
+	        display.input.focus();
+	      }
 	      off(display.wrapper.ownerDocument, "mousemove", move);
 	      off(display.wrapper.ownerDocument, "mouseup", up);
 	      doc.history.lastSelOrigin = null;
@@ -7544,17 +7562,17 @@
 
 	  // Used when mouse-selecting to adjust the anchor to the proper side
 	  // of a bidi jump depending on the visual position of the head.
-	  function bidiSimplify(cm, range$$1) {
-	    var anchor = range$$1.anchor;
-	    var head = range$$1.head;
+	  function bidiSimplify(cm, range) {
+	    var anchor = range.anchor;
+	    var head = range.head;
 	    var anchorLine = getLine(cm.doc, anchor.line);
-	    if (cmp(anchor, head) == 0 && anchor.sticky == head.sticky) { return range$$1 }
+	    if (cmp(anchor, head) == 0 && anchor.sticky == head.sticky) { return range }
 	    var order = getOrder(anchorLine);
-	    if (!order) { return range$$1 }
+	    if (!order) { return range }
 	    var index = getBidiPartAt(order, anchor.ch, anchor.sticky), part = order[index];
-	    if (part.from != anchor.ch && part.to != anchor.ch) { return range$$1 }
+	    if (part.from != anchor.ch && part.to != anchor.ch) { return range }
 	    var boundary = index + ((part.from == anchor.ch) == (part.level != 1) ? 0 : 1);
-	    if (boundary == 0 || boundary == order.length) { return range$$1 }
+	    if (boundary == 0 || boundary == order.length) { return range }
 
 	    // Compute the relative visual position of the head compared to the
 	    // anchor (<0 is to the left, >0 to the right)
@@ -7573,7 +7591,7 @@
 	    var usePart = order[boundary + (leftSide ? -1 : 0)];
 	    var from = leftSide == (usePart.level == 1);
 	    var ch = from ? usePart.from : usePart.to, sticky = from ? "after" : "before";
-	    return anchor.ch == ch && anchor.sticky == sticky ? range$$1 : new Range(new Pos(anchor.line, ch, sticky), head)
+	    return anchor.ch == ch && anchor.sticky == sticky ? range : new Range(new Pos(anchor.line, ch, sticky), head)
 	  }
 
 
@@ -7586,7 +7604,7 @@
 	      mY = e.touches[0].clientY;
 	    } else {
 	      try { mX = e.clientX; mY = e.clientY; }
-	      catch(e) { return false }
+	      catch(e$1) { return false }
 	    }
 	    if (mX >= Math.floor(cm.display.gutters.getBoundingClientRect().right)) { return false }
 	    if (prevent) { e_preventDefault(e); }
@@ -7597,12 +7615,12 @@
 	    if (mY > lineBox.bottom || !hasHandler(cm, type)) { return e_defaultPrevented(e) }
 	    mY -= lineBox.top - display.viewOffset;
 
-	    for (var i = 0; i < cm.options.gutters.length; ++i) {
+	    for (var i = 0; i < cm.display.gutterSpecs.length; ++i) {
 	      var g = display.gutters.childNodes[i];
 	      if (g && g.getBoundingClientRect().right >= mX) {
 	        var line = lineAtHeight(cm.doc, mY);
-	        var gutter = cm.options.gutters[i];
-	        signal(cm, type, cm, line, gutter, e);
+	        var gutter = cm.display.gutterSpecs[i];
+	        signal(cm, type, cm, line, gutter.className, e);
 	        return e_defaultPrevented(e)
 	      }
 	    }
@@ -7686,7 +7704,7 @@
 	      for (var i = newBreaks.length - 1; i >= 0; i--)
 	        { replaceRange(cm.doc, val, newBreaks[i], Pos(newBreaks[i].line, newBreaks[i].ch + val.length)); }
 	    });
-	    option("specialChars", /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff]/g, function (cm, val, old) {
+	    option("specialChars", /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200c\u200e\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, function (cm, val, old) {
 	      cm.state.specialChars = new RegExp(val.source + (val.test("\t") ? "" : "|\t"), "g");
 	      if (old != Init) { cm.refresh(); }
 	    });
@@ -7703,7 +7721,7 @@
 
 	    option("theme", "default", function (cm) {
 	      themeChanged(cm);
-	      guttersChanged(cm);
+	      updateGutters(cm);
 	    }, true);
 	    option("keyMap", "default", function (cm, val, old) {
 	      var next = getKeyMap(val);
@@ -7715,9 +7733,9 @@
 	    option("configureMouse", null);
 
 	    option("lineWrapping", false, wrappingChanged, true);
-	    option("gutters", [], function (cm) {
-	      setGuttersForLineNumbers(cm.options);
-	      guttersChanged(cm);
+	    option("gutters", [], function (cm, val) {
+	      cm.display.gutterSpecs = getGutters(val, cm.options.lineNumbers);
+	      updateGutters(cm);
 	    }, true);
 	    option("fixedGutter", true, function (cm, val) {
 	      cm.display.gutters.style.left = val ? compensateForHScroll(cm.display) + "px" : "0";
@@ -7730,12 +7748,12 @@
 	      cm.display.scrollbars.setScrollTop(cm.doc.scrollTop);
 	      cm.display.scrollbars.setScrollLeft(cm.doc.scrollLeft);
 	    }, true);
-	    option("lineNumbers", false, function (cm) {
-	      setGuttersForLineNumbers(cm.options);
-	      guttersChanged(cm);
+	    option("lineNumbers", false, function (cm, val) {
+	      cm.display.gutterSpecs = getGutters(cm.options.gutters, val);
+	      updateGutters(cm);
 	    }, true);
-	    option("firstLineNumber", 1, guttersChanged, true);
-	    option("lineNumberFormatter", function (integer) { return integer; }, guttersChanged, true);
+	    option("firstLineNumber", 1, updateGutters, true);
+	    option("lineNumberFormatter", function (integer) { return integer; }, updateGutters, true);
 	    option("showCursorWhenSelecting", false, updateSelection, true);
 
 	    option("resetSelectionOnContextMenu", true);
@@ -7750,6 +7768,12 @@
 	      }
 	      cm.display.input.readOnlyChanged(val);
 	    });
+
+	    option("screenReaderLabel", null, function (cm, val) {
+	      val = (val === '') ? null : val;
+	      cm.display.input.screenReaderLabelChanged(val);
+	    });
+
 	    option("disableInput", false, function (cm, val) {if (!val) { cm.display.input.reset(); }}, true);
 	    option("dragDrop", true, dragDropChanged);
 	    option("allowDropFileTypes", null);
@@ -7775,12 +7799,6 @@
 	    option("autofocus", null);
 	    option("direction", "ltr", function (cm, val) { return cm.doc.setDirection(val); }, true);
 	    option("phrases", null);
-	  }
-
-	  function guttersChanged(cm) {
-	    updateGutters(cm);
-	    regChange(cm);
-	    alignHorizontally(cm);
 	  }
 
 	  function dragDropChanged(cm, value, old) {
@@ -7822,7 +7840,6 @@
 	    this.options = options = options ? copyObj(options) : {};
 	    // Determine effective options based on given values and defaults.
 	    copyObj(defaults, options, false);
-	    setGuttersForLineNumbers(options);
 
 	    var doc = options.value;
 	    if (typeof doc == "string") { doc = new Doc(doc, options.mode, null, options.lineSeparator, options.direction); }
@@ -7830,9 +7847,8 @@
 	    this.doc = doc;
 
 	    var input = new CodeMirror.inputStyles[options.inputStyle](this);
-	    var display = this.display = new Display(place, doc, input);
+	    var display = this.display = new Display(place, doc, input, options);
 	    display.wrapper.CodeMirror = this;
-	    updateGutters(this);
 	    themeChanged(this);
 	    if (options.lineWrapping)
 	      { this.display.wrapper.className += " CodeMirror-wrap"; }
@@ -7873,10 +7889,10 @@
 	      { onBlur(this); }
 
 	    for (var opt in optionHandlers) { if (optionHandlers.hasOwnProperty(opt))
-	      { optionHandlers[opt](this$1, options[opt], Init); } }
+	      { optionHandlers[opt](this, options[opt], Init); } }
 	    maybeUpdateLineNumberWidth(this);
 	    if (options.finishInit) { options.finishInit(this); }
-	    for (var i = 0; i < initHooks.length; ++i) { initHooks[i](this$1); }
+	    for (var i = 0; i < initHooks.length; ++i) { initHooks[i](this); }
 	    endOperation(this);
 	    // Suppress optimizelegibility in Webkit, since it breaks text
 	    // measuring on line wrapping boundaries.
@@ -7910,6 +7926,9 @@
 	    // which point we can't mess with it anymore. Context menu is
 	    // handled in onMouseDown for these browsers.
 	    on(d.scroller, "contextmenu", function (e) { return onContextMenu(cm, e); });
+	    on(d.input.getField(), "contextmenu", function (e) {
+	      if (!d.scroller.contains(e.target)) { onContextMenu(cm, e); }
+	    });
 
 	    // Used to suppress mouse event handling when a touch happens
 	    var touchFinished, prevTouch = {end: 0};
@@ -8098,14 +8117,14 @@
 	    var updateInput = cm.curOp.updateInput;
 	    // Normal behavior is to insert the new text into every selection
 	    for (var i$1 = sel.ranges.length - 1; i$1 >= 0; i$1--) {
-	      var range$$1 = sel.ranges[i$1];
-	      var from = range$$1.from(), to = range$$1.to();
-	      if (range$$1.empty()) {
+	      var range = sel.ranges[i$1];
+	      var from = range.from(), to = range.to();
+	      if (range.empty()) {
 	        if (deleted && deleted > 0) // Handle deletion
 	          { from = Pos(from.line, from.ch - deleted); }
 	        else if (cm.state.overwrite && !paste) // Handle overwrite
 	          { to = Pos(to.line, Math.min(getLine(doc, to.line).text.length, to.ch + lst(textLines).length)); }
-	        else if (paste && lastCopied && lastCopied.lineWise && lastCopied.text.join("\n") == inserted)
+	        else if (paste && lastCopied && lastCopied.lineWise && lastCopied.text.join("\n") == textLines.join("\n"))
 	          { from = to = Pos(from.line, 0); }
 	      }
 	      var changeEvent = {from: from, to: to, text: multiPaste ? multiPaste[i$1 % multiPaste.length] : textLines,
@@ -8138,21 +8157,21 @@
 	    var sel = cm.doc.sel;
 
 	    for (var i = sel.ranges.length - 1; i >= 0; i--) {
-	      var range$$1 = sel.ranges[i];
-	      if (range$$1.head.ch > 100 || (i && sel.ranges[i - 1].head.line == range$$1.head.line)) { continue }
-	      var mode = cm.getModeAt(range$$1.head);
+	      var range = sel.ranges[i];
+	      if (range.head.ch > 100 || (i && sel.ranges[i - 1].head.line == range.head.line)) { continue }
+	      var mode = cm.getModeAt(range.head);
 	      var indented = false;
 	      if (mode.electricChars) {
 	        for (var j = 0; j < mode.electricChars.length; j++)
 	          { if (inserted.indexOf(mode.electricChars.charAt(j)) > -1) {
-	            indented = indentLine(cm, range$$1.head.line, "smart");
+	            indented = indentLine(cm, range.head.line, "smart");
 	            break
 	          } }
 	      } else if (mode.electricInput) {
-	        if (mode.electricInput.test(getLine(cm.doc, range$$1.head.line).text.slice(0, range$$1.head.ch)))
-	          { indented = indentLine(cm, range$$1.head.line, "smart"); }
+	        if (mode.electricInput.test(getLine(cm.doc, range.head.line).text.slice(0, range.head.ch)))
+	          { indented = indentLine(cm, range.head.line, "smart"); }
 	      }
-	      if (indented) { signalLater(cm, "electricInput", cm, range$$1.head.line); }
+	      if (indented) { signalLater(cm, "electricInput", cm, range.head.line); }
 	    }
 	  }
 
@@ -8168,8 +8187,8 @@
 	  }
 
 	  function disableBrowserMagic(field, spellcheck, autocorrect, autocapitalize) {
-	    field.setAttribute("autocorrect", !!autocorrect);
-	    field.setAttribute("autocapitalize", !!autocapitalize);
+	    field.setAttribute("autocorrect", autocorrect ? "" : "off");
+	    field.setAttribute("autocapitalize", autocapitalize ? "" : "off");
 	    field.setAttribute("spellcheck", !!spellcheck);
 	  }
 
@@ -8217,13 +8236,13 @@
 	      getOption: function(option) {return this.options[option]},
 	      getDoc: function() {return this.doc},
 
-	      addKeyMap: function(map$$1, bottom) {
-	        this.state.keyMaps[bottom ? "push" : "unshift"](getKeyMap(map$$1));
+	      addKeyMap: function(map, bottom) {
+	        this.state.keyMaps[bottom ? "push" : "unshift"](getKeyMap(map));
 	      },
-	      removeKeyMap: function(map$$1) {
+	      removeKeyMap: function(map) {
 	        var maps = this.state.keyMaps;
 	        for (var i = 0; i < maps.length; ++i)
-	          { if (maps[i] == map$$1 || maps[i].name == map$$1) {
+	          { if (maps[i] == map || maps[i].name == map) {
 	            maps.splice(i, 1);
 	            return true
 	          } }
@@ -8240,15 +8259,13 @@
 	        regChange(this);
 	      }),
 	      removeOverlay: methodOp(function(spec) {
-	        var this$1 = this;
-
 	        var overlays = this.state.overlays;
 	        for (var i = 0; i < overlays.length; ++i) {
 	          var cur = overlays[i].modeSpec;
 	          if (cur == spec || typeof spec == "string" && cur.name == spec) {
 	            overlays.splice(i, 1);
-	            this$1.state.modeGen++;
-	            regChange(this$1);
+	            this.state.modeGen++;
+	            regChange(this);
 	            return
 	          }
 	        }
@@ -8262,24 +8279,22 @@
 	        if (isLine(this.doc, n)) { indentLine(this, n, dir, aggressive); }
 	      }),
 	      indentSelection: methodOp(function(how) {
-	        var this$1 = this;
-
 	        var ranges = this.doc.sel.ranges, end = -1;
 	        for (var i = 0; i < ranges.length; i++) {
-	          var range$$1 = ranges[i];
-	          if (!range$$1.empty()) {
-	            var from = range$$1.from(), to = range$$1.to();
+	          var range = ranges[i];
+	          if (!range.empty()) {
+	            var from = range.from(), to = range.to();
 	            var start = Math.max(end, from.line);
-	            end = Math.min(this$1.lastLine(), to.line - (to.ch ? 0 : 1)) + 1;
+	            end = Math.min(this.lastLine(), to.line - (to.ch ? 0 : 1)) + 1;
 	            for (var j = start; j < end; ++j)
-	              { indentLine(this$1, j, how); }
-	            var newRanges = this$1.doc.sel.ranges;
+	              { indentLine(this, j, how); }
+	            var newRanges = this.doc.sel.ranges;
 	            if (from.ch == 0 && ranges.length == newRanges.length && newRanges[i].from().ch > 0)
-	              { replaceOneSelection(this$1.doc, i, new Range(from, newRanges[i].to()), sel_dontScroll); }
-	          } else if (range$$1.head.line > end) {
-	            indentLine(this$1, range$$1.head.line, how, true);
-	            end = range$$1.head.line;
-	            if (i == this$1.doc.sel.primIndex) { ensureCursorVisible(this$1); }
+	              { replaceOneSelection(this.doc, i, new Range(from, newRanges[i].to()), sel_dontScroll); }
+	          } else if (range.head.line > end) {
+	            indentLine(this, range.head.line, how, true);
+	            end = range.head.line;
+	            if (i == this.doc.sel.primIndex) { ensureCursorVisible(this); }
 	          }
 	        }
 	      }),
@@ -8321,8 +8336,6 @@
 	      },
 
 	      getHelpers: function(pos, type) {
-	        var this$1 = this;
-
 	        var found = [];
 	        if (!helpers.hasOwnProperty(type)) { return found }
 	        var help = helpers[type], mode = this.getModeAt(pos);
@@ -8340,7 +8353,7 @@
 	        }
 	        for (var i$1 = 0; i$1 < help._global.length; i$1++) {
 	          var cur = help._global[i$1];
-	          if (cur.pred(mode, this$1) && indexOf(found, cur.val) == -1)
+	          if (cur.pred(mode, this) && indexOf(found, cur.val) == -1)
 	            { found.push(cur.val); }
 	        }
 	        return found
@@ -8353,10 +8366,10 @@
 	      },
 
 	      cursorCoords: function(start, mode) {
-	        var pos, range$$1 = this.doc.sel.primary();
-	        if (start == null) { pos = range$$1.head; }
+	        var pos, range = this.doc.sel.primary();
+	        if (start == null) { pos = range.head; }
 	        else if (typeof start == "object") { pos = clipPos(this.doc, start); }
-	        else { pos = start ? range$$1.from() : range$$1.to(); }
+	        else { pos = start ? range.from() : range.to(); }
 	        return cursorCoords(this, pos, mode || "page")
 	      },
 
@@ -8440,13 +8453,11 @@
 	      triggerElectric: methodOp(function(text) { triggerElectric(this, text); }),
 
 	      findPosH: function(from, amount, unit, visually) {
-	        var this$1 = this;
-
 	        var dir = 1;
 	        if (amount < 0) { dir = -1; amount = -amount; }
 	        var cur = clipPos(this.doc, from);
 	        for (var i = 0; i < amount; ++i) {
-	          cur = findPosH(this$1.doc, cur, dir, unit, visually);
+	          cur = findPosH(this.doc, cur, dir, unit, visually);
 	          if (cur.hitSide) { break }
 	        }
 	        return cur
@@ -8455,11 +8466,11 @@
 	      moveH: methodOp(function(dir, unit) {
 	        var this$1 = this;
 
-	        this.extendSelectionsBy(function (range$$1) {
-	          if (this$1.display.shift || this$1.doc.extend || range$$1.empty())
-	            { return findPosH(this$1.doc, range$$1.head, dir, unit, this$1.options.rtlMoveVisually) }
+	        this.extendSelectionsBy(function (range) {
+	          if (this$1.display.shift || this$1.doc.extend || range.empty())
+	            { return findPosH(this$1.doc, range.head, dir, unit, this$1.options.rtlMoveVisually) }
 	          else
-	            { return dir < 0 ? range$$1.from() : range$$1.to() }
+	            { return dir < 0 ? range.from() : range.to() }
 	        }, sel_move);
 	      }),
 
@@ -8468,23 +8479,21 @@
 	        if (sel.somethingSelected())
 	          { doc.replaceSelection("", null, "+delete"); }
 	        else
-	          { deleteNearSelection(this, function (range$$1) {
-	            var other = findPosH(doc, range$$1.head, dir, unit, false);
-	            return dir < 0 ? {from: other, to: range$$1.head} : {from: range$$1.head, to: other}
+	          { deleteNearSelection(this, function (range) {
+	            var other = findPosH(doc, range.head, dir, unit, false);
+	            return dir < 0 ? {from: other, to: range.head} : {from: range.head, to: other}
 	          }); }
 	      }),
 
 	      findPosV: function(from, amount, unit, goalColumn) {
-	        var this$1 = this;
-
 	        var dir = 1, x = goalColumn;
 	        if (amount < 0) { dir = -1; amount = -amount; }
 	        var cur = clipPos(this.doc, from);
 	        for (var i = 0; i < amount; ++i) {
-	          var coords = cursorCoords(this$1, cur, "div");
+	          var coords = cursorCoords(this, cur, "div");
 	          if (x == null) { x = coords.left; }
 	          else { coords.left = x; }
-	          cur = findPosV(this$1, coords, dir, unit);
+	          cur = findPosV(this, coords, dir, unit);
 	          if (cur.hitSide) { break }
 	        }
 	        return cur
@@ -8495,14 +8504,14 @@
 
 	        var doc = this.doc, goals = [];
 	        var collapse = !this.display.shift && !doc.extend && doc.sel.somethingSelected();
-	        doc.extendSelectionsBy(function (range$$1) {
+	        doc.extendSelectionsBy(function (range) {
 	          if (collapse)
-	            { return dir < 0 ? range$$1.from() : range$$1.to() }
-	          var headPos = cursorCoords(this$1, range$$1.head, "div");
-	          if (range$$1.goalColumn != null) { headPos.left = range$$1.goalColumn; }
+	            { return dir < 0 ? range.from() : range.to() }
+	          var headPos = cursorCoords(this$1, range.head, "div");
+	          if (range.goalColumn != null) { headPos.left = range.goalColumn; }
 	          goals.push(headPos.left);
 	          var pos = findPosV(this$1, headPos, dir, unit);
-	          if (unit == "page" && range$$1 == doc.sel.primary())
+	          if (unit == "page" && range == doc.sel.primary())
 	            { addToScrollTop(this$1, charCoords(this$1, pos, "div").top - headPos.top); }
 	          return pos
 	        }, sel_move);
@@ -8549,22 +8558,22 @@
 	                clientHeight: displayHeight(this), clientWidth: displayWidth(this)}
 	      },
 
-	      scrollIntoView: methodOp(function(range$$1, margin) {
-	        if (range$$1 == null) {
-	          range$$1 = {from: this.doc.sel.primary().head, to: null};
+	      scrollIntoView: methodOp(function(range, margin) {
+	        if (range == null) {
+	          range = {from: this.doc.sel.primary().head, to: null};
 	          if (margin == null) { margin = this.options.cursorScrollMargin; }
-	        } else if (typeof range$$1 == "number") {
-	          range$$1 = {from: Pos(range$$1, 0), to: null};
-	        } else if (range$$1.from == null) {
-	          range$$1 = {from: range$$1, to: null};
+	        } else if (typeof range == "number") {
+	          range = {from: Pos(range, 0), to: null};
+	        } else if (range.from == null) {
+	          range = {from: range, to: null};
 	        }
-	        if (!range$$1.to) { range$$1.to = range$$1.from; }
-	        range$$1.margin = margin || 0;
+	        if (!range.to) { range.to = range.from; }
+	        range.margin = margin || 0;
 
-	        if (range$$1.from.line != null) {
-	          scrollToRange(this, range$$1);
+	        if (range.from.line != null) {
+	          scrollToRange(this, range);
 	        } else {
-	          scrollToCoordsRange(this, range$$1.from, range$$1.to, range$$1.margin);
+	          scrollToCoordsRange(this, range.from, range.to, range.margin);
 	        }
 	      }),
 
@@ -8575,11 +8584,11 @@
 	        if (width != null) { this.display.wrapper.style.width = interpret(width); }
 	        if (height != null) { this.display.wrapper.style.height = interpret(height); }
 	        if (this.options.lineWrapping) { clearLineMeasurementCache(this); }
-	        var lineNo$$1 = this.display.viewFrom;
-	        this.doc.iter(lineNo$$1, this.display.viewTo, function (line) {
+	        var lineNo = this.display.viewFrom;
+	        this.doc.iter(lineNo, this.display.viewTo, function (line) {
 	          if (line.widgets) { for (var i = 0; i < line.widgets.length; i++)
-	            { if (line.widgets[i].noHScroll) { regLineChange(this$1, lineNo$$1, "widget"); break } } }
-	          ++lineNo$$1;
+	            { if (line.widgets[i].noHScroll) { regLineChange(this$1, lineNo, "widget"); break } } }
+	          ++lineNo;
 	        });
 	        this.curOp.forceUpdate = true;
 	        signal(this, "refresh", this);
@@ -8595,8 +8604,8 @@
 	        this.curOp.forceUpdate = true;
 	        clearCaches(this);
 	        scrollToCoords(this, this.doc.scrollLeft, this.doc.scrollTop);
-	        updateGutterSpace(this);
-	        if (oldHeight == null || Math.abs(oldHeight - textHeight(this.display)) > .5)
+	        updateGutterSpace(this.display);
+	        if (oldHeight == null || Math.abs(oldHeight - textHeight(this.display)) > .5 || this.options.lineWrapping)
 	          { estimateLineHeights(this); }
 	        signal(this, "refresh", this);
 	      }),
@@ -8604,6 +8613,8 @@
 	      swapDoc: methodOp(function(doc) {
 	        var old = this.doc;
 	        old.cm = null;
+	        // Cancel the current text selection if any (#5821)
+	        if (this.state.selectingText) { this.state.selectingText(); }
 	        attachDoc(this, doc);
 	        clearCaches(this);
 	        this.display.input.reset();
@@ -8648,8 +8659,9 @@
 	    var oldPos = pos;
 	    var origDir = dir;
 	    var lineObj = getLine(doc, pos.line);
+	    var lineDir = visually && doc.direction == "rtl" ? -dir : dir;
 	    function findNextLine() {
-	      var l = pos.line + dir;
+	      var l = pos.line + lineDir;
 	      if (l < doc.first || l >= doc.first + doc.size) { return false }
 	      pos = new Pos(l, pos.ch, pos.sticky);
 	      return lineObj = getLine(doc, l)
@@ -8663,7 +8675,7 @@
 	      }
 	      if (next == null) {
 	        if (!boundToLine && findNextLine())
-	          { pos = endOfLine(visually, doc.cm, lineObj, pos.line, dir); }
+	          { pos = endOfLine(visually, doc.cm, lineObj, pos.line, lineDir); }
 	        else
 	          { return false }
 	      } else {
@@ -8742,8 +8754,16 @@
 	    var div = input.div = display.lineDiv;
 	    disableBrowserMagic(div, cm.options.spellcheck, cm.options.autocorrect, cm.options.autocapitalize);
 
+	    function belongsToInput(e) {
+	      for (var t = e.target; t; t = t.parentNode) {
+	        if (t == div) { return true }
+	        if (/\bCodeMirror-(?:line)?widget\b/.test(t.className)) { break }
+	      }
+	      return false
+	    }
+
 	    on(div, "paste", function (e) {
-	      if (signalDOMEvent(cm, e) || handlePaste(e, cm)) { return }
+	      if (!belongsToInput(e) || signalDOMEvent(cm, e) || handlePaste(e, cm)) { return }
 	      // IE doesn't fire input events, so we schedule a read for the pasted content in this way
 	      if (ie_version <= 11) { setTimeout(operation(cm, function () { return this$1.updateFromDOM(); }), 20); }
 	    });
@@ -8768,7 +8788,7 @@
 	    });
 
 	    function onCopyCut(e) {
-	      if (signalDOMEvent(cm, e)) { return }
+	      if (!belongsToInput(e) || signalDOMEvent(cm, e)) { return }
 	      if (cm.somethingSelected()) {
 	        setLastCopied({lineWise: false, text: cm.getSelections()});
 	        if (e.type == "cut") { cm.replaceSelection("", null, "cut"); }
@@ -8810,9 +8830,18 @@
 	    on(div, "cut", onCopyCut);
 	  };
 
+	  ContentEditableInput.prototype.screenReaderLabelChanged = function (label) {
+	    // Label for screenreaders, accessibility
+	    if(label) {
+	      this.div.setAttribute('aria-label', label);
+	    } else {
+	      this.div.removeAttribute('aria-label');
+	    }
+	  };
+
 	  ContentEditableInput.prototype.prepareSelection = function () {
 	    var result = prepareSelection(this.cm, false);
-	    result.focus = this.cm.state.focused;
+	    result.focus = document.activeElement == this.div;
 	    return result
 	  };
 
@@ -8848,8 +8877,8 @@
 	    var end = to.line < cm.display.viewTo && posToDOM(cm, to);
 	    if (!end) {
 	      var measure = view[view.length - 1].measure;
-	      var map$$1 = measure.maps ? measure.maps[measure.maps.length - 1] : measure.map;
-	      end = {node: map$$1[map$$1.length - 1], offset: map$$1[map$$1.length - 2] - map$$1[map$$1.length - 3]};
+	      var map = measure.maps ? measure.maps[measure.maps.length - 1] : measure.map;
+	      end = {node: map[map.length - 1], offset: map[map.length - 2] - map[map.length - 3]};
 	    }
 
 	    if (!start || !end) {
@@ -8908,7 +8937,7 @@
 
 	  ContentEditableInput.prototype.focus = function () {
 	    if (this.cm.options.readOnly != "nocursor") {
-	      if (!this.selectionInEditor())
+	      if (!this.selectionInEditor() || document.activeElement != this.div)
 	        { this.showSelection(this.prepareSelection(), true); }
 	      this.div.focus();
 	    }
@@ -8949,7 +8978,7 @@
 	    // Because Android doesn't allow us to actually detect backspace
 	    // presses in a sane way, this code checks for when that happens
 	    // and simulates a backspace press in this case.
-	    if (android && chrome && this.cm.options.gutters.length && isInGutter(sel.anchorNode)) {
+	    if (android && chrome && this.cm.display.gutterSpecs.length && isInGutter(sel.anchorNode)) {
 	      this.cm.triggerOnKeyDown({type: "keydown", keyCode: 8, preventDefault: Math.abs});
 	      this.blur();
 	      this.focus();
@@ -9138,11 +9167,11 @@
 	          addText(cmText);
 	          return
 	        }
-	        var markerID = node.getAttribute("cm-marker"), range$$1;
+	        var markerID = node.getAttribute("cm-marker"), range;
 	        if (markerID) {
 	          var found = cm.findMarks(Pos(fromLine, 0), Pos(toLine + 1, 0), recognizeMarker(+markerID));
-	          if (found.length && (range$$1 = found[0].find(0)))
-	            { addText(getBetween(cm.doc, range$$1.from, range$$1.to).join(lineSep)); }
+	          if (found.length && (range = found[0].find(0)))
+	            { addText(getBetween(cm.doc, range.from, range.to).join(lineSep)); }
 	          return
 	        }
 	        if (node.getAttribute("contenteditable") == "false") { return }
@@ -9210,13 +9239,13 @@
 
 	    function find(textNode, topNode, offset) {
 	      for (var i = -1; i < (maps ? maps.length : 0); i++) {
-	        var map$$1 = i < 0 ? measure.map : maps[i];
-	        for (var j = 0; j < map$$1.length; j += 3) {
-	          var curNode = map$$1[j + 2];
+	        var map = i < 0 ? measure.map : maps[i];
+	        for (var j = 0; j < map.length; j += 3) {
+	          var curNode = map[j + 2];
 	          if (curNode == textNode || curNode == topNode) {
 	            var line = lineNo(i < 0 ? lineView.line : lineView.rest[i]);
-	            var ch = map$$1[j] + offset;
-	            if (offset < 0 || curNode != textNode) { ch = map$$1[j + (offset ? 1 : 0)]; }
+	            var ch = map[j] + offset;
+	            if (offset < 0 || curNode != textNode) { ch = map[j + (offset ? 1 : 0)]; }
 	            return Pos(line, ch)
 	          }
 	        }
@@ -9348,6 +9377,15 @@
 	    // The semihidden textarea that is focused when the editor is
 	    // focused, and receives input.
 	    this.textarea = this.wrapper.firstChild;
+	  };
+
+	  TextareaInput.prototype.screenReaderLabelChanged = function (label) {
+	    // Label for screenreaders, accessibility
+	    if(label) {
+	      this.textarea.setAttribute('aria-label', label);
+	    } else {
+	      this.textarea.removeAttribute('aria-label');
+	    }
 	  };
 
 	  TextareaInput.prototype.prepareSelection = function () {
@@ -9641,7 +9679,7 @@
 	        textarea.style.display = "";
 	        if (textarea.form) {
 	          off(textarea.form, "submit", save);
-	          if (typeof textarea.form.submit == "function")
+	          if (!options.leaveSubmitMethodAlone && typeof textarea.form.submit == "function")
 	            { textarea.form.submit = realSubmit; }
 	        }
 	      };
@@ -9740,7 +9778,7 @@
 
 	  addLegacyProps(CodeMirror);
 
-	  CodeMirror.version = "5.44.0";
+	  CodeMirror.version = "5.56.0";
 
 	  return CodeMirror;
 
@@ -10199,81 +10237,98 @@
 	    "alignment-baseline", "anchor-point", "animation", "animation-delay",
 	    "animation-direction", "animation-duration", "animation-fill-mode",
 	    "animation-iteration-count", "animation-name", "animation-play-state",
-	    "animation-timing-function", "appearance", "azimuth", "backface-visibility",
-	    "background", "background-attachment", "background-blend-mode", "background-clip",
-	    "background-color", "background-image", "background-origin", "background-position",
-	    "background-repeat", "background-size", "baseline-shift", "binding",
-	    "bleed", "bookmark-label", "bookmark-level", "bookmark-state",
-	    "bookmark-target", "border", "border-bottom", "border-bottom-color",
-	    "border-bottom-left-radius", "border-bottom-right-radius",
-	    "border-bottom-style", "border-bottom-width", "border-collapse",
-	    "border-color", "border-image", "border-image-outset",
+	    "animation-timing-function", "appearance", "azimuth", "backdrop-filter",
+	    "backface-visibility", "background", "background-attachment",
+	    "background-blend-mode", "background-clip", "background-color",
+	    "background-image", "background-origin", "background-position",
+	    "background-position-x", "background-position-y", "background-repeat",
+	    "background-size", "baseline-shift", "binding", "bleed", "block-size",
+	    "bookmark-label", "bookmark-level", "bookmark-state", "bookmark-target",
+	    "border", "border-bottom", "border-bottom-color", "border-bottom-left-radius",
+	    "border-bottom-right-radius", "border-bottom-style", "border-bottom-width",
+	    "border-collapse", "border-color", "border-image", "border-image-outset",
 	    "border-image-repeat", "border-image-slice", "border-image-source",
-	    "border-image-width", "border-left", "border-left-color",
-	    "border-left-style", "border-left-width", "border-radius", "border-right",
-	    "border-right-color", "border-right-style", "border-right-width",
-	    "border-spacing", "border-style", "border-top", "border-top-color",
-	    "border-top-left-radius", "border-top-right-radius", "border-top-style",
-	    "border-top-width", "border-width", "bottom", "box-decoration-break",
-	    "box-shadow", "box-sizing", "break-after", "break-before", "break-inside",
-	    "caption-side", "caret-color", "clear", "clip", "color", "color-profile", "column-count",
-	    "column-fill", "column-gap", "column-rule", "column-rule-color",
-	    "column-rule-style", "column-rule-width", "column-span", "column-width",
-	    "columns", "content", "counter-increment", "counter-reset", "crop", "cue",
-	    "cue-after", "cue-before", "cursor", "direction", "display",
-	    "dominant-baseline", "drop-initial-after-adjust",
-	    "drop-initial-after-align", "drop-initial-before-adjust",
-	    "drop-initial-before-align", "drop-initial-size", "drop-initial-value",
-	    "elevation", "empty-cells", "fit", "fit-position", "flex", "flex-basis",
-	    "flex-direction", "flex-flow", "flex-grow", "flex-shrink", "flex-wrap",
-	    "float", "float-offset", "flow-from", "flow-into", "font", "font-feature-settings",
-	    "font-family", "font-kerning", "font-language-override", "font-size", "font-size-adjust",
-	    "font-stretch", "font-style", "font-synthesis", "font-variant",
-	    "font-variant-alternates", "font-variant-caps", "font-variant-east-asian",
-	    "font-variant-ligatures", "font-variant-numeric", "font-variant-position",
-	    "font-weight", "grid", "grid-area", "grid-auto-columns", "grid-auto-flow",
-	    "grid-auto-rows", "grid-column", "grid-column-end", "grid-column-gap",
-	    "grid-column-start", "grid-gap", "grid-row", "grid-row-end", "grid-row-gap",
-	    "grid-row-start", "grid-template", "grid-template-areas", "grid-template-columns",
-	    "grid-template-rows", "hanging-punctuation", "height", "hyphens",
-	    "icon", "image-orientation", "image-rendering", "image-resolution",
-	    "inline-box-align", "justify-content", "justify-items", "justify-self", "left", "letter-spacing",
-	    "line-break", "line-height", "line-stacking", "line-stacking-ruby",
+	    "border-image-width", "border-left", "border-left-color", "border-left-style",
+	    "border-left-width", "border-radius", "border-right", "border-right-color",
+	    "border-right-style", "border-right-width", "border-spacing", "border-style",
+	    "border-top", "border-top-color", "border-top-left-radius",
+	    "border-top-right-radius", "border-top-style", "border-top-width",
+	    "border-width", "bottom", "box-decoration-break", "box-shadow", "box-sizing",
+	    "break-after", "break-before", "break-inside", "caption-side", "caret-color",
+	    "clear", "clip", "color", "color-profile", "column-count", "column-fill",
+	    "column-gap", "column-rule", "column-rule-color", "column-rule-style",
+	    "column-rule-width", "column-span", "column-width", "columns", "contain",
+	    "content", "counter-increment", "counter-reset", "crop", "cue", "cue-after",
+	    "cue-before", "cursor", "direction", "display", "dominant-baseline",
+	    "drop-initial-after-adjust", "drop-initial-after-align",
+	    "drop-initial-before-adjust", "drop-initial-before-align", "drop-initial-size",
+	    "drop-initial-value", "elevation", "empty-cells", "fit", "fit-position",
+	    "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow",
+	    "flex-shrink", "flex-wrap", "float", "float-offset", "flow-from", "flow-into",
+	    "font", "font-family", "font-feature-settings", "font-kerning",
+	    "font-language-override", "font-optical-sizing", "font-size",
+	    "font-size-adjust", "font-stretch", "font-style", "font-synthesis",
+	    "font-variant", "font-variant-alternates", "font-variant-caps",
+	    "font-variant-east-asian", "font-variant-ligatures", "font-variant-numeric",
+	    "font-variant-position", "font-variation-settings", "font-weight", "gap",
+	    "grid", "grid-area", "grid-auto-columns", "grid-auto-flow", "grid-auto-rows",
+	    "grid-column", "grid-column-end", "grid-column-gap", "grid-column-start",
+	    "grid-gap", "grid-row", "grid-row-end", "grid-row-gap", "grid-row-start",
+	    "grid-template", "grid-template-areas", "grid-template-columns",
+	    "grid-template-rows", "hanging-punctuation", "height", "hyphens", "icon",
+	    "image-orientation", "image-rendering", "image-resolution", "inline-box-align",
+	    "inset", "inset-block", "inset-block-end", "inset-block-start", "inset-inline",
+	    "inset-inline-end", "inset-inline-start", "isolation", "justify-content",
+	    "justify-items", "justify-self", "left", "letter-spacing", "line-break",
+	    "line-height", "line-height-step", "line-stacking", "line-stacking-ruby",
 	    "line-stacking-shift", "line-stacking-strategy", "list-style",
 	    "list-style-image", "list-style-position", "list-style-type", "margin",
-	    "margin-bottom", "margin-left", "margin-right", "margin-top",
-	    "marks", "marquee-direction", "marquee-loop",
-	    "marquee-play-count", "marquee-speed", "marquee-style", "max-height",
-	    "max-width", "min-height", "min-width", "mix-blend-mode", "move-to", "nav-down", "nav-index",
-	    "nav-left", "nav-right", "nav-up", "object-fit", "object-position",
-	    "opacity", "order", "orphans", "outline",
-	    "outline-color", "outline-offset", "outline-style", "outline-width",
-	    "overflow", "overflow-style", "overflow-wrap", "overflow-x", "overflow-y",
-	    "padding", "padding-bottom", "padding-left", "padding-right", "padding-top",
-	    "page", "page-break-after", "page-break-before", "page-break-inside",
-	    "page-policy", "pause", "pause-after", "pause-before", "perspective",
-	    "perspective-origin", "pitch", "pitch-range", "place-content", "place-items", "place-self", "play-during", "position",
-	    "presentation-level", "punctuation-trim", "quotes", "region-break-after",
-	    "region-break-before", "region-break-inside", "region-fragment",
-	    "rendering-intent", "resize", "rest", "rest-after", "rest-before", "richness",
-	    "right", "rotation", "rotation-point", "ruby-align", "ruby-overhang",
-	    "ruby-position", "ruby-span", "shape-image-threshold", "shape-inside", "shape-margin",
-	    "shape-outside", "size", "speak", "speak-as", "speak-header",
-	    "speak-numeral", "speak-punctuation", "speech-rate", "stress", "string-set",
-	    "tab-size", "table-layout", "target", "target-name", "target-new",
-	    "target-position", "text-align", "text-align-last", "text-decoration",
+	    "margin-bottom", "margin-left", "margin-right", "margin-top", "marks",
+	    "marquee-direction", "marquee-loop", "marquee-play-count", "marquee-speed",
+	    "marquee-style", "max-block-size", "max-height", "max-inline-size",
+	    "max-width", "min-block-size", "min-height", "min-inline-size", "min-width",
+	    "mix-blend-mode", "move-to", "nav-down", "nav-index", "nav-left", "nav-right",
+	    "nav-up", "object-fit", "object-position", "offset", "offset-anchor",
+	    "offset-distance", "offset-path", "offset-position", "offset-rotate",
+	    "opacity", "order", "orphans", "outline", "outline-color", "outline-offset",
+	    "outline-style", "outline-width", "overflow", "overflow-style",
+	    "overflow-wrap", "overflow-x", "overflow-y", "padding", "padding-bottom",
+	    "padding-left", "padding-right", "padding-top", "page", "page-break-after",
+	    "page-break-before", "page-break-inside", "page-policy", "pause",
+	    "pause-after", "pause-before", "perspective", "perspective-origin", "pitch",
+	    "pitch-range", "place-content", "place-items", "place-self", "play-during",
+	    "position", "presentation-level", "punctuation-trim", "quotes",
+	    "region-break-after", "region-break-before", "region-break-inside",
+	    "region-fragment", "rendering-intent", "resize", "rest", "rest-after",
+	    "rest-before", "richness", "right", "rotate", "rotation", "rotation-point",
+	    "row-gap", "ruby-align", "ruby-overhang", "ruby-position", "ruby-span",
+	    "scale", "scroll-behavior", "scroll-margin", "scroll-margin-block",
+	    "scroll-margin-block-end", "scroll-margin-block-start", "scroll-margin-bottom",
+	    "scroll-margin-inline", "scroll-margin-inline-end",
+	    "scroll-margin-inline-start", "scroll-margin-left", "scroll-margin-right",
+	    "scroll-margin-top", "scroll-padding", "scroll-padding-block",
+	    "scroll-padding-block-end", "scroll-padding-block-start",
+	    "scroll-padding-bottom", "scroll-padding-inline", "scroll-padding-inline-end",
+	    "scroll-padding-inline-start", "scroll-padding-left", "scroll-padding-right",
+	    "scroll-padding-top", "scroll-snap-align", "scroll-snap-type",
+	    "shape-image-threshold", "shape-inside", "shape-margin", "shape-outside",
+	    "size", "speak", "speak-as", "speak-header", "speak-numeral",
+	    "speak-punctuation", "speech-rate", "stress", "string-set", "tab-size",
+	    "table-layout", "target", "target-name", "target-new", "target-position",
+	    "text-align", "text-align-last", "text-combine-upright", "text-decoration",
 	    "text-decoration-color", "text-decoration-line", "text-decoration-skip",
-	    "text-decoration-style", "text-emphasis", "text-emphasis-color",
-	    "text-emphasis-position", "text-emphasis-style", "text-height",
-	    "text-indent", "text-justify", "text-outline", "text-overflow", "text-shadow",
-	    "text-size-adjust", "text-space-collapse", "text-transform", "text-underline-position",
-	    "text-wrap", "top", "transform", "transform-origin", "transform-style",
-	    "transition", "transition-delay", "transition-duration",
-	    "transition-property", "transition-timing-function", "unicode-bidi",
-	    "user-select", "vertical-align", "visibility", "voice-balance", "voice-duration",
-	    "voice-family", "voice-pitch", "voice-range", "voice-rate", "voice-stress",
-	    "voice-volume", "volume", "white-space", "widows", "width", "will-change", "word-break",
-	    "word-spacing", "word-wrap", "z-index",
+	    "text-decoration-skip-ink", "text-decoration-style", "text-emphasis",
+	    "text-emphasis-color", "text-emphasis-position", "text-emphasis-style",
+	    "text-height", "text-indent", "text-justify", "text-orientation",
+	    "text-outline", "text-overflow", "text-rendering", "text-shadow",
+	    "text-size-adjust", "text-space-collapse", "text-transform",
+	    "text-underline-position", "text-wrap", "top", "transform", "transform-origin",
+	    "transform-style", "transition", "transition-delay", "transition-duration",
+	    "transition-property", "transition-timing-function", "translate",
+	    "unicode-bidi", "user-select", "vertical-align", "visibility", "voice-balance",
+	    "voice-duration", "voice-family", "voice-pitch", "voice-range", "voice-rate",
+	    "voice-stress", "voice-volume", "volume", "white-space", "widows", "width",
+	    "will-change", "word-break", "word-spacing", "word-wrap", "writing-mode", "z-index",
 	    // SVG-specific
 	    "clip-path", "clip-rule", "mask", "enable-background", "filter", "flood-color",
 	    "flood-opacity", "lighting-color", "stop-color", "stop-opacity", "pointer-events",
@@ -10287,16 +10342,28 @@
 	  ], propertyKeywords = keySet(propertyKeywords_);
 
 	  var nonStandardPropertyKeywords_ = [
+	    "border-block", "border-block-color", "border-block-end",
+	    "border-block-end-color", "border-block-end-style", "border-block-end-width",
+	    "border-block-start", "border-block-start-color", "border-block-start-style",
+	    "border-block-start-width", "border-block-style", "border-block-width",
+	    "border-inline", "border-inline-color", "border-inline-end",
+	    "border-inline-end-color", "border-inline-end-style",
+	    "border-inline-end-width", "border-inline-start", "border-inline-start-color",
+	    "border-inline-start-style", "border-inline-start-width",
+	    "border-inline-style", "border-inline-width", "margin-block",
+	    "margin-block-end", "margin-block-start", "margin-inline", "margin-inline-end",
+	    "margin-inline-start", "padding-block", "padding-block-end",
+	    "padding-block-start", "padding-inline", "padding-inline-end",
+	    "padding-inline-start", "scroll-snap-stop", "scrollbar-3d-light-color",
 	    "scrollbar-arrow-color", "scrollbar-base-color", "scrollbar-dark-shadow-color",
 	    "scrollbar-face-color", "scrollbar-highlight-color", "scrollbar-shadow-color",
-	    "scrollbar-3d-light-color", "scrollbar-track-color", "shape-inside",
-	    "searchfield-cancel-button", "searchfield-decoration", "searchfield-results-button",
-	    "searchfield-results-decoration", "zoom"
+	    "scrollbar-track-color", "searchfield-cancel-button", "searchfield-decoration",
+	    "searchfield-results-button", "searchfield-results-decoration", "shape-inside", "zoom"
 	  ], nonStandardPropertyKeywords = keySet(nonStandardPropertyKeywords_);
 
 	  var fontProperties_ = [
-	    "font-family", "src", "unicode-range", "font-variant", "font-feature-settings",
-	    "font-stretch", "font-weight", "font-style"
+	    "font-display", "font-family", "src", "unicode-range", "font-variant",
+	     "font-feature-settings", "font-stretch", "font-weight", "font-style"
 	  ], fontProperties = keySet(fontProperties_);
 
 	  var counterDescriptors_ = [
@@ -10962,6 +11029,17 @@
 	    skipAttribute: function(state) {
 	      if (state.state == attrValueState)
 	        state.state = attrState;
+	    },
+
+	    xmlCurrentTag: function(state) {
+	      return state.tagName ? {name: state.tagName, close: state.type == "closeTag"} : null
+	    },
+
+	    xmlCurrentContext: function(state) {
+	      var context = [];
+	      for (var cx = state.context; cx; cx = cx.prev)
+	        if (cx.tagName) context.push(cx.tagName);
+	      return context.reverse()
 	    }
 	  };
 	});
@@ -11056,11 +11134,16 @@
 	    },
 
 	    pick: function(data, i) {
-	      var completion = data.list[i];
-	      if (completion.hint) completion.hint(this.cm, data, completion);
-	      else this.cm.replaceRange(getText(completion), completion.from || data.from,
-	                                completion.to || data.to, "complete");
-	      CodeMirror.signal(data, "pick", completion);
+	      var completion = data.list[i], self = this;
+	      this.cm.operation(function() {
+	        if (completion.hint)
+	          completion.hint(self.cm, data, completion);
+	        else
+	          self.cm.replaceRange(getText(completion), completion.from || data.from,
+	                               completion.to || data.to, "complete");
+	        CodeMirror.signal(data, "pick", completion);
+	        self.cm.scrollIntoView();
+	      });
 	      this.close();
 	    },
 
@@ -11070,9 +11153,14 @@
 	        this.debounce = 0;
 	      }
 
+	      var identStart = this.startPos;
+	      if(this.data) {
+	        identStart = this.data.from;
+	      }
+
 	      var pos = this.cm.getCursor(), line = this.cm.getLine(pos.line);
 	      if (pos.line != this.startPos.line || line.length - pos.ch != this.startLen - this.startPos.ch ||
-	          pos.ch < this.startPos.ch || this.cm.somethingSelected() ||
+	          pos.ch < identStart.ch || this.cm.somethingSelected() ||
 	          (!pos.ch || this.options.closeCharacters.test(line.charAt(pos.ch - 1)))) {
 	        this.close();
 	      } else {
@@ -11200,14 +11288,26 @@
 	      elt.hintId = i;
 	    }
 
+	    var container = completion.options.container || ownerDocument.body;
 	    var pos = cm.cursorCoords(completion.options.alignWithWord ? data.from : null);
 	    var left = pos.left, top = pos.bottom, below = true;
-	    hints.style.left = left + "px";
-	    hints.style.top = top + "px";
+	    var offsetLeft = 0, offsetTop = 0;
+	    if (container !== ownerDocument.body) {
+	      // We offset the cursor position because left and top are relative to the offsetParent's top left corner.
+	      var isContainerPositioned = ['absolute', 'relative', 'fixed'].indexOf(parentWindow.getComputedStyle(container).position) !== -1;
+	      var offsetParent = isContainerPositioned ? container : container.offsetParent;
+	      var offsetParentPosition = offsetParent.getBoundingClientRect();
+	      var bodyPosition = ownerDocument.body.getBoundingClientRect();
+	      offsetLeft = (offsetParentPosition.left - bodyPosition.left - offsetParent.scrollLeft);
+	      offsetTop = (offsetParentPosition.top - bodyPosition.top - offsetParent.scrollTop);
+	    }
+	    hints.style.left = (left - offsetLeft) + "px";
+	    hints.style.top = (top - offsetTop) + "px";
+
 	    // If we're at the edge of the screen, then we want the menu to appear on the left of the cursor.
 	    var winW = parentWindow.innerWidth || Math.max(ownerDocument.body.offsetWidth, ownerDocument.documentElement.offsetWidth);
 	    var winH = parentWindow.innerHeight || Math.max(ownerDocument.body.offsetHeight, ownerDocument.documentElement.offsetHeight);
-	    (completion.options.container || ownerDocument.body).appendChild(hints);
+	    container.appendChild(hints);
 	    var box = hints.getBoundingClientRect(), overlapY = box.bottom - winH;
 	    var scrolls = hints.scrollHeight > hints.clientHeight + 1;
 	    var startScroll = cm.getScrollInfo();
@@ -11215,15 +11315,15 @@
 	    if (overlapY > 0) {
 	      var height = box.bottom - box.top, curTop = pos.top - (pos.bottom - box.top);
 	      if (curTop - height > 0) { // Fits above cursor
-	        hints.style.top = (top = pos.top - height) + "px";
+	        hints.style.top = (top = pos.top - height - offsetTop) + "px";
 	        below = false;
 	      } else if (height > winH) {
 	        hints.style.height = (winH - 5) + "px";
-	        hints.style.top = (top = pos.bottom - box.top) + "px";
+	        hints.style.top = (top = pos.bottom - box.top - offsetTop) + "px";
 	        var cursor = cm.getCursor();
 	        if (data.from.ch != cursor.ch) {
 	          pos = cm.cursorCoords(cursor);
-	          hints.style.left = (left = pos.left) + "px";
+	          hints.style.left = (left = pos.left - offsetLeft) + "px";
 	          box = hints.getBoundingClientRect();
 	        }
 	      }
@@ -11234,7 +11334,7 @@
 	        hints.style.width = (winW - 5) + "px";
 	        overlapX -= (box.right - box.left) - winW;
 	      }
-	      hints.style.left = (left = pos.left - overlapX) + "px";
+	      hints.style.left = (left = pos.left - overlapX - offsetLeft) + "px";
 	    }
 	    if (scrolls) for (var node = hints.firstChild; node; node = node.nextSibling)
 	      node.style.paddingRight = cm.display.nativeBarWidth + "px";
@@ -11281,6 +11381,7 @@
 	    CodeMirror.on(hints, "mousedown", function() {
 	      setTimeout(function(){cm.focus();}, 20);
 	    });
+	    this.scrollToActive();
 
 	    CodeMirror.signal(data, "select", completions[this.selectedHint], hints.childNodes[this.selectedHint]);
 	    return true;
@@ -11322,11 +11423,19 @@
 	      if (node) node.className = node.className.replace(" " + ACTIVE_HINT_ELEMENT_CLASS, "");
 	      node = this.hints.childNodes[this.selectedHint = i];
 	      node.className += " " + ACTIVE_HINT_ELEMENT_CLASS;
-	      if (node.offsetTop < this.hints.scrollTop)
-	        this.hints.scrollTop = node.offsetTop - 3;
-	      else if (node.offsetTop + node.offsetHeight > this.hints.scrollTop + this.hints.clientHeight)
-	        this.hints.scrollTop = node.offsetTop + node.offsetHeight - this.hints.clientHeight + 3;
+	      this.scrollToActive();
 	      CodeMirror.signal(this.data, "select", this.data.list[this.selectedHint], node);
+	    },
+
+	    scrollToActive: function() {
+	      var margin = this.completion.options.scrollMargin || 0;
+	      var node1 = this.hints.childNodes[Math.max(0, this.selectedHint - margin)];
+	      var node2 = this.hints.childNodes[Math.min(this.data.list.length - 1, this.selectedHint + margin)];
+	      var firstNode = this.hints.firstChild;
+	      if (node1.offsetTop < this.hints.scrollTop)
+	        this.hints.scrollTop = node1.offsetTop - firstNode.offsetTop;
+	      else if (node2.offsetTop + node2.offsetHeight > this.hints.scrollTop + this.hints.clientHeight)
+	        this.hints.scrollTop = node2.offsetTop + node2.offsetHeight - this.hints.clientHeight + firstNode.offsetTop;
 	    },
 
 	    screenAmount: function() {
@@ -11427,9 +11536,15 @@
 	  mod(codemirror, css);
 	})(function(CodeMirror) {
 
-	  var pseudoClasses = {link: 1, visited: 1, active: 1, hover: 1, focus: 1,
-	                       "first-letter": 1, "first-line": 1, "first-child": 1,
-	                       before: 1, after: 1, lang: 1};
+	  var pseudoClasses = {"active":1, "after":1, "before":1, "checked":1, "default":1,
+	    "disabled":1, "empty":1, "enabled":1, "first-child":1, "first-letter":1,
+	    "first-line":1, "first-of-type":1, "focus":1, "hover":1, "in-range":1,
+	    "indeterminate":1, "invalid":1, "lang":1, "last-child":1, "last-of-type":1,
+	    "link":1, "not":1, "nth-child":1, "nth-last-child":1, "nth-last-of-type":1,
+	    "nth-of-type":1, "only-of-type":1, "only-child":1, "optional":1, "out-of-range":1,
+	    "placeholder":1, "read-only":1, "read-write":1, "required":1, "root":1,
+	    "selection":1, "target":1, "valid":1, "visited":1
+	  };
 
 	  CodeMirror.registerHelper("hint", "css", function(cm) {
 	    var cur = cm.getCursor(), token = cm.getTokenAt(cur);
@@ -11478,7 +11593,7 @@
 
 	class Lumo extends HTMLElement {
 	  static get version() {
-	    return '1.5.0';
+	    return '1.6.0';
 	  }
 	}
 
@@ -11890,8 +12005,8 @@
 	 * When using Closure Compiler, JSCompiler_renameProperty(property, object) is replaced by the munged name for object[property]
 	 * We cannot alias this function, so we have to use a small shim that has the same behavior when not compiling.
 	 *
-	 * @param {string} prop Property name
-	 * @param {?Object} obj Reference object
+	 * @param {?} prop Property name
+	 * @param {*} obj Reference object
 	 * @return {string} Potentially renamed property name
 	 */
 	window.JSCompiler_renameProperty = function(prop, obj) {
@@ -12002,10 +12117,24 @@
 	Code distributed by Google as part of the polymer project is also
 	subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 	*/
-	const useShadow = !(window.ShadyDOM);
+	const useShadow = !(window.ShadyDOM) || !(window.ShadyDOM.inUse);
 	const useNativeCSSProperties = Boolean(!window.ShadyCSS || window.ShadyCSS.nativeCss);
-	const useNativeCustomElements = !(window.customElements.polyfillWrapFlushCallback);
-
+	const supportsAdoptingStyleSheets = useShadow &&
+	    ('adoptedStyleSheets' in Document.prototype) &&
+	    ('replaceSync' in CSSStyleSheet.prototype) &&
+	    // Since spec may change, feature detect exact API we need
+	    (() => {
+	      try {
+	        const sheet = new CSSStyleSheet();
+	        sheet.replaceSync('');
+	        const host = document.createElement('div');
+	        host.attachShadow({mode: 'open'});
+	        host.shadowRoot.adoptedStyleSheets = [sheet];
+	        return (host.shadowRoot.adoptedStyleSheets[0] === sheet);
+	      } catch(e) {
+	        return false;
+	      }
+	    })();
 
 	/**
 	 * Globally settable property that is automatically assigned to
@@ -12015,7 +12144,8 @@
 	 * `rootPath` to provide a stable application mount path when
 	 * using client side routing.
 	 */
-	let rootPath = pathFromUrl(document.baseURI || window.location.href);
+	let rootPath = window.Polymer && window.Polymer.rootPath ||
+	  pathFromUrl(document.baseURI || window.location.href);
 
 	/**
 	 * A global callback used to sanitize any value before inserting it into the DOM.
@@ -12030,9 +12160,10 @@
 	 * `type` indicates where the value is being inserted: one of property, attribute, or text.
 	 * `node` is the node where the value is being inserted.
 	 *
-	 * @type {(function(*,string,string,Node):*)|undefined}
+	 * @type {(function(*,string,string,?Node):*)|undefined}
 	 */
-	let sanitizeDOMValue = window.Polymer && window.Polymer.sanitizeDOMValue || undefined;
+	let sanitizeDOMValue =
+	  window.Polymer && window.Polymer.sanitizeDOMValue || undefined;
 
 	/**
 	 * Globally settable property to make Polymer Gestures use passive TouchEvent listeners when recognizing gestures.
@@ -12040,7 +12171,8 @@
 	 * scrolling performance.
 	 * Defaults to `false` for backwards compatibility.
 	 */
-	let passiveTouchGestures = false;
+	let passiveTouchGestures =
+	  window.Polymer && window.Polymer.setPassiveTouchGestures || false;
 
 	/**
 	 * Setting to ensure Polymer template evaluation only occurs based on tempates
@@ -12048,7 +12180,8 @@
 	 * disallowed, `<dom-bind>` is disabled, and `<dom-if>`/`<dom-repeat>`
 	 * templates will only evaluate in the context of a trusted element template.
 	 */
-	let strictTemplatePolicy = false;
+	let strictTemplatePolicy =
+	  window.Polymer && window.Polymer.strictTemplatePolicy || false;
 
 	/**
 	 * Setting to enable dom-module lookup from Polymer.Element.  By default,
@@ -12056,7 +12189,8 @@
 	 * getter and the `html` tag function.  To enable legacy loading of templates
 	 * via dom-module, set this flag to true.
 	 */
-	let allowTemplateFromDomModule = false;
+	let allowTemplateFromDomModule =
+	  window.Polymer && window.Polymer.allowTemplateFromDomModule || false;
 
 	/**
 	 * Setting to skip processing style includes and re-writing urls in css styles.
@@ -12065,20 +12199,80 @@
 	 * If no includes or relative urls are used in styles, these steps can be
 	 * skipped as an optimization.
 	 */
-	let legacyOptimizations = false;
+	let legacyOptimizations =
+	  window.Polymer && window.Polymer.legacyOptimizations || false;
+
+	/**
+	 * Setting to add warnings useful when migrating from Polymer 1.x to 2.x.
+	 */
+	let legacyWarnings =
+	  window.Polymer && window.Polymer.legacyWarnings || false;
 
 	/**
 	 * Setting to perform initial rendering synchronously when running under ShadyDOM.
 	 * This matches the behavior of Polymer 1.
 	 */
-	let syncInitialRender = false;
+	let syncInitialRender =
+	  window.Polymer && window.Polymer.syncInitialRender || false;
 
 	/**
-	 * Setting to cancel synthetic click events fired by older mobile browsers. Modern browsers
-	 * no longer fire synthetic click events, and the cancellation behavior can interfere
-	 * when programmatically clicking on elements.
+	 * Setting to retain the legacy Polymer 1 behavior for multi-property
+	 * observers around undefined values. Observers and computed property methods
+	 * are not called until no argument is undefined.
 	 */
-	let cancelSyntheticClickEvents = true;
+	let legacyUndefined =
+	  window.Polymer && window.Polymer.legacyUndefined || false;
+
+	/**
+	 * Setting to ensure computed properties are computed in order to ensure
+	 * re-computation never occurs in a given turn.
+	 */
+	let orderedComputed =
+	  window.Polymer && window.Polymer.orderedComputed || false;
+
+	/**
+	 * Setting to remove nested templates inside `dom-if` and `dom-repeat` as
+	 * part of element template parsing.  This is a performance optimization that
+	 * eliminates most of the tax of needing two elements due to the loss of
+	 * type-extended templates as a result of the V1 specification changes.
+	 */
+	let removeNestedTemplates =
+	  window.Polymer && window.Polymer.removeNestedTemplates || false;
+
+	/**
+	 * Setting to place `dom-if` elements in a performance-optimized mode that takes
+	 * advantage of lighter-weight host runtime template stamping to eliminate the
+	 * need for an intermediate Templatizer `TemplateInstance` to mange the nodes
+	 * stamped by `dom-if`.  Under this setting, any Templatizer-provided API's
+	 * such as `modelForElement` will not be available for nodes stamped by
+	 * `dom-if`.
+	 */
+	let fastDomIf = window.Polymer && window.Polymer.fastDomIf || false;
+
+	/**
+	 * Setting to disable `dom-change` and `rendered-item-count` events from
+	 * `dom-if` and `dom-repeat`. Users can opt back into `dom-change` events by
+	 * setting the `notify-dom-change` attribute (`notifyDomChange: true` property)
+	 * to `dom-if`/`don-repeat` instances.
+	 */
+	let suppressTemplateNotifications =
+	  window.Polymer && window.Polymer.suppressTemplateNotifications || false;
+
+	/**
+	 * Setting to disable use of dynamic attributes. This is an optimization
+	 * to avoid setting `observedAttributes`. Instead attributes are read
+	 * once at create time and set/removeAttribute are patched.
+	 */
+	let legacyNoObservedAttributes =
+	  window.Polymer && window.Polymer.legacyNoObservedAttributes || false;
+
+	/**
+	 * Setting to enable use of `adoptedStyleSheets` for sharing style sheets
+	 * between component instances' shadow roots, if the app uses built Shady CSS
+	 * styles.
+	 */
+	let useAdoptedStyleSheetsWithBuiltCSS =
+	  window.Polymer && window.Polymer.useAdoptedStyleSheetsWithBuiltCSS || false;
 
 	/**
 	@license
@@ -13004,6 +13198,14 @@
       strong {
         font-weight: 600;
       }
+
+      /* RTL specific styles */
+
+      blockquote[dir="rtl"] {
+        border-left: none;
+        border-right: 2px solid var(--lumo-contrast-30pct);
+      }
+
     </style>
   </template>
 </dom-module>`;
@@ -13070,7 +13272,11 @@
 	    var xhr = new XMLHttpRequest(); // use sync to avoid popup blocker
 
 	    xhr.open('HEAD', url, false);
-	    xhr.send();
+
+	    try {
+	      xhr.send();
+	    } catch (e) {}
+
 	    return xhr.status >= 200 && xhr.status <= 299;
 	  } // `a.click()` doesn't work for all browsers (#465)
 
@@ -14001,6 +14207,34 @@ public class Application extends SpringBootServletInitializer {
       :host([theme~="reverse"][theme~="filled"]) [part="summary"] {
         padding-left: var(--lumo-space-m);
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="toggle"] {
+        margin-left: var(--lumo-space-xs);
+        margin-right: calc(var(--lumo-space-xs) * -1);
+      }
+
+      :host([dir="rtl"]) [part="toggle"]::before {
+        content: var(--lumo-icons-angle-left);
+      }
+
+      :host([opened][dir="rtl"]) [part="toggle"] {
+        transform: rotate(-90deg);
+      }
+
+      :host([theme~="small"][dir="rtl"]) [part="toggle"] {
+        margin-left: calc(var(--lumo-space-xs) / 2);
+      }
+
+      :host([theme~="reverse"][dir="rtl"]) [part="toggle"] {
+        margin-left: 0;
+      }
+
+      :host([theme~="reverse"][theme~="filled"][dir="rtl"]) [part="summary"] {
+        padding-right: var(--lumo-space-m);
+      }
+
     </style>
   </template>
 </dom-module>`;
@@ -14074,13 +14308,13 @@ public class Application extends SpringBootServletInitializer {
 	    if (!extended) {
 	      extended = /** @type {!Function} */(mixin)(base);
 	      map.set(base, extended);
+	      // copy inherited mixin set from the extended class, or the base class
+	      // NOTE: we avoid use of Set here because some browser (IE11)
+	      // cannot extend a base Set via the constructor.
+	      let mixinSet = Object.create(/** @type {!MixinFunction} */(extended).__mixinSet || baseSet || null);
+	      mixinSet[mixinDedupeId] = true;
+	      /** @type {!MixinFunction} */(extended).__mixinSet = mixinSet;
 	    }
-	    // copy inherited mixin set from the extended class, or the base class
-	    // NOTE: we avoid use of Set here because some browser (IE11)
-	    // cannot extend a base Set via the constructor.
-	    let mixinSet = Object.create(/** @type {!MixinFunction} */(extended).__mixinSet || baseSet || null);
-	    mixinSet[mixinDedupeId] = true;
-	    /** @type {!MixinFunction} */(extended).__mixinSet = mixinSet;
 	    return extended;
 	  }
 
@@ -14411,10 +14645,12 @@ public class Application extends SpringBootServletInitializer {
 	let microtaskLastHandle = 0;
 	let microtaskCallbacks = [];
 	let microtaskNodeContent = 0;
+	let microtaskScheduled = false;
 	let microtaskNode = document.createTextNode('');
 	new window.MutationObserver(microtaskFlush).observe(microtaskNode, {characterData: true});
 
 	function microtaskFlush() {
+	  microtaskScheduled = false;
 	  const len = microtaskCallbacks.length;
 	  for (let i = 0; i < len; i++) {
 	    let cb = microtaskCallbacks[i];
@@ -14562,7 +14798,10 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {number} Handle used for canceling task
 	   */
 	  run(callback) {
-	    microtaskNode.textContent = microtaskNodeContent++;
+	    if (!microtaskScheduled) {
+	      microtaskScheduled = true;
+	      microtaskNode.textContent = microtaskNodeContent++;
+	    }
 	    microtaskCallbacks.push(callback);
 	    return microtaskCurrHandle++;
 	  },
@@ -14696,7 +14935,7 @@ public class Application extends SpringBootServletInitializer {
 	     */
 	    _createPropertyAccessor(property, readOnly) {
 	      this._addPropertyToAttributeMap(property);
-	      if (!this.hasOwnProperty('__dataHasAccessor')) {
+	      if (!this.hasOwnProperty(JSCompiler_renameProperty('__dataHasAccessor', this))) {
 	        this.__dataHasAccessor = Object.assign({}, this.__dataHasAccessor);
 	      }
 	      if (!this.__dataHasAccessor[property]) {
@@ -14714,13 +14953,21 @@ public class Application extends SpringBootServletInitializer {
 	     * @override
 	     */
 	    _addPropertyToAttributeMap(property) {
-	      if (!this.hasOwnProperty('__dataAttributes')) {
+	      if (!this.hasOwnProperty(JSCompiler_renameProperty('__dataAttributes', this))) {
 	        this.__dataAttributes = Object.assign({}, this.__dataAttributes);
 	      }
-	      if (!this.__dataAttributes[property]) {
-	        const attr = this.constructor.attributeNameForProperty(property);
+	      // This check is technically not correct; it's an optimization that
+	      // assumes that if a _property_ name is already in the map (note this is
+	      // an attr->property map), the property mapped directly to the attribute
+	      // and it has already been mapped.  This would fail if
+	      // `attributeNameForProperty` were overridden such that this was not the
+	      // case.
+	      let attr = this.__dataAttributes[property];
+	      if (!attr) {
+	        attr = this.constructor.attributeNameForProperty(property);
 	        this.__dataAttributes[attr] = property;
 	      }
+	      return attr;
 	    }
 
 	    /**
@@ -14735,11 +14982,15 @@ public class Application extends SpringBootServletInitializer {
 	        /* eslint-disable valid-jsdoc */
 	        /** @this {PropertiesChanged} */
 	        get() {
-	          return this._getProperty(property);
+	          // Inline for perf instead of using `_getProperty`
+	          return this.__data[property];
 	        },
 	        /** @this {PropertiesChanged} */
 	        set: readOnly ? function () {} : function (value) {
-	          this._setProperty(property, value);
+	          // Inline for perf instead of using `_setProperty`
+	          if (this._setPendingProperty(property, value, true)) {
+	            this._invalidateProperties();
+	          }
 	        }
 	        /* eslint-enable */
 	      });
@@ -14755,6 +15006,9 @@ public class Application extends SpringBootServletInitializer {
 	      this.__dataPending = null;
 	      this.__dataOld = null;
 	      this.__dataInstanceProps = null;
+	      /** @type {number} */
+	      // NOTE: used to track re-entrant calls to `_flushProperties`
+	      this.__dataCounter = 0;
 	      this.__serializing = false;
 	      this._initializeProperties();
 	    }
@@ -14881,6 +15135,14 @@ public class Application extends SpringBootServletInitializer {
 	    /* eslint-enable */
 
 	    /**
+	     * @param {string} property Name of the property
+	     * @return {boolean} Returns true if the property is pending.
+	     */
+	    _isPropertyPending(property) {
+	      return !!(this.__dataPending && this.__dataPending.hasOwnProperty(property));
+	    }
+
+	    /**
 	     * Marks the properties as invalid, and enqueues an async
 	     * `_propertiesChanged` callback.
 	     *
@@ -14934,6 +15196,7 @@ public class Application extends SpringBootServletInitializer {
 	     * @override
 	     */
 	    _flushProperties() {
+	      this.__dataCounter++;
 	      const props = this.__data;
 	      const changedProps = this.__dataPending;
 	      const old = this.__dataOld;
@@ -14942,6 +15205,7 @@ public class Application extends SpringBootServletInitializer {
 	        this.__dataOld = null;
 	        this._propertiesChanged(props, changedProps, old);
 	      }
+	      this.__dataCounter--;
 	    }
 
 	    /**
@@ -15488,6 +15752,53 @@ public class Application extends SpringBootServletInitializer {
 	  'dom-if': true,
 	  'dom-repeat': true
 	};
+
+	let placeholderBugDetect = false;
+	let placeholderBug = false;
+
+	function hasPlaceholderBug() {
+	  if (!placeholderBugDetect) {
+	    placeholderBugDetect = true;
+	    const t = document.createElement('textarea');
+	    t.placeholder = 'a';
+	    placeholderBug = t.placeholder === t.textContent;
+	  }
+	  return placeholderBug;
+	}
+
+	/**
+	 * Some browsers have a bug with textarea, where placeholder text is copied as
+	 * a textnode child of the textarea.
+	 *
+	 * If the placeholder is a binding, this can break template stamping in two
+	 * ways.
+	 *
+	 * One issue is that when the `placeholder` attribute is removed when the
+	 * binding is processed, the textnode child of the textarea is deleted, and the
+	 * template info tries to bind into that node.
+	 *
+	 * With `legacyOptimizations` in use, when the template is stamped and the
+	 * `textarea.textContent` binding is processed, no corresponding node is found
+	 * because it was removed during parsing. An exception is generated when this
+	 * binding is updated.
+	 *
+	 * With `legacyOptimizations` not in use, the template is cloned before
+	 * processing and this changes the above behavior. The cloned template also has
+	 * a value property set to the placeholder and textContent. This prevents the
+	 * removal of the textContent when the placeholder attribute is removed.
+	 * Therefore the exception does not occur. However, there is an extra
+	 * unnecessary binding.
+	 *
+	 * @param {!Node} node Check node for placeholder bug
+	 * @return {void}
+	 */
+	function fixPlaceholder(node) {
+	  if (hasPlaceholderBug() && node.localName === 'textarea' && node.placeholder
+	        && node.placeholder === node.textContent) {
+	    node.textContent = null;
+	  }
+	}
+
 	function wrapTemplateExtension(node) {
 	  let is = node.getAttribute('is');
 	  if (is && templateExtensions[is]) {
@@ -15538,9 +15849,11 @@ public class Application extends SpringBootServletInitializer {
 	}
 
 	// push configuration references at configure time
-	function applyTemplateContent(inst, node, nodeInfo) {
+	function applyTemplateInfo(inst, node, nodeInfo, parentTemplateInfo) {
 	  if (nodeInfo.templateInfo) {
+	    // Give the node an instance of this templateInfo and set its parent
 	    node._templateInfo = nodeInfo.templateInfo;
+	    node._parentTemplateInfo = parentTemplateInfo;
 	  }
 	}
 
@@ -15570,9 +15883,6 @@ public class Application extends SpringBootServletInitializer {
 	 * @mixinFunction
 	 * @polymer
 	 * @summary Element class mixin that provides basic template parsing and stamping
-	 * @template T
-	 * @param {function(new:T)} superClass Class to apply mixin to.
-	 * @return {function(new:T)} superClass with mixin applied.
 	 */
 	const TemplateStamp = dedupingMixin(
 	    /**
@@ -15671,6 +15981,7 @@ public class Application extends SpringBootServletInitializer {
 	        // TODO(rictic): fix typing
 	        let /** ? */ templateInfo = template._templateInfo = {};
 	        templateInfo.nodeInfoList = [];
+	        templateInfo.nestedTemplate = Boolean(outerTemplateInfo);
 	        templateInfo.stripWhiteSpace =
 	          (outerTemplateInfo && outerTemplateInfo.stripWhiteSpace) ||
 	          template.hasAttribute('strip-whitespace');
@@ -15717,13 +16028,18 @@ public class Application extends SpringBootServletInitializer {
 	        // For ShadyDom optimization, indicating there is an insertion point
 	        templateInfo.hasInsertionPoint = true;
 	      }
+	      fixPlaceholder(element);
 	      if (element.firstChild) {
 	        this._parseTemplateChildNodes(element, templateInfo, nodeInfo);
 	      }
 	      if (element.hasAttributes && element.hasAttributes()) {
 	        noted = this._parseTemplateNodeAttributes(element, templateInfo, nodeInfo) || noted;
 	      }
-	      return noted;
+	      // Checking `nodeInfo.noted` allows a child node of this node (who gets
+	      // access to `parentInfo`) to cause the parent to be noted, which
+	      // otherwise has no return path via `_parseTemplateChildNodes` (used by
+	      // some optimizations)
+	      return noted || nodeInfo.noted;
 	    }
 
 	    /**
@@ -15902,16 +16218,22 @@ public class Application extends SpringBootServletInitializer {
 	     * is removed and stored in notes as well.
 	     *
 	     * @param {!HTMLTemplateElement} template Template to stamp
+	     * @param {TemplateInfo=} templateInfo Optional template info associated
+	     *   with the template to be stamped; if omitted the template will be
+	     *   automatically parsed.
 	     * @return {!StampedTemplate} Cloned template content
 	     * @override
 	     */
-	    _stampTemplate(template) {
+	    _stampTemplate(template, templateInfo) {
 	      // Polyfill support: bootstrap the template if it has not already been
 	      if (template && !template.content &&
 	          window.HTMLTemplateElement && HTMLTemplateElement.decorate) {
 	        HTMLTemplateElement.decorate(template);
 	      }
-	      let templateInfo = this.constructor._parseTemplate(template);
+	      // Accepting the `templateInfo` via an argument allows for creating
+	      // instances of the `templateInfo` by the caller, useful for adding
+	      // instance-time information to the prototypical data
+	      templateInfo = templateInfo || this.constructor._parseTemplate(template);
 	      let nodeInfo = templateInfo.nodeInfoList;
 	      let content = templateInfo.content || template.content;
 	      let dom = /** @type {DocumentFragment} */ (document.importNode(content, true));
@@ -15922,7 +16244,7 @@ public class Application extends SpringBootServletInitializer {
 	      for (let i=0, l=nodeInfo.length, info; (i<l) && (info=nodeInfo[i]); i++) {
 	        let node = nodes[i] = findTemplateNode(dom, info);
 	        applyIdToMap(this, dom.$, node, info);
-	        applyTemplateContent(this, node, info);
+	        applyTemplateInfo(this, node, info, templateInfo);
 	        applyEventListener(this, node, info);
 	      }
 	      dom = /** @type {!StampedTemplate} */(dom); // eslint-disable-line no-self-assign
@@ -15998,6 +16320,8 @@ public class Application extends SpringBootServletInitializer {
 	// from multiple properties in the same turn
 	let dedupeId$1 = 0;
 
+	const NOOP = [];
+
 	/**
 	 * Property effect types; effects are stored on the prototype using these keys
 	 * @enum {string}
@@ -16010,6 +16334,8 @@ public class Application extends SpringBootServletInitializer {
 	  OBSERVE: '__observeEffects',
 	  READ_ONLY: '__readOnly'
 	};
+
+	const COMPUTE_INFO = '__computeInfo';
 
 	/** @const {!RegExp} */
 	const capitalAttributeRegex = /[A-Z]/;
@@ -16033,20 +16359,25 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * @param {Object} model Prototype or instance
 	 * @param {string} type Property effect type
+	 * @param {boolean=} cloneArrays Clone any arrays assigned to the map when
+	 *   extending a superclass map onto this subclass
 	 * @return {Object} The own-property map of effects for the given type
 	 * @private
 	 */
-	function ensureOwnEffectMap(model, type) {
+	function ensureOwnEffectMap(model, type, cloneArrays) {
 	  let effects = model[type];
 	  if (!effects) {
 	    effects = model[type] = {};
 	  } else if (!model.hasOwnProperty(type)) {
 	    effects = model[type] = Object.create(model[type]);
-	    for (let p in effects) {
-	      let protoFx = effects[p];
-	      let instFx = effects[p] = Array(protoFx.length);
-	      for (let i=0; i<protoFx.length; i++) {
-	        instFx[i] = protoFx[i];
+	    if (cloneArrays) {
+	      for (let p in effects) {
+	        let protoFx = effects[p];
+	        // Perf optimization over Array.slice
+	        let instFx = effects[p] = Array(protoFx.length);
+	        for (let i=0; i<protoFx.length; i++) {
+	          instFx[i] = protoFx[i];
+	        }
 	      }
 	    }
 	  }
@@ -16071,12 +16402,22 @@ public class Application extends SpringBootServletInitializer {
 	function runEffects(inst, effects, props, oldProps, hasPaths, extraArgs) {
 	  if (effects) {
 	    let ran = false;
-	    let id = dedupeId$1++;
+	    const id = dedupeId$1++;
 	    for (let prop in props) {
-	      if (runEffectsForProperty(
-	              inst, /** @type {!Object} */ (effects), id, prop, props, oldProps,
-	              hasPaths, extraArgs)) {
-	        ran = true;
+	      // Inline `runEffectsForProperty` for perf.
+	      let rootProperty = hasPaths ? root(prop) : prop;
+	      let fxs = effects[rootProperty];
+	      if (fxs) {
+	        for (let i=0, l=fxs.length, fx; (i<l) && (fx=fxs[i]); i++) {
+	          if ((!fx.info || fx.info.lastRun !== id) &&
+	              (!hasPaths || pathMatchesTrigger(prop, fx.trigger))) {
+	            if (fx.info) {
+	              fx.info.lastRun = id;
+	            }
+	            fx.fn(inst, prop, props, oldProps, fx.info, hasPaths, extraArgs);
+	            ran = true;
+	          }
+	        }
 	      }
 	    }
 	    return ran;
@@ -16256,6 +16597,11 @@ public class Application extends SpringBootServletInitializer {
 	  if (path) {
 	    detail.path = path;
 	  }
+	  // As a performance optimization, we could elide the wrap here since notifying
+	  // events are non-bubbling and shouldn't need retargeting. However, a very
+	  // small number of internal tests failed in obscure ways, which may indicate
+	  // user code relied on timing differences resulting from ShadyDOM flushing
+	  // as a result of the wrapped `dispatchEvent`.
 	  wrap(/** @type {!HTMLElement} */(inst)).dispatchEvent(new CustomEvent(eventName, { detail }));
 	}
 
@@ -16362,14 +16708,189 @@ public class Application extends SpringBootServletInitializer {
 	function runComputedEffects(inst, changedProps, oldProps, hasPaths) {
 	  let computeEffects = inst[TYPES.COMPUTE];
 	  if (computeEffects) {
-	    let inputProps = changedProps;
-	    while (runEffects(inst, computeEffects, inputProps, oldProps, hasPaths)) {
+	    if (orderedComputed) {
+	      // Runs computed effects in efficient order by keeping a topologically-
+	      // sorted queue of compute effects to run, and inserting subsequently
+	      // invalidated effects as they are run
+	      dedupeId$1++;
+	      const order = getComputedOrder(inst);
+	      const queue = [];
+	      for (let p in changedProps) {
+	        enqueueEffectsFor(p, computeEffects, queue, order, hasPaths);
+	      }
+	      let info;
+	      while ((info = queue.shift())) {
+	        if (runComputedEffect(inst, '', changedProps, oldProps, info)) {
+	          enqueueEffectsFor(info.methodInfo, computeEffects, queue, order, hasPaths);
+	        }
+	      }
 	      Object.assign(/** @type {!Object} */ (oldProps), inst.__dataOld);
 	      Object.assign(/** @type {!Object} */ (changedProps), inst.__dataPending);
-	      inputProps = inst.__dataPending;
 	      inst.__dataPending = null;
+	    } else {
+	      // Original Polymer 2.x computed effects order, which continues running
+	      // effects until no further computed properties have been invalidated
+	      let inputProps = changedProps;
+	      while (runEffects(inst, computeEffects, inputProps, oldProps, hasPaths)) {
+	        Object.assign(/** @type {!Object} */ (oldProps), inst.__dataOld);
+	        Object.assign(/** @type {!Object} */ (changedProps), inst.__dataPending);
+	        inputProps = inst.__dataPending;
+	        inst.__dataPending = null;
+	      }
 	    }
 	  }
+	}
+
+	/**
+	 * Inserts a computed effect into a queue, given the specified order. Performs
+	 * the insert using a binary search.
+	 *
+	 * Used by `orderedComputed: true` computed property algorithm.
+	 *
+	 * @param {Object} info Property effects metadata
+	 * @param {Array<Object>} queue Ordered queue of effects
+	 * @param {Map<string,number>} order Map of computed property name->topological
+	 *   sort order
+	 */
+	const insertEffect = (info, queue, order) => {
+	  let start = 0;
+	  let end = queue.length - 1;
+	  let idx = -1;
+	  while (start <= end) {
+	    const mid = (start + end) >> 1;
+	    // Note `methodInfo` is where the computed property name is stored in
+	    // the effect metadata
+	    const cmp = order.get(queue[mid].methodInfo) - order.get(info.methodInfo);
+	    if (cmp < 0) {
+	      start = mid + 1;
+	    } else if (cmp > 0) {
+	      end = mid - 1;
+	    } else {
+	      idx = mid;
+	      break;
+	    }
+	  }
+	  if (idx < 0) {
+	    idx = end + 1;
+	  }
+	  queue.splice(idx, 0, info);
+	};
+
+	/**
+	 * Inserts all downstream computed effects invalidated by the specified property
+	 * into the topologically-sorted queue of effects to be run.
+	 *
+	 * Used by `orderedComputed: true` computed property algorithm.
+	 *
+	 * @param {string} prop Property name
+	 * @param {Object} computeEffects Computed effects for this element
+	 * @param {Array<Object>} queue Topologically-sorted queue of computed effects
+	 *   to be run
+	 * @param {Map<string,number>} order Map of computed property name->topological
+	 *   sort order
+	 * @param {boolean} hasPaths True with `changedProps` contains one or more paths
+	 */
+	const enqueueEffectsFor = (prop, computeEffects, queue, order, hasPaths) => {
+	  const rootProperty = hasPaths ? root(prop) : prop;
+	  const fxs = computeEffects[rootProperty];
+	  if (fxs) {
+	    for (let i=0; i<fxs.length; i++) {
+	      const fx = fxs[i];
+	      if ((fx.info.lastRun !== dedupeId$1) &&
+	          (!hasPaths || pathMatchesTrigger(prop, fx.trigger))) {
+	        fx.info.lastRun = dedupeId$1;
+	        insertEffect(fx.info, queue, order);
+	      }
+	    }
+	  }
+	};
+
+	/**
+	 * Generates and retrieves a memoized map of computed property name to its
+	 * topologically-sorted order.
+	 *
+	 * The map is generated by first assigning a "dependency count" to each property
+	 * (defined as number properties it depends on, including its method for
+	 * "dynamic functions"). Any properties that have no dependencies are added to
+	 * the `ready` queue, which are properties whose order can be added to the final
+	 * order map. Properties are popped off the `ready` queue one by one and a.) added as
+	 * the next property in the order map, and b.) each property that it is a
+	 * dependency for has its dep count decremented (and if that property's dep
+	 * count goes to zero, it is added to the `ready` queue), until all properties
+	 * have been visited and ordered.
+	 *
+	 * Used by `orderedComputed: true` computed property algorithm.
+	 *
+	 * @param {!Polymer_PropertyEffects} inst The instance to retrieve the computed
+	 *   effect order for.
+	 * @return {Map<string,number>} Map of computed property name->topological sort
+	 *   order
+	 */
+	function getComputedOrder(inst) {
+	  let ordered = inst.constructor.__orderedComputedDeps;
+	  if (!ordered) {
+	    ordered = new Map();
+	    const effects = inst[TYPES.COMPUTE];
+	    let {counts, ready, total} = dependencyCounts(inst);
+	    let curr;
+	    while ((curr = ready.shift())) {
+	      ordered.set(curr, ordered.size);
+	      const computedByCurr = effects[curr];
+	      if (computedByCurr) {
+	        computedByCurr.forEach(fx => {
+	          // Note `methodInfo` is where the computed property name is stored
+	          const computedProp = fx.info.methodInfo;
+	          --total;
+	          if (--counts[computedProp] === 0) {
+	            ready.push(computedProp);
+	          }
+	        });
+	      }
+	    }
+	    if (total !== 0) {
+	      const el = /** @type {HTMLElement} */ (inst);
+	      console.warn(`Computed graph for ${el.localName} incomplete; circular?`);
+	    }
+	    inst.constructor.__orderedComputedDeps = ordered;
+	  }
+	  return ordered;
+	}
+
+	/**
+	 * Generates a map of property-to-dependency count (`counts`, where "dependency
+	 * count" is the number of dependencies a given property has assuming it is a
+	 * computed property, otherwise 0).  It also returns a pre-populated list of
+	 * `ready` properties that have no dependencies and a `total` count, which is
+	 * used for error-checking the graph.
+	 *
+	 * Used by `orderedComputed: true` computed property algorithm.
+	 *
+	 * @param {!Polymer_PropertyEffects} inst The instance to generate dependency
+	 *   counts for.
+	 * @return {!Object} Object containing `counts` map (property-to-dependency
+	 *   count) and pre-populated `ready` array of properties that had zero
+	 *   dependencies.
+	 */
+	function dependencyCounts(inst) {
+	  const infoForComputed = inst[COMPUTE_INFO];
+	  const counts = {};
+	  const computedDeps = inst[TYPES.COMPUTE];
+	  const ready = [];
+	  let total = 0;
+	  // Count dependencies for each computed property
+	  for (let p in infoForComputed) {
+	    const info = infoForComputed[p];
+	    // Be sure to add the method name itself in case of "dynamic functions"
+	    total += counts[p] =
+	      info.args.filter(a => !a.literal).length + (info.dynamicFn ? 1 : 0);
+	  }
+	  // Build list of ready properties (that aren't themselves computed)
+	  for (let p in computedDeps) {
+	    if (!infoForComputed[p]) {
+	      ready.push(p);
+	    }
+	  }
+	  return {counts, ready, total};
 	}
 
 	/**
@@ -16379,19 +16900,25 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * @param {!Polymer_PropertyEffects} inst The instance the effect will be run on
 	 * @param {string} property Name of property
-	 * @param {?Object} props Bag of current property changes
+	 * @param {?Object} changedProps Bag of current property changes
 	 * @param {?Object} oldProps Bag of previous values for changed properties
 	 * @param {?} info Effect metadata
-	 * @return {void}
+	 * @return {boolean} True when the property being computed changed
 	 * @private
 	 */
-	function runComputedEffect(inst, property, props, oldProps, info) {
-	  let result = runMethodEffect(inst, property, props, oldProps, info);
+	function runComputedEffect(inst, property, changedProps, oldProps, info) {
+	  // Dirty check dependencies and run if any invalid
+	  let result = runMethodEffect(inst, property, changedProps, oldProps, info);
+	  // Abort if method returns a no-op result
+	  if (result === NOOP) {
+	    return false;
+	  }
 	  let computedProp = info.methodInfo;
 	  if (inst.__dataHasAccessor && inst.__dataHasAccessor[computedProp]) {
-	    inst._setPendingProperty(computedProp, result, true);
+	    return inst._setPendingProperty(computedProp, result, true);
 	  } else {
 	    inst[computedProp] = result;
+	    return false;
 	  }
 	}
 
@@ -16534,7 +17061,10 @@ public class Application extends SpringBootServletInitializer {
 	  } else {
 	    let value = info.evaluator._evaluateBinding(inst, part, path, props, oldProps, hasPaths);
 	    // Propagate value to child
-	    applyBindingValue(inst, node, binding, part, value);
+	    // Abort if value is a no-op result
+	    if (value !== NOOP) {
+	      applyBindingValue(inst, node, binding, part, value);
+	    }
 	  }
 	}
 
@@ -16568,7 +17098,9 @@ public class Application extends SpringBootServletInitializer {
 	          inst._enqueueClient(node);
 	        }
 	      }
-	    } else  {
+	    } else {
+	      // In legacy no-batching mode, bindings applied before dataReady are
+	      // equivalent to the "apply config" phase, which only set managed props
 	      inst._setUnmanagedPropertyToNode(node, prop, value);
 	    }
 	  }
@@ -16648,6 +17180,8 @@ public class Application extends SpringBootServletInitializer {
 	          addNotifyListener(node, inst, binding);
 	        }
 	      }
+	      // This ensures all bound elements have a host set, regardless
+	      // of whether they upgrade synchronous to creation
 	      node.__dataHost = inst;
 	    }
 	  }
@@ -16728,7 +17262,7 @@ public class Application extends SpringBootServletInitializer {
 	 * @param {boolean|Object=} dynamicFn Boolean or object map indicating whether
 	 *   method names should be included as a dependency to the effect. Note,
 	 *   defaults to true if the signature is static (sig.static is true).
-	 * @return {void}
+	 * @return {!Object} Effect metadata for this method effect
 	 * @private
 	 */
 	function createMethodEffect(model, sig, type, effectFn, methodInfo, dynamicFn) {
@@ -16752,6 +17286,7 @@ public class Application extends SpringBootServletInitializer {
 	      fn: effectFn, info: info
 	    });
 	  }
+	  return info;
 	}
 
 	/**
@@ -16777,7 +17312,7 @@ public class Application extends SpringBootServletInitializer {
 	  let fn = context[info.methodName];
 	  if (fn) {
 	    let args = inst._marshalArgs(info.args, property, props);
-	    return fn.apply(context, args);
+	    return args === NOOP ? NOOP : fn.apply(context, args);
 	  } else if (!info.dynamicFn) {
 	    console.warn('method `' + info.methodName + '` not defined');
 	  }
@@ -16960,8 +17495,18 @@ public class Application extends SpringBootServletInitializer {
 	 * @private
 	 */
 	function notifySplices(inst, array, path, splices) {
-	  inst.notifyPath(path + '.splices', { indexSplices: splices });
+	  const splicesData = { indexSplices: splices };
+	  // Legacy behavior stored splices in `__data__` so it was *not* ephemeral.
+	  // To match this behavior, we store splices directly on the array.
+	  if (legacyUndefined && !inst._overrideLegacyUndefined) {
+	    array.splices = splicesData;
+	  }
+	  inst.notifyPath(path + '.splices', splicesData);
 	  inst.notifyPath(path + '.length', array.length);
+	  // Clear splice data only when it's stored on the array.
+	  if (legacyUndefined && !inst._overrideLegacyUndefined) {
+	    splicesData.indexSplices = [];
+	  }
 	}
 
 	/**
@@ -17034,9 +17579,6 @@ public class Application extends SpringBootServletInitializer {
 	 * @appliesMixin PropertyAccessors
 	 * @summary Element class mixin that provides meta-programming for Polymer's
 	 * template binding and data observation system.
-	 * @template T
-	 * @param {function(new:T)} superClass Class to apply mixin to.
-	 * @return {function(new:T)} superClass with mixin applied.
 	 */
 	const PropertyEffects = dedupingMixin(superClass => {
 
@@ -17063,11 +17605,6 @@ public class Application extends SpringBootServletInitializer {
 	      /** @type {boolean} */
 	      // Used to identify users of this mixin, ala instanceof
 	      this.__isPropertyEffectsClient = true;
-	      /** @type {number} */
-	      // NOTE: used to track re-entrant calls to `_flushProperties`
-	      // path changes dirty check against `__dataTemp` only during one "turn"
-	      // and are cleared when `__dataCounter` returns to 0.
-	      this.__dataCounter = 0;
 	      /** @type {boolean} */
 	      this.__dataClientsReady;
 	      /** @type {Array} */
@@ -17095,6 +17632,8 @@ public class Application extends SpringBootServletInitializer {
 	      /** @type {Object} */
 	      this.__computeEffects;
 	      /** @type {Object} */
+	      this.__computeInfo;
+	      /** @type {Object} */
 	      this.__reflectEffects;
 	      /** @type {Object} */
 	      this.__notifyEffects;
@@ -17106,11 +17645,10 @@ public class Application extends SpringBootServletInitializer {
 	      this.__readOnly;
 	      /** @type {!TemplateInfo} */
 	      this.__templateInfo;
+	      /** @type {boolean} */
+	      this._overrideLegacyUndefined;
 	    }
 
-	    /**
-	     * @return {!Object<string, string>} Effect prototype property name map.
-	     */
 	    get PROPERTY_EFFECT_TYPES() {
 	      return TYPES;
 	    }
@@ -17121,7 +17659,7 @@ public class Application extends SpringBootServletInitializer {
 	     */
 	    _initializeProperties() {
 	      super._initializeProperties();
-	      hostStack.registerHost(this);
+	      this._registerHost();
 	      this.__dataClientsReady = false;
 	      this.__dataPendingClients = null;
 	      this.__dataToNotify = null;
@@ -17132,6 +17670,16 @@ public class Application extends SpringBootServletInitializer {
 	      this.__dataHost = this.__dataHost || null;
 	      this.__dataTemp = {};
 	      this.__dataClientsInitialized = false;
+	    }
+
+	    _registerHost() {
+	      if (hostStack.length) {
+	        let host = hostStack[hostStack.length-1];
+	        host._enqueueClient(this);
+	        // This ensures even non-bound elements have a host set, as
+	        // long as they upgrade synchronously
+	        this.__dataHost = host;
+	      }
 	    }
 
 	    /**
@@ -17185,7 +17733,7 @@ public class Application extends SpringBootServletInitializer {
 	    _addPropertyEffect(property, type, effect) {
 	      this._createPropertyAccessor(property, type == TYPES.READ_ONLY);
 	      // effects are accumulated into arrays per property based on type
-	      let effects = ensureOwnEffectMap(this, type)[property];
+	      let effects = ensureOwnEffectMap(this, type, true)[property];
 	      if (!effects) {
 	        effects = this[type][property] = [];
 	      }
@@ -17202,7 +17750,7 @@ public class Application extends SpringBootServletInitializer {
 	     * @return {void}
 	     */
 	    _removePropertyEffect(property, type, effect) {
-	      let effects = ensureOwnEffectMap(this, type)[property];
+	      let effects = ensureOwnEffectMap(this, type, true)[property];
 	      let idx = effects.indexOf(effect);
 	      if (idx >= 0) {
 	        effects.splice(idx, 1);
@@ -17496,19 +18044,6 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    /**
-	     * Overrides superclass implementation.
-	     *
-	     * @override
-	     * @return {void}
-	     * @protected
-	     */
-	    _flushProperties() {
-	      this.__dataCounter++;
-	      super._flushProperties();
-	      this.__dataCounter--;
-	    }
-
-	    /**
 	     * Flushes any clients previously enqueued via `_enqueueClient`, causing
 	     * their `_flushProperties` method to run.
 	     *
@@ -17647,11 +18182,12 @@ public class Application extends SpringBootServletInitializer {
 	      // ----------------------------
 	      let hasPaths = this.__dataHasPaths;
 	      this.__dataHasPaths = false;
+	      let notifyProps;
 	      // Compute properties
 	      runComputedEffects(this, changedProps, oldProps, hasPaths);
 	      // Clear notify properties prior to possible reentry (propagate, observe),
 	      // but after computing effects have a chance to add to them
-	      let notifyProps = this.__dataToNotify;
+	      notifyProps = this.__dataToNotify;
 	      this.__dataToNotify = null;
 	      // Propagate properties to clients
 	      this._propagatePropertyChanges(changedProps, oldProps, hasPaths);
@@ -17689,11 +18225,23 @@ public class Application extends SpringBootServletInitializer {
 	      if (this[TYPES.PROPAGATE]) {
 	        runEffects(this, this[TYPES.PROPAGATE], changedProps, oldProps, hasPaths);
 	      }
-	      let templateInfo = this.__templateInfo;
-	      while (templateInfo) {
+	      if (this.__templateInfo) {
+	        this._runEffectsForTemplate(this.__templateInfo, changedProps, oldProps, hasPaths);
+	      }
+	    }
+
+	    _runEffectsForTemplate(templateInfo, changedProps, oldProps, hasPaths) {
+	      const baseRunEffects = (changedProps, hasPaths) => {
 	        runEffects(this, templateInfo.propertyEffects, changedProps, oldProps,
 	          hasPaths, templateInfo.nodeList);
-	        templateInfo = templateInfo.nextTemplateInfo;
+	        for (let info=templateInfo.firstChild; info; info=info.nextSibling) {
+	          this._runEffectsForTemplate(info, changedProps, oldProps, hasPaths);
+	        }
+	      };
+	      if (templateInfo.runEffects) {
+	        templateInfo.runEffects(baseRunEffects, changedProps, hasPaths);
+	      } else {
+	        baseRunEffects(changedProps, hasPaths);
 	      }
 	    }
 
@@ -17896,7 +18444,7 @@ public class Application extends SpringBootServletInitializer {
 	     * @param {number} start Index from which to start removing/inserting.
 	     * @param {number=} deleteCount Number of items to remove.
 	     * @param {...*} items Items to insert into array.
-	     * @return {Array} Array of removed items.
+	     * @return {!Array} Array of removed items.
 	     * @public
 	     */
 	    splice(path, start, deleteCount, ...items) {
@@ -18152,7 +18700,10 @@ public class Application extends SpringBootServletInitializer {
 	      if (!sig) {
 	        throw new Error("Malformed computed expression '" + expression + "'");
 	      }
-	      createMethodEffect(this, sig, TYPES.COMPUTE, runComputedEffect, property, dynamicFn);
+	      const info = createMethodEffect(this, sig, TYPES.COMPUTE, runComputedEffect, property, dynamicFn);
+	      // Effects are normally stored as map of dependency->effect, but for
+	      // ordered computation, we also need tree of computedProp->dependencies
+	      ensureOwnEffectMap(this, COMPUTE_INFO)[property] = info;
 	    }
 
 	    /**
@@ -18165,7 +18716,7 @@ public class Application extends SpringBootServletInitializer {
 	     * @param {!Array<!MethodArg>} args Array of argument metadata
 	     * @param {string} path Property/path name that triggered the method effect
 	     * @param {Object} props Bag of current property changes
-	     * @return {Array<*>} Array of argument values
+	     * @return {!Array<*>} Array of argument values
 	     * @private
 	     */
 	    _marshalArgs(args, path, props) {
@@ -18185,6 +18736,11 @@ public class Application extends SpringBootServletInitializer {
 	          } else {
 	            value = structured ? getArgValue(data, props, name) : data[name];
 	          }
+	        }
+	        // When the `legacyUndefined` flag is enabled, pass a no-op value
+	        // so that the observer, computed property, or compound binding is aborted.
+	        if (legacyUndefined && !this._overrideLegacyUndefined && value === undefined && args.length > 1) {
+	          return NOOP;
 	        }
 	        values[i] = value;
 	      }
@@ -18352,10 +18908,43 @@ public class Application extends SpringBootServletInitializer {
 
 	    // -- binding ----------------------------------------------
 
+	    /*
+	     * Overview of binding flow:
+	     *
+	     * During finalization (`instanceBinding==false`, `wasPreBound==false`):
+	     *  `_bindTemplate(t, false)` called directly during finalization - parses
+	     *  the template (for the first time), and then assigns that _prototypical_
+	     *  template info to `__preboundTemplateInfo` _on the prototype_; note in
+	     *  this case `wasPreBound` is false; this is the first time we're binding
+	     *  it, thus we create accessors.
+	     *
+	     * During first stamping (`instanceBinding==true`, `wasPreBound==true`):
+	     *   `_stampTemplate` calls `_bindTemplate(t, true)`: the `templateInfo`
+	     *   returned matches the prebound one, and so this is `wasPreBound == true`
+	     *   state; thus we _skip_ creating accessors, but _do_ create an instance
+	     *   of the template info to serve as the start of our linked list (needs to
+	     *   be an instance, not the prototypical one, so that we can add `nodeList`
+	     *   to it to contain the `nodeInfo`-ordered list of instance nodes for
+	     *   bindings, and so we can chain runtime-stamped template infos off of
+	     *   it). At this point, the call to `_stampTemplate` calls
+	     *   `applyTemplateInfo` for each nested `<template>` found during parsing
+	     *   to hand prototypical `_templateInfo` to them; we also pass the _parent_
+	     *   `templateInfo` to the `<template>` so that we have the instance-time
+	     *   parent to link the `templateInfo` under in the case it was
+	     *   runtime-stamped.
+	     *
+	     * During subsequent runtime stamping (`instanceBinding==true`,
+	     *   `wasPreBound==false`): `_stampTemplate` calls `_bindTemplate(t, true)`
+	     *   - here `templateInfo` is guaranteed to _not_ match the prebound one,
+	     *   because it was either a different template altogether, or even if it
+	     *   was the same template, the step above created a instance of the info;
+	     *   in this case `wasPreBound == false`, so we _do_ create accessors, _and_
+	     *   link a instance into the linked list.
+	     */
+
 	    /**
-	     * Equivalent to static `bindTemplate` API but can be called on
-	     * an instance to add effects at runtime.  See that method for
-	     * full API docs.
+	     * Equivalent to static `bindTemplate` API but can be called on an instance
+	     * to add effects at runtime.  See that method for full API docs.
 	     *
 	     * This method may be called on the prototype (for prototypical template
 	     * binding, to avoid creating accessors every instance) once per prototype,
@@ -18365,20 +18954,20 @@ public class Application extends SpringBootServletInitializer {
 	     *
 	     * @override
 	     * @param {!HTMLTemplateElement} template Template containing binding
-	     *   bindings
+	     * bindings
 	     * @param {boolean=} instanceBinding When false (default), performs
-	     *   "prototypical" binding of the template and overwrites any previously
-	     *   bound template for the class. When true (as passed from
-	     *   `_stampTemplate`), the template info is instanced and linked into
-	     *   the list of bound templates.
+	     * "prototypical" binding of the template and overwrites any previously
+	     * bound template for the class. When true (as passed from
+	     * `_stampTemplate`), the template info is instanced and linked into the
+	     * list of bound templates.
 	     * @return {!TemplateInfo} Template metadata object; for `runtimeBinding`,
-	     *   this is an instance of the prototypical template info
+	     * this is an instance of the prototypical template info
 	     * @protected
 	     * @suppress {missingProperties} go/missingfnprops
 	     */
 	    _bindTemplate(template, instanceBinding) {
 	      let templateInfo = this.constructor._parseTemplate(template);
-	      let wasPreBound = this.__templateInfo == templateInfo;
+	      let wasPreBound = this.__preBoundTemplateInfo == templateInfo;
 	      // Optimization: since this is called twice for proto-bound templates,
 	      // don't attempt to recreate accessors if this template was pre-bound
 	      if (!wasPreBound) {
@@ -18388,17 +18977,40 @@ public class Application extends SpringBootServletInitializer {
 	      }
 	      if (instanceBinding) {
 	        // For instance-time binding, create instance of template metadata
-	        // and link into list of templates if necessary
+	        // and link into tree of templates if necessary
 	        templateInfo = /** @type {!TemplateInfo} */(Object.create(templateInfo));
 	        templateInfo.wasPreBound = wasPreBound;
-	        if (!wasPreBound && this.__templateInfo) {
-	          let last = this.__templateInfoLast || this.__templateInfo;
-	          this.__templateInfoLast = last.nextTemplateInfo = templateInfo;
-	          templateInfo.previousTemplateInfo = last;
-	          return templateInfo;
+	        if (!this.__templateInfo) {
+	          // Set the info to the root of the tree
+	          this.__templateInfo = templateInfo;
+	        } else {
+	          // Append this template info onto the end of its parent template's
+	          // list, which will determine the tree structure via which property
+	          // effects are run; if this template was not nested in another
+	          // template, use the root template (the first stamped one) as the
+	          // parent. Note, `parent` is the `templateInfo` instance for this
+	          // template's parent (containing) template, which was set up in
+	          // `applyTemplateInfo`.  While a given template's `parent` is set
+	          // apriori, it is only added to the parent's child list at the point
+	          // that it is being bound, since a template may or may not ever be
+	          // stamped, and may be stamped more than once (in which case instances
+	          // of the template info will be in the tree under its parent more than
+	          // once).
+	          const parent = template._parentTemplateInfo || this.__templateInfo;
+	          const previous = parent.lastChild;
+	          templateInfo.parent = parent;
+	          parent.lastChild = templateInfo;
+	          templateInfo.previousSibling = previous;
+	          if (previous) {
+	            previous.nextSibling = templateInfo;
+	          } else {
+	            parent.firstChild = templateInfo;
+	          }
 	        }
+	      } else {
+	        this.__preBoundTemplateInfo = templateInfo;
 	      }
-	      return this.__templateInfo = templateInfo;
+	      return templateInfo;
 	    }
 
 	    /**
@@ -18439,17 +19051,20 @@ public class Application extends SpringBootServletInitializer {
 	     * in the main element template.
 	     *
 	     * @param {!HTMLTemplateElement} template Template to stamp
+	     * @param {TemplateInfo=} templateInfo Optional bound template info associated
+	     *   with the template to be stamped; if omitted the template will be
+	     *   automatically bound.
 	     * @return {!StampedTemplate} Cloned template content
 	     * @override
 	     * @protected
 	     */
-	    _stampTemplate(template) {
+	    _stampTemplate(template, templateInfo) {
+	      templateInfo =  templateInfo || /** @type {!TemplateInfo} */(this._bindTemplate(template, true));
 	      // Ensures that created dom is `_enqueueClient`'d to this element so
 	      // that it can be flushed on next call to `_flushProperties`
-	      hostStack.beginHosting(this);
-	      let dom = super._stampTemplate(template);
-	      hostStack.endHosting(this);
-	      let templateInfo = /** @type {!TemplateInfo} */(this._bindTemplate(template, true));
+	      hostStack.push(this);
+	      let dom = super._stampTemplate(template, templateInfo);
+	      hostStack.pop();
 	      // Add template-instance-specific data to instanced templateInfo
 	      templateInfo.nodeList = dom.nodeList;
 	      // Capture child nodes to allow unstamping of non-prototypical templates
@@ -18462,10 +19077,18 @@ public class Application extends SpringBootServletInitializer {
 	      dom.templateInfo = templateInfo;
 	      // Setup compound storage, 2-way listeners, and dataHost for bindings
 	      setupBindings(this, templateInfo);
-	      // Flush properties into template nodes if already booted
-	      if (this.__dataReady) {
-	        runEffects(this, templateInfo.propertyEffects, this.__data, null,
-	          false, templateInfo.nodeList);
+	      // Flush properties into template nodes; the check on `__dataClientsReady`
+	      // ensures we don't needlessly run effects for an element's initial
+	      // prototypical template stamping since they will happen as a part of the
+	      // first call to `_propertiesChanged`. This flag is set to true
+	      // after running the initial propagate effects, and immediately before
+	      // flushing clients. Since downstream clients could cause stamping on
+	      // this host (e.g. a fastDomIf `dom-if` being forced to render
+	      // synchronously), this flag ensures effects for runtime-stamped templates
+	      // are run at this point during the initial element boot-up.
+	      if (this.__dataClientsReady) {
+	        this._runEffectsForTemplate(templateInfo, this.__data, null, false);
+	        this._flushClients();
 	      }
 	      return dom;
 	    }
@@ -18481,25 +19104,28 @@ public class Application extends SpringBootServletInitializer {
 	     * @protected
 	     */
 	    _removeBoundDom(dom) {
-	      // Unlink template info
-	      let templateInfo = dom.templateInfo;
-	      if (templateInfo.previousTemplateInfo) {
-	        templateInfo.previousTemplateInfo.nextTemplateInfo =
-	          templateInfo.nextTemplateInfo;
+	      // Unlink template info; Note that while the child is unlinked from its
+	      // parent list, a template's `parent` reference is never removed, since
+	      // this is is determined by the tree structure and applied at
+	      // `applyTemplateInfo` time.
+	      const templateInfo = dom.templateInfo;
+	      const {previousSibling, nextSibling, parent} = templateInfo;
+	      if (previousSibling) {
+	        previousSibling.nextSibling = nextSibling;
+	      } else if (parent) {
+	        parent.firstChild = nextSibling;
 	      }
-	      if (templateInfo.nextTemplateInfo) {
-	        templateInfo.nextTemplateInfo.previousTemplateInfo =
-	          templateInfo.previousTemplateInfo;
+	      if (nextSibling) {
+	        nextSibling.previousSibling = previousSibling;
+	      } else if (parent) {
+	        parent.lastChild = previousSibling;
 	      }
-	      if (this.__templateInfoLast == templateInfo) {
-	        this.__templateInfoLast = templateInfo.previousTemplateInfo;
-	      }
-	      templateInfo.previousTemplateInfo = templateInfo.nextTemplateInfo = null;
+	      templateInfo.nextSibling = templateInfo.previousSibling = null;
 	      // Remove stamped nodes
 	      let nodes = templateInfo.childNodes;
 	      for (let i=0; i<nodes.length; i++) {
 	        let node = nodes[i];
-	        node.parentNode.removeChild(node);
+	        wrap(wrap(node).parentNode).removeChild(node);
 	      }
 	    }
 
@@ -18583,6 +19209,10 @@ public class Application extends SpringBootServletInitializer {
 	          }
 	          node.setAttribute(name, literal);
 	        }
+	        // support disable-upgrade
+	        if (kind == 'attribute' && origName == 'disable-upgrade$') {
+	          node.setAttribute(name, '');
+	        }
 	        // Clear attribute before removing, since IE won't allow removing
 	        // `value` attribute if it previously had a value (can't
 	        // unconditionally set '' before removing since attributes with `$`
@@ -18628,12 +19258,49 @@ public class Application extends SpringBootServletInitializer {
 	      //     Change back to just super.methodCall()
 	      let noted = propertyEffectsBase._parseTemplateNestedTemplate.call(
 	        this, node, templateInfo, nodeInfo);
+	      const parent = node.parentNode;
+	      const nestedTemplateInfo = nodeInfo.templateInfo;
+	      const isDomIf = parent.localName === 'dom-if';
+	      const isDomRepeat = parent.localName === 'dom-repeat';
+	      // Remove nested template and redirect its host bindings & templateInfo
+	      // onto the parent (dom-if/repeat element)'s nodeInfo
+	      if (removeNestedTemplates && (isDomIf || isDomRepeat)) {
+	        parent.removeChild(node);
+	        // Use the parent's nodeInfo (for the dom-if/repeat) to record the
+	        // templateInfo, and use that for any host property bindings below
+	        nodeInfo = nodeInfo.parentInfo;
+	        nodeInfo.templateInfo = nestedTemplateInfo;
+	        // Ensure the parent dom-if/repeat is noted since it now may have host
+	        // bindings; it may not have been if it did not have its own bindings
+	        nodeInfo.noted = true;
+	        noted = false;
+	      }
 	      // Merge host props into outer template and add bindings
-	      let hostProps = nodeInfo.templateInfo.hostProps;
-	      let mode = '{';
-	      for (let source in hostProps) {
-	        let parts = [{ mode, source, dependencies: [source] }];
-	        addBinding(this, templateInfo, nodeInfo, 'property', '_host_' + source, parts);
+	      let hostProps = nestedTemplateInfo.hostProps;
+	      if (fastDomIf && isDomIf) {
+	        // `fastDomIf` mode uses runtime-template stamping to add accessors/
+	        // effects to properties used in its template; as such we don't need to
+	        // tax the host element with `_host_` bindings for the `dom-if`.
+	        // However, in the event it is nested in a `dom-repeat`, it is still
+	        // important that its host properties are added to the
+	        // TemplateInstance's `hostProps` so that they are forwarded to the
+	        // TemplateInstance.
+	        if (hostProps) {
+	          templateInfo.hostProps =
+	            Object.assign(templateInfo.hostProps || {}, hostProps);
+	          // Ensure the dom-if is noted so that it has a __dataHost, since
+	          // `fastDomIf` uses the host for runtime template stamping; note this
+	          // was already ensured above in the `removeNestedTemplates` case
+	          if (!removeNestedTemplates) {
+	            nodeInfo.parentInfo.noted = true;
+	          }
+	        }
+	      } else {
+	        let mode = '{';
+	        for (let source in hostProps) {
+	          let parts = [{ mode, source, dependencies: [source], hostProp: true }];
+	          addBinding(this, templateInfo, nodeInfo, 'property', '_host_' + source, parts);
+	        }
 	      }
 	      return noted;
 	    }
@@ -18790,7 +19457,7 @@ public class Application extends SpringBootServletInitializer {
 	});
 
 	/**
-	 * Helper api for enqueuing client dom created by a host element.
+	 * Stack for enqueuing client dom created by a host element.
 	 *
 	 * By default elements are flushed via `_flushProperties` when
 	 * `connectedCallback` is called. Elements attach their client dom to
@@ -18812,42 +19479,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * @private
 	 */
-	class HostStack {
-	  constructor() {
-	    this.stack = [];
-	  }
-
-	  /**
-	   * @param {*} inst Instance to add to hostStack
-	   * @return {void}
-	   */
-	  registerHost(inst) {
-	    if (this.stack.length) {
-	      let host = this.stack[this.stack.length-1];
-	      host._enqueueClient(inst);
-	    }
-	  }
-
-	  /**
-	   * @param {*} inst Instance to begin hosting
-	   * @return {void}
-	   */
-	  beginHosting(inst) {
-	    this.stack.push(inst);
-	  }
-
-	  /**
-	   * @param {*} inst Instance to end hosting
-	   * @return {void}
-	   */
-	  endHosting(inst) {
-	    let stackLen = this.stack.length;
-	    if (stackLen && this.stack[stackLen-1] == inst) {
-	      this.stack.pop();
-	    }
-	  }
-	}
-	const hostStack = new HostStack();
+	const hostStack = [];
 
 	/**
 	@license
@@ -18881,8 +19513,8 @@ public class Application extends SpringBootServletInitializer {
 	 * Creates a copy of `props` with each property normalized such that
 	 * upgraded it is an object with at least a type property { type: Type}.
 	 *
-	 * @param {Object} props Properties to normalize
-	 * @return {Object} Copy of input `props` with normalized properties that
+	 * @param {!Object} props Properties to normalize
+	 * @return {!Object} Copy of input `props` with normalized properties that
 	 * are in the form {type: Type}
 	 * @private
 	 */
@@ -18983,10 +19615,10 @@ public class Application extends SpringBootServletInitializer {
 	    * @nocollapse
 	    */
 	   static get observedAttributes() {
-	     if (!this.hasOwnProperty('__observedAttributes')) {
+	     if (!this.hasOwnProperty(JSCompiler_renameProperty('__observedAttributes', this))) {
 	       register(this.prototype);
 	       const props = this._properties;
-	       this.__observedAttributes = props ? Object.keys(props).map(p => this.attributeNameForProperty(p)) : [];
+	       this.__observedAttributes = props ? Object.keys(props).map(p => this.prototype._addPropertyToAttributeMap(p)) : [];
 	     }
 	     return this.__observedAttributes;
 	   }
@@ -19119,7 +19751,7 @@ public class Application extends SpringBootServletInitializer {
 	 * Current Polymer version in Semver notation.
 	 * @type {string} Semver notation of the current version of Polymer.
 	 */
-	const version = '3.3.0';
+	const version = '3.4.1';
 
 	const builtCSS = window.ShadyCSS && window.ShadyCSS['cssBuild'];
 
@@ -19389,6 +20021,30 @@ public class Application extends SpringBootServletInitializer {
 	    if (window.ShadyCSS) {
 	      window.ShadyCSS.prepareTemplate(template, is);
 	    }
+	    // Support for `adoptedStylesheets` relies on using native Shadow DOM
+	    // and built CSS. Built CSS is required because runtime transformation of
+	    // `@apply` is not supported. This is because ShadyCSS relies on being able
+	    // to update a `style` element in the element template and this is
+	    // removed when using `adoptedStyleSheets`.
+	    // Note, it would be more efficient to allow style includes to become
+	    // separate stylesheets; however, because of `@apply` these are
+	    // potentially not shareable and sharing the ones that could be shared
+	    // would require some coordination. To keep it simple, all the includes
+	    // and styles are collapsed into a single shareable stylesheet.
+	    if (useAdoptedStyleSheetsWithBuiltCSS && builtCSS &&
+	        supportsAdoptingStyleSheets) {
+	      // Remove styles in template and make a shareable stylesheet
+	      const styles = template.content.querySelectorAll('style');
+	      if (styles) {
+	        let css = '';
+	        Array.from(styles).forEach(s => {
+	          css += s.textContent;
+	          s.parentNode.removeChild(s);
+	        });
+	        klass._styleSheet = new CSSStyleSheet();
+	        klass._styleSheet.replaceSync(css);
+	      }
+	    }
 	  }
 
 	  /**
@@ -19506,9 +20162,13 @@ public class Application extends SpringBootServletInitializer {
 	    /**
 	     * Returns the template that will be stamped into this element's shadow root.
 	     *
-	     * If a `static get is()` getter is defined, the default implementation
-	     * will return the first `<template>` in a `dom-module` whose `id`
-	     * matches this element's `is`.
+	     * If a `static get is()` getter is defined, the default implementation will
+	     * return the first `<template>` in a `dom-module` whose `id` matches this
+	     * element's `is` (note that a `_template` property on the class prototype
+	     * takes precedence over the `dom-module` template, to maintain legacy
+	     * element semantics; a subclass will subsequently fall back to its super
+	     * class template if neither a `prototype._template` or a `dom-module` for
+	     * the class's `is` was found).
 	     *
 	     * Users may override this getter to return an arbitrary template
 	     * (in which case the `is` getter is unnecessary). The template returned
@@ -19555,13 +20215,20 @@ public class Application extends SpringBootServletInitializer {
 	      //     or set in registered(); once the static getter runs, a clone of it
 	      //     will overwrite it on the prototype as the working template.
 	      if (!this.hasOwnProperty(JSCompiler_renameProperty('_template', this))) {
+	        const protoTemplate = this.prototype.hasOwnProperty(
+	          JSCompiler_renameProperty('_template', this.prototype)) ?
+	          this.prototype._template : undefined;
 	        this._template =
 	          // If user has put template on prototype (e.g. in legacy via registered
-	          // callback or info object), prefer that first
-	          this.prototype.hasOwnProperty(JSCompiler_renameProperty('_template', this.prototype)) ?
-	          this.prototype._template :
+	          // callback or info object), prefer that first. Note that `null` is
+	          // used as a sentinel to indicate "no template" and can be used to
+	          // override a super template, whereas `undefined` is used as a
+	          // sentinel to mean "fall-back to default template lookup" via
+	          // dom-module and/or super.template.
+	          protoTemplate !== undefined ? protoTemplate :
 	          // Look in dom-module associated with this element's is
-	          (getTemplateFromDomModule(/** @type {PolymerElementConstructor}*/ (this).is) ||
+	          ((this.hasOwnProperty(JSCompiler_renameProperty('is', this)) &&
+	          (getTemplateFromDomModule(/** @type {PolymerElementConstructor}*/ (this).is))) ||
 	          // Next look for superclass template (call the super impl this
 	          // way so that `this` points to the superclass)
 	          Object.getPrototypeOf(/** @type {PolymerElementConstructor}*/ (this).prototype).constructor.template);
@@ -19657,10 +20324,7 @@ public class Application extends SpringBootServletInitializer {
 	      }
 	      for (let p in p$) {
 	        let info = p$[p];
-	        // Don't set default value if there is already an own property, which
-	        // happens when a `properties` property with default but no effects had
-	        // a property set (e.g. bound) by its host before upgrade
-	        if (!this.hasOwnProperty(p)) {
+	        if (this._canApplyPropertyDefault(p)) {
 	          let value = typeof info.value == 'function' ?
 	            info.value.call(this) :
 	            info.value;
@@ -19673,6 +20337,18 @@ public class Application extends SpringBootServletInitializer {
 	          }
 	        }
 	      }
+	    }
+
+	    /**
+	     * Determines if a property dfeault can be applied. For example, this
+	     * prevents a default from being applied when a property that has no
+	     * accessor is overridden by its host before upgrade (e.g. via a binding).
+	     * @override
+	     * @param {string} property Name of the property
+	     * @return {boolean} Returns true if the property default can be applied.
+	     */
+	    _canApplyPropertyDefault(property) {
+	      return !this.hasOwnProperty(property);
 	    }
 
 	    /**
@@ -19786,9 +20462,14 @@ public class Application extends SpringBootServletInitializer {
 	          if (!n.shadowRoot) {
 	            n.attachShadow({mode: 'open', shadyUpgradeFragment: dom});
 	            n.shadowRoot.appendChild(dom);
+	            // When `adoptedStyleSheets` is supported a stylesheet is made
+	            // available on the element constructor.
+	            if (this.constructor._styleSheet) {
+	              n.shadowRoot.adoptedStyleSheets = [this.constructor._styleSheet];
+	            }
 	          }
 	          if (syncInitialRender && window.ShadyDOM) {
-	            ShadyDOM.flushInitial(n.shadowRoot);
+	            window.ShadyDOM.flushInitial(n.shadowRoot);
 	          }
 	          return n.shadowRoot;
 	        }
@@ -19894,7 +20575,15 @@ public class Application extends SpringBootServletInitializer {
 	      // The warning is only enabled in `legacyOptimizations` mode, since
 	      // we don't want to spam existing users who might have adopted the
 	      // shorthand when attribute deserialization is not important.
-	      if (legacyOptimizations && !(prop in this._properties)) {
+	      if (legacyWarnings && !(prop in this._properties) &&
+	          // Methods used in templates with no dependencies (or only literal
+	          // dependencies) become accessors with template effects; ignore these
+	          !(effect.info.part.signature && effect.info.part.signature.static) &&
+	          // Warnings for bindings added to nested templates are handled by
+	          // templatizer so ignore both the host-to-template bindings
+	          // (`hostProp`) and TemplateInstance-to-child bindings
+	          // (`nestedTemplate`)
+	          !effect.info.part.hostProp && !templateInfo.nestedTemplate) {
 	        console.warn(`Property '${prop}' used in template but not declared in 'properties'; ` +
 	          `attribute will not be observed.`);
 	      }
@@ -19944,7 +20633,18 @@ public class Application extends SpringBootServletInitializer {
 	    return {
 	      /**
 	       * Helper property with theme attribute value facilitating propagation
-	       * in shadow DOM. Allows using `theme$="[[theme]]"` in the template.
+	       * in shadow DOM.
+	       *
+	       * Enables the component implementation to propagate the `theme`
+	       * attribute value to the subcomponents in Shadow DOM by binding
+	       * the subcomponent’s "theme" attribute to the `theme` property of
+	       * the host.
+	       *
+	       * **NOTE:** Extending the mixin only provides the property for binding,
+	       * and does not make the propagation alone.
+	       *
+	       * See [Theme Attribute and Subcomponents](https://github.com/vaadin/vaadin-themable-mixin/wiki/5.-Theme-Attribute-and-Subcomponents).
+	       * page for more information.
 	       *
 	       * @protected
 	       */
@@ -19967,6 +20667,7 @@ public class Application extends SpringBootServletInitializer {
 
 	/**
 	 * @polymerMixin
+	 * @mixes ThemePropertyMixin
 	 */
 	const ThemableMixin = superClass => class VaadinThemableMixin extends ThemePropertyMixin(superClass) {
 
@@ -19988,7 +20689,7 @@ public class Application extends SpringBootServletInitializer {
 	    this._includeMatchingThemes(template);
 	  }
 
-	  /** @protected */
+	  /** @private */
 	  static _includeMatchingThemes(template) {
 	    const domModule = DomModule;
 	    const modules = domModule.prototype.modules;
@@ -20235,6 +20936,218 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	    debouncers = flushDebouncers();
 	  } while (shadyDOM || debouncers);
+	};
+
+	/**
+	@license
+	Copyright (c) 2020 Vaadin Ltd.
+	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
+	*/
+	/**
+	 * Helper that provides a set of functions for RTL.
+	 */
+	class DirHelper {
+	  /**
+	   * Get the scroll type in the current browser view.
+	   *
+	   * @return {string} the scroll type. Possible values are `default|reverse|negative`
+	   */
+	  static detectScrollType() {
+	    const dummy = document.createElement('div');
+	    dummy.textContent = 'ABCD';
+	    dummy.dir = 'rtl';
+	    dummy.style.fontSize = '14px';
+	    dummy.style.width = '4px';
+	    dummy.style.height = '1px';
+	    dummy.style.position = 'absolute';
+	    dummy.style.top = '-1000px';
+	    dummy.style.overflow = 'scroll';
+	    document.body.appendChild(dummy);
+
+	    let cachedType = 'reverse';
+	    if (dummy.scrollLeft > 0) {
+	      cachedType = 'default';
+	    } else {
+	      dummy.scrollLeft = 1;
+	      if (dummy.scrollLeft === 0) {
+	        cachedType = 'negative';
+	      }
+	    }
+	    document.body.removeChild(dummy);
+	    return cachedType;
+	  }
+
+	  /**
+	   * Get the scrollLeft value of the element relative to the direction
+	   *
+	   * @param {string} scrollType type of the scroll detected with `detectScrollType`
+	   * @param {string} direction current direction of the element
+	   * @param {Element} element
+	   * @return {number} the scrollLeft value.
+	  */
+	  static getNormalizedScrollLeft(scrollType, direction, element) {
+	    const {scrollLeft} = element;
+	    if (direction !== 'rtl' || !scrollType) {
+	      return scrollLeft;
+	    }
+
+	    switch (scrollType) {
+	      case 'negative':
+	        return element.scrollWidth - element.clientWidth + scrollLeft;
+	      case 'reverse':
+	        return element.scrollWidth - element.clientWidth - scrollLeft;
+	    }
+	    return scrollLeft;
+	  }
+
+	  /**
+	   * Set the scrollLeft value of the element relative to the direction
+	   *
+	   * @param {string} scrollType type of the scroll detected with `detectScrollType`
+	   * @param {string} direction current direction of the element
+	   * @param {Element} element
+	   * @param {number} scrollLeft the scrollLeft value to be set
+	   */
+	  static setNormalizedScrollLeft(scrollType, direction, element, scrollLeft) {
+	    if (direction !== 'rtl' || !scrollType) {
+	      element.scrollLeft = scrollLeft;
+	      return;
+	    }
+
+	    switch (scrollType) {
+	      case 'negative':
+	        element.scrollLeft = element.clientWidth - element.scrollWidth + scrollLeft;
+	        break;
+	      case 'reverse':
+	        element.scrollLeft = element.scrollWidth - element.clientWidth - scrollLeft;
+	        break;
+	      default:
+	        element.scrollLeft = scrollLeft;
+	        break;
+	    }
+	  }
+	}
+
+	/**
+	 * Array of Vaadin custom element classes that have been subscribed to the dir changes.
+	 */
+	const directionSubscribers = [];
+	const directionUpdater = function() {
+	  const documentDir = getDocumentDir();
+	  directionSubscribers.forEach(element => {
+	    alignDirs(element, documentDir);
+	  });
+	};
+
+	let scrollType;
+
+	const directionObserver = new MutationObserver(directionUpdater);
+	directionObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['dir']});
+
+	const alignDirs = function(element, documentDir) {
+	  if (documentDir) {
+	    element.setAttribute('dir', documentDir);
+	  } else {
+	    element.removeAttribute('dir');
+	  }
+	};
+
+	const getDocumentDir = function() {
+	  return document.documentElement.getAttribute('dir');
+	};
+
+	/**
+	 * @polymerMixin
+	 */
+	const DirMixin = superClass => class VaadinDirMixin extends superClass {
+	  static get properties() {
+	    return {
+	      /**
+	       * @protected
+	       */
+	      dir: {
+	        type: String,
+	        readOnly: true
+	      }
+	    };
+	  }
+
+	  /** @protected */
+	  static finalize() {
+	    super.finalize();
+
+	    if (!scrollType) {
+	      scrollType = DirHelper.detectScrollType();
+	    }
+	  }
+
+	  /** @protected */
+	  connectedCallback() {
+	    super.connectedCallback();
+
+	    if (!this.hasAttribute('dir')) {
+	      this.__subscribe();
+	      alignDirs(this, getDocumentDir());
+	    }
+	  }
+
+	  /** @protected */
+	  attributeChangedCallback(name, oldValue, newValue) {
+	    super.attributeChangedCallback(name, oldValue, newValue);
+	    if (name !== 'dir') {
+	      return;
+	    }
+
+	    // New value equals to the document direction and the element is not subscribed to the changes
+	    const newValueEqlDocDir = newValue === getDocumentDir() && directionSubscribers.indexOf(this) === -1;
+	    // Value was emptied and the element is not subscribed to the changes
+	    const newValueEmptied = !newValue && oldValue && directionSubscribers.indexOf(this) === -1;
+	    // New value is different and the old equals to document direction and the element is not subscribed to the changes
+	    const newDiffValue = newValue !== getDocumentDir() && oldValue === getDocumentDir();
+
+	    if (newValueEqlDocDir || newValueEmptied) {
+	      this.__subscribe();
+	      alignDirs(this, getDocumentDir());
+	    } else if (newDiffValue) {
+	      this.__subscribe(false);
+	    }
+	  }
+
+	  /** @protected */
+	  disconnectedCallback() {
+	    super.disconnectedCallback();
+	    this.__subscribe(false);
+	    this.removeAttribute('dir');
+	  }
+
+	  /** @private */
+	  __subscribe(push = true) {
+	    if (push) {
+	      directionSubscribers.indexOf(this) === -1 &&
+	        directionSubscribers.push(this);
+	    } else {
+	      directionSubscribers.indexOf(this) > -1 &&
+	        directionSubscribers.splice(directionSubscribers.indexOf(this), 1);
+	    }
+	  }
+
+	  /**
+	   * @param {Element} element
+	   * @return {number}
+	   * @protected
+	   */
+	  __getNormalizedScrollLeft(element) {
+	    return DirHelper.getNormalizedScrollLeft(scrollType, this.getAttribute('dir') || 'ltr', element);
+	  }
+
+	  /**
+	   * @param {Element} element
+	   * @param {number} scrollLeft
+	   * @protected
+	   */
+	  __setNormalizedScrollLeft(element, scrollLeft) {
+	    return DirHelper.setNormalizedScrollLeft(scrollType, this.getAttribute('dir') || 'ltr', element, scrollLeft);
+	  }
 	};
 
 	const DEV_MODE_CODE_REGEXP =
@@ -20495,6 +21408,10 @@ public class Application extends SpringBootServletInitializer {
 	    value: function getUsedVaadinElements(elements) {
 	      var version = getPolymerVersion();
 	      var elementClasses = void 0;
+	      // NOTE: In case you edit the code here, YOU MUST UPDATE any statistics reporting code in Flow.
+	      // Check all locations calling the method getEntries() in
+	      // https://github.com/vaadin/flow/blob/master/flow-server/src/main/java/com/vaadin/flow/internal/UsageStatistics.java#L106
+	      // Currently it is only used by BootstrapHandler.
 	      if (version && version.indexOf('2') === 0) {
 	        // Polymer 2: components classes are stored in window.Vaadin
 	        elementClasses = Object.keys(window.Vaadin).map(function (c) {
@@ -20726,7 +21643,7 @@ public class Application extends SpringBootServletInitializer {
 	  }, {
 	    key: 'lottery',
 	    value: function lottery() {
-	      return Math.random() <= 0.05;
+	      return true;
 	    }
 	  }, {
 	    key: 'currentMonth',
@@ -20784,7 +21701,7 @@ public class Application extends SpringBootServletInitializer {
 	  }], [{
 	    key: 'version',
 	    get: function get$1() {
-	      return '2.0.10';
+	      return '2.1.0';
 	    }
 	  }, {
 	    key: 'firstUseKey',
@@ -20843,17 +21760,23 @@ public class Application extends SpringBootServletInitializer {
 
 	let statsJob;
 
+	const registered = new Set();
+
 	/**
 	 * @polymerMixin
+	 * @mixes DirMixin
 	 */
-	const ElementMixin$1 = superClass => class VaadinElementMixin extends superClass {
+	const ElementMixin$1 = superClass => class VaadinElementMixin extends DirMixin(superClass) {
 	  /** @protected */
-	  static _finalizeClass() {
-	    super._finalizeClass();
+	  static finalize() {
+	    super.finalize();
+
+	    const {is} = this;
 
 	    // Registers a class prototype for telemetry purposes.
-	    if (this.is) {
+	    if (is && !registered.has(is)) {
 	      window.Vaadin.registrations.push(this);
+	      registered.add(is);
 
 	      if (window.Vaadin.developmentModeCallback) {
 	        statsJob = Debouncer.debounce(statsJob,
@@ -20865,8 +21788,9 @@ public class Application extends SpringBootServletInitializer {
 	      }
 	    }
 	  }
-	  ready() {
-	    super.ready();
+
+	  constructor() {
+	    super();
 	    if (document.doctype === null) {
 	      console.warn(
 	        'Vaadin components require the "standards mode" declaration. Please add <!DOCTYPE html> to the HTML document.'
@@ -20884,6 +21808,7 @@ public class Application extends SpringBootServletInitializer {
 	 * A private mixin to avoid problems with dynamic properties and Polymer Analyzer.
 	 * No need to expose these properties in the API docs.
 	 * @polymerMixin
+	 * @private
 	 */
 	const TabIndexMixin = superClass => class VaadinTabIndexMixin extends superClass {
 	  static get properties() {
@@ -20928,6 +21853,7 @@ public class Application extends SpringBootServletInitializer {
 
 	      /**
 	       * Stores the previous value of tabindex attribute of the disabled element
+	       * @private
 	       */
 	      _previousTabIndex: {
 	        type: Number
@@ -20942,16 +21868,25 @@ public class Application extends SpringBootServletInitializer {
 	        reflectToAttribute: true
 	      },
 
+	      /**
+	       * @private
+	       */
 	      _isShiftTabbing: {
 	        type: Boolean
 	      }
 	    };
 	  }
 
+	  /**
+	   * @protected
+	   */
 	  ready() {
 	    this.addEventListener('focusin', e => {
 	      if (e.composedPath()[0] === this) {
-	        this._focus(e);
+	        // Only focus if the focus is received from somewhere outside
+	        if (!this.contains(e.relatedTarget)) {
+	          this._focus();
+	        }
 	      } else if (e.composedPath().indexOf(this.focusElement) !== -1 && !this.disabled) {
 	        this._setFocused(true);
 	      }
@@ -21000,7 +21935,7 @@ public class Application extends SpringBootServletInitializer {
 	            && this.nextSibling) {
 	            const fakeTarget = document.createElement('input');
 	            fakeTarget.style.position = 'absolute';
-	            fakeTarget.style.opacity = 0;
+	            fakeTarget.style.opacity = '0';
 	            fakeTarget.tabIndex = this.tabIndex;
 
 	            this.parentNode.insertBefore(fakeTarget, this.nextSibling);
@@ -21012,7 +21947,7 @@ public class Application extends SpringBootServletInitializer {
 	      }
 	    });
 
-	    if (this.autofocus && !this.focused && !this.disabled) {
+	    if (this.autofocus && !this.disabled) {
 	      window.requestAnimationFrame(() => {
 	        this._focus();
 	        this._setFocused(true);
@@ -21050,6 +21985,10 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	   * @param {boolean} focused
+	   * @protected
+	   */
 	  _setFocused(focused) {
 	    if (focused) {
 	      this.setAttribute('focused', '');
@@ -21066,10 +22005,17 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	   * @param {KeyboardEvent} e
+	   * @private
+	   */
 	  _bodyKeydownListener(e) {
 	    this._tabPressed = e.keyCode === 9;
 	  }
 
+	  /**
+	   * @private
+	   */
 	  _bodyKeyupListener() {
 	    this._tabPressed = false;
 	  }
@@ -21077,14 +22023,18 @@ public class Application extends SpringBootServletInitializer {
 	  /**
 	   * Any element extending this mixin is required to implement this getter.
 	   * It returns the actual focusable element in the component.
+	   * @return {Element | null | undefined}
 	   */
 	  get focusElement() {
 	    window.console.warn(`Please implement the 'focusElement' property in <${this.localName}>`);
 	    return this;
 	  }
 
-	  _focus(e) {
-	    if (this._isShiftTabbing) {
+	  /**
+	   * @protected
+	   */
+	  _focus() {
+	    if (!this.focusElement || this._isShiftTabbing) {
 	      return;
 	    }
 
@@ -21111,10 +22061,17 @@ public class Application extends SpringBootServletInitializer {
 	   * @private
 	   */
 	  blur() {
+	    if (!this.focusElement) {
+	      return;
+	    }
 	    this.focusElement.blur();
 	    this._setFocused(false);
 	  }
 
+	  /**
+	   * @param {boolean} disabled
+	   * @private
+	   */
 	  _disabledChanged(disabled) {
 	    this.focusElement.disabled = disabled;
 	    if (disabled) {
@@ -21130,6 +22087,10 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	   * @param {number | null | undefined} tabindex
+	   * @private
+	   */
 	  _tabindexChanged(tabindex) {
 	    if (tabindex !== undefined) {
 	      this.focusElement.tabIndex = tabindex;
@@ -21197,10 +22158,10 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ControlStateMixin
+	 * @mixes ElementMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class DetailsElement extends
@@ -21249,7 +22210,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.0.1';
+	    return '1.1.0';
 	  }
 
 	  static get properties() {
@@ -21346,7 +22307,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 */
 	class AccordionPanelElement extends DetailsElement {
 	  static get is() {
@@ -21804,7 +22765,7 @@ public class Application extends SpringBootServletInitializer {
 	          /** @type {!NodeList<!Node>} */ (wrap(this._target).children));
 	      if (window.ShadyDOM) {
 	        this._shadyChildrenObserver =
-	          ShadyDOM.observeChildren(this._target, (mutations) => {
+	          window.ShadyDOM.observeChildren(this._target, (mutations) => {
 	            this._processMutations(mutations);
 	          });
 	      } else {
@@ -21834,7 +22795,7 @@ public class Application extends SpringBootServletInitializer {
 	      this._unlistenSlots(
 	          /** @type {!NodeList<!Node>} */ (wrap(this._target).children));
 	      if (window.ShadyDOM && this._shadyChildrenObserver) {
-	        ShadyDOM.unobserveChildren(this._shadyChildrenObserver);
+	        window.ShadyDOM.unobserveChildren(this._shadyChildrenObserver);
 	        this._shadyChildrenObserver = null;
 	      } else if (this._nativeChildrenObserver) {
 	        this._nativeChildrenObserver.disconnect();
@@ -22012,9 +22973,9 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class AccordionElement extends ThemableMixin(ElementMixin$1(PolymerElement)) {
@@ -22038,7 +22999,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.0.1';
+	    return '1.1.0';
 	  }
 
 	  static get properties() {
@@ -22157,7 +23118,6 @@ public class Application extends SpringBootServletInitializer {
 	        increment = -1;
 	        idx = this.items.length - 1;
 	        break;
-	      default:
 	        // do nothing.
 	    }
 
@@ -22650,10 +23610,49 @@ public class Application extends SpringBootServletInitializer {
 	 * @implements {Polymer_PropertyEffects}
 	 * @private
 	 */
-	const templateInstanceBase = PropertyEffects(
-	    // This cast shouldn't be neccessary, but Closure doesn't understand that
-	    // "class {}" is a constructor function.
-	    /** @type {function(new:Object)} */(class {}));
+	const templateInstanceBase = PropertyEffects(class {});
+
+	function showHideChildren(hide, children) {
+	  for (let i=0; i<children.length; i++) {
+	    let n = children[i];
+	    // Ignore non-changes
+	    if (Boolean(hide) != Boolean(n.__hideTemplateChildren__)) {
+	      // clear and restore text
+	      if (n.nodeType === Node.TEXT_NODE) {
+	        if (hide) {
+	          n.__polymerTextContent__ = n.textContent;
+	          n.textContent = '';
+	        } else {
+	          n.textContent = n.__polymerTextContent__;
+	        }
+	      // remove and replace slot
+	      } else if (n.localName === 'slot') {
+	        if (hide) {
+	          n.__polymerReplaced__ = document.createComment('hidden-slot');
+	          wrap(wrap(n).parentNode).replaceChild(n.__polymerReplaced__, n);
+	        } else {
+	          const replace = n.__polymerReplaced__;
+	          if (replace) {
+	            wrap(wrap(replace).parentNode).replaceChild(n, replace);
+	          }
+	        }
+	      }
+	      // hide and show nodes
+	      else if (n.style) {
+	        if (hide) {
+	          n.__polymerDisplay__ = n.style.display;
+	          n.style.display = 'none';
+	        } else {
+	          n.style.display = n.__polymerDisplay__;
+	        }
+	      }
+	    }
+	    n.__hideTemplateChildren__ = hide;
+	    if (n._showHideChildren) {
+	      n._showHideChildren(hide);
+	    }
+	  }
+	}
 
 	/**
 	 * @polymer
@@ -22760,45 +23759,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @protected
 	   */
 	  _showHideChildren(hide) {
-	    let c = this.children;
-	    for (let i=0; i<c.length; i++) {
-	      let n = c[i];
-	      // Ignore non-changes
-	      if (Boolean(hide) != Boolean(n.__hideTemplateChildren__)) {
-	        if (n.nodeType === Node.TEXT_NODE) {
-	          if (hide) {
-	            n.__polymerTextContent__ = n.textContent;
-	            n.textContent = '';
-	          } else {
-	            n.textContent = n.__polymerTextContent__;
-	          }
-	        // remove and replace slot
-	        } else if (n.localName === 'slot') {
-	          if (hide) {
-	            n.__polymerReplaced__ = document.createComment('hidden-slot');
-	            wrap(wrap(n).parentNode).replaceChild(n.__polymerReplaced__, n);
-	          } else {
-	            const replace = n.__polymerReplaced__;
-	            if (replace) {
-	              wrap(wrap(replace).parentNode).replaceChild(n, replace);
-	            }
-	          }
-	        }
-
-	        else if (n.style) {
-	          if (hide) {
-	            n.__polymerDisplay__ = n.style.display;
-	            n.style.display = 'none';
-	          } else {
-	            n.style.display = n.__polymerDisplay__;
-	          }
-	        }
-	      }
-	      n.__hideTemplateChildren__ = hide;
-	      if (n._showHideChildren) {
-	        n._showHideChildren(hide);
-	      }
-	    }
+	    showHideChildren(hide, this.children);
 	  }
 	  /**
 	   * Overrides default property-effects implementation to intercept
@@ -22855,17 +23816,6 @@ public class Application extends SpringBootServletInitializer {
 	  }
 	}
 
-	/** @type {!DataTemplate} */
-	TemplateInstanceBase.prototype.__dataHost;
-	/** @type {!TemplatizeOptions} */
-	TemplateInstanceBase.prototype.__templatizeOptions;
-	/** @type {!Polymer_PropertyEffects} */
-	TemplateInstanceBase.prototype._methodHost;
-	/** @type {!Object} */
-	TemplateInstanceBase.prototype.__templatizeOwner;
-	/** @type {!Object} */
-	TemplateInstanceBase.prototype.__hostProps;
-
 	/**
 	 * @constructor
 	 * @extends {TemplateInstanceBase}
@@ -22873,9 +23823,9 @@ public class Application extends SpringBootServletInitializer {
 	 * @private
 	 */
 	const MutableTemplateInstanceBase = MutableData(
-	    // This cast shouldn't be necessary, but Closure doesn't seem to understand
-	    // this constructor.
-	    /** @type {function(new:TemplateInstanceBase)} */(TemplateInstanceBase));
+	    // This cast shouldn't be neccessary, but Closure doesn't understand that
+	    // TemplateInstanceBase is a constructor function.
+	    /** @type {function(new:TemplateInstanceBase)} */ (TemplateInstanceBase));
 
 	function findMethodHost(template) {
 	  // Technically this should be the owner of the outermost template.
@@ -22920,23 +23870,51 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * Adds propagate effects from the template to the template instance for
 	 * properties that the host binds to the template using the `_host_` prefix.
-	 * 
+	 *
 	 * @suppress {missingProperties} class.prototype is not defined for some reason
 	 */
-	function addPropagateEffects(template, templateInfo, options) {
+	function addPropagateEffects(target, templateInfo, options, methodHost) {
 	  let userForwardHostProp = options.forwardHostProp;
 	  if (userForwardHostProp && templateInfo.hasHostProps) {
+	    // Under the `removeNestedTemplates` optimization, a custom element like
+	    // `dom-if` or `dom-repeat` can itself be treated as the "template"; this
+	    // flag is used to switch between upgrading a `<template>` to be a property
+	    // effects client vs. adding the effects directly to the custom element
+	    const isTemplate = target.localName == 'template';
 	    // Provide data API and property effects on memoized template class
 	    let klass = templateInfo.templatizeTemplateClass;
 	    if (!klass) {
-	      /**
-	       * @constructor
-	       * @extends {DataTemplate}
-	       */
-	      let templatizedBase = options.mutableData ? MutableDataTemplate : DataTemplate;
-	      /** @private */
-	      klass = templateInfo.templatizeTemplateClass =
-	        class TemplatizedTemplate extends templatizedBase {};
+	      if (isTemplate) {
+	        /**
+	         * @constructor
+	         * @extends {DataTemplate}
+	         */
+	        let templatizedBase =
+	            options.mutableData ? MutableDataTemplate : DataTemplate;
+
+	        // NOTE: due to https://github.com/google/closure-compiler/issues/2928,
+	        // combining the next two lines into one assignment causes a spurious
+	        // type error.
+	        /** @private */
+	        class TemplatizedTemplate extends templatizedBase {}
+	        klass = templateInfo.templatizeTemplateClass = TemplatizedTemplate;
+	      } else {
+	        /**
+	         * @constructor
+	         * @extends {PolymerElement}
+	         */
+	        const templatizedBase = target.constructor;
+
+	        // Create a cached subclass of the base custom element class onto which
+	        // to put the template-specific propagate effects
+	        // NOTE: due to https://github.com/google/closure-compiler/issues/2928,
+	        // combining the next two lines into one assignment causes a spurious
+	        // type error.
+	        /** @private */
+	        class TemplatizedTemplateExtension extends templatizedBase {}
+	        klass = templateInfo.templatizeTemplateClass =
+	            TemplatizedTemplateExtension;
+	      }
 	      // Add template - >instances effects
 	      // and host <- template effects
 	      let hostProps = templateInfo.hostProps;
@@ -22946,20 +23924,40 @@ public class Application extends SpringBootServletInitializer {
 	          {fn: createForwardHostPropEffect(prop, userForwardHostProp)});
 	        klass.prototype._createNotifyingProperty('_host_' + prop);
 	      }
+	      if (legacyWarnings && methodHost) {
+	        warnOnUndeclaredProperties(templateInfo, options, methodHost);
+	      }
 	    }
-	    upgradeTemplate(template, klass);
 	    // Mix any pre-bound data into __data; no need to flush this to
 	    // instances since they pull from the template at instance-time
-	    if (template.__dataProto) {
+	    if (target.__dataProto) {
 	      // Note, generally `__dataProto` could be chained, but it's guaranteed
 	      // to not be since this is a vanilla template we just added effects to
-	      Object.assign(template.__data, template.__dataProto);
+	      Object.assign(target.__data, target.__dataProto);
 	    }
-	    // Clear any pending data for performance
-	    template.__dataTemp = {};
-	    template.__dataPending = null;
-	    template.__dataOld = null;
-	    template._enableProperties();
+	    if (isTemplate) {
+	      upgradeTemplate(target, klass);
+	      // Clear any pending data for performance
+	      target.__dataTemp = {};
+	      target.__dataPending = null;
+	      target.__dataOld = null;
+	      target._enableProperties();
+	    } else {
+	      // Swizzle the cached subclass prototype onto the custom element
+	      Object.setPrototypeOf(target, klass.prototype);
+	      // Check for any pre-bound instance host properties, and do the
+	      // instance property delete/assign dance for those (directly into data;
+	      // not need to go through accessor since they are pulled at instance time)
+	      const hostProps = templateInfo.hostProps;
+	      for (let prop in hostProps) {
+	        prop = '_host_' + prop;
+	        if (prop in target) {
+	          const val = target[prop];
+	          delete target[prop];
+	          target.__data[prop] = val;
+	        }
+	      }
+	    }
 	  }
 	}
 	/* eslint-enable valid-jsdoc */
@@ -23113,13 +24111,14 @@ public class Application extends SpringBootServletInitializer {
 	    baseClass = createTemplatizerClass(template, templateInfo, options);
 	    templateInfo.templatizeInstanceClass = baseClass;
 	  }
+	  const methodHost = findMethodHost(template);
 	  // Host property forwarding must be installed onto template instance
-	  addPropagateEffects(template, templateInfo, options);
+	  addPropagateEffects(template, templateInfo, options, methodHost);
 	  // Subclass base class and add reference for this specific template
 	  /** @private */
 	  let klass = class TemplateInstance extends baseClass {};
 	  /** @override */
-	  klass.prototype._methodHost = findMethodHost(template);
+	  klass.prototype._methodHost = methodHost;
 	  /** @override */
 	  klass.prototype.__dataHost = /** @type {!DataTemplate} */ (template);
 	  /** @override */
@@ -23128,6 +24127,27 @@ public class Application extends SpringBootServletInitializer {
 	  klass.prototype.__hostProps = templateInfo.hostProps;
 	  klass = /** @type {function(new:TemplateInstanceBase)} */(klass); //eslint-disable-line no-self-assign
 	  return klass;
+	}
+
+	function warnOnUndeclaredProperties(templateInfo, options, methodHost) {
+	  const declaredProps = methodHost.constructor._properties;
+	  const {propertyEffects} = templateInfo;
+	  const {instanceProps} = options;
+	  for (let prop in propertyEffects) {
+	    // Ensure properties with template effects are declared on the outermost
+	    // host (`methodHost`), unless they are instance props or static functions
+	    if (!declaredProps[prop] && !(instanceProps && instanceProps[prop])) {
+	      const effects = propertyEffects[prop];
+	      for (let i=0; i<effects.length; i++) {
+	        const {part} = effects[i].info;
+	        if (!(part.signature && part.signature.static)) {
+	          console.warn(`Property '${prop}' used in template but not ` +
+	            `declared in 'properties'; attribute will not be observed.`);
+	          break;
+	        }
+	      }
+	    }
+	  }
 	}
 
 	/**
@@ -23144,8 +24164,10 @@ public class Application extends SpringBootServletInitializer {
 	 *     model.set('item.checked', true);
 	 *   }
 	 *
-	 * @param {HTMLTemplateElement} template The model will be returned for
-	 *   elements stamped from this template
+	 * @param {HTMLElement} template The model will be returned for
+	 *   elements stamped from this template (accepts either an HTMLTemplateElement)
+	 *   or a `<dom-if>`/`<dom-repeat>` element when using `removeNestedTemplates`
+	 *   optimization.
 	 * @param {Node=} node Node for which to return a template model.
 	 * @return {TemplateInstanceBase} Template instance representing the
 	 *   binding scope for the element
@@ -23156,7 +24178,7 @@ public class Application extends SpringBootServletInitializer {
 	    // An element with a __templatizeInstance marks the top boundary
 	    // of a scope; walk up until we find one, and then ensure that
 	    // its __dataHost matches `this`, meaning this dom-repeat stamped it
-	    if ((model = node.__templatizeInstance)) {
+	    if ((model = node.__dataHost ? node : node.__templatizeInstance)) {
 	      // Found an element stamped by another template; keep walking up
 	      // from its __dataHost
 	      if (model.__dataHost != template) {
@@ -23181,7 +24203,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * The container element for all notifications.
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 */
 	class NotificationContainer extends ThemableMixin(ElementMixin$1(PolymerElement)) {
 	  static get template() {
@@ -23322,8 +24344,8 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 */
 	class NotificationCard extends ThemableMixin(PolymerElement) {
 	  static get template() {
@@ -23408,8 +24430,8 @@ public class Application extends SpringBootServletInitializer {
 	 * Note: the `theme` attribute value set on `<vaadin-notification>` is
 	 * propagated to the internal `<vaadin-notification-card>`.
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ThemePropertyMixin
 	 * @demo demo/index.html
 	 */
 	class NotificationElement extends ThemePropertyMixin(ElementMixin$1(PolymerElement)) {
@@ -23430,7 +24452,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.4.0';
+	    return '1.5.0';
 	  }
 
 	  static get properties() {
@@ -23776,7 +24798,7 @@ public class Application extends SpringBootServletInitializer {
         height: calc(1em + 2px);
         margin: 0.1875em;
         position: relative;
-        border-radius: var(--lumo-border-radius);
+        border-radius: var(--lumo-border-radius-s);
         background-color: var(--lumo-contrast-20pct);
         transition: transform 0.2s cubic-bezier(.12, .32, .54, 2), background-color 0.15s;
         pointer-events: none;
@@ -23858,6 +24880,12 @@ public class Application extends SpringBootServletInitializer {
 
       :host([indeterminate][disabled]) [part="checkbox"]::after {
         background-color: var(--lumo-contrast-30pct);
+      }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="label"]:not([empty]) {
+        margin: 0.1875em 0.375em 0.1875em 0.875em;
       }
     </style>
   </template>
@@ -23961,10 +24989,10 @@ public class Application extends SpringBootServletInitializer {
 
 	/* eslint no-empty: ["error", { "allowEmptyCatch": true }] */
 	// check for passive event listeners
-	let SUPPORTS_PASSIVE = false;
+	let supportsPassive = false;
 	(function() {
 	  try {
-	    let opts = Object.defineProperty({}, 'passive', {get() {SUPPORTS_PASSIVE = true;}});
+	    let opts = Object.defineProperty({}, 'passive', {get() {supportsPassive = true;}});
 	    window.addEventListener('test', null, opts);
 	    window.removeEventListener('test', null, opts);
 	  } catch(e) {}
@@ -23982,7 +25010,7 @@ public class Application extends SpringBootServletInitializer {
 	  if (isMouseEvent(eventName) || eventName === 'touchend') {
 	    return;
 	  }
-	  if (HAS_NATIVE_TA && SUPPORTS_PASSIVE && passiveTouchGestures) {
+	  if (HAS_NATIVE_TA && supportsPassive && passiveTouchGestures) {
 	    return {passive: true};
 	  } else {
 	    return;
@@ -24120,9 +25148,6 @@ public class Application extends SpringBootServletInitializer {
 	}
 
 	function ignoreMouse(e) {
-	  if (!cancelSyntheticClickEvents) {
-	    return;
-	  }
 	  if (!POINTERSTATE.mouse.mouseIgnoreJob) {
 	    setupTeardownMouseCanceller(true);
 	  }
@@ -24230,10 +25255,10 @@ public class Application extends SpringBootServletInitializer {
 	  stateObj.upfn = null;
 	}
 
-	if (cancelSyntheticClickEvents) {
+	{
 	  // use a document-wide touchend listener to start the ghost-click prevention mechanism
 	  // Use passive event listeners, if supported, to not affect scrolling performance
-	  document.addEventListener('touchend', ignoreMouse, SUPPORTS_PASSIVE ? {passive: true} : false);
+	  document.addEventListener('touchend', ignoreMouse, supportsPassive ? {passive: true} : false);
 	}
 
 	/**
@@ -25057,8 +26082,8 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * Part name         | Description
 	 * ------------------|----------------
-	 * `checkbox`        | The checkbox element
-	 * `label`           | The label content element
+	 * `checkbox`        | The wrapper element for the native <input type="checkbox">
+	 * `label`           | The wrapper element in which the component's children, namely the label, is slotted
 	 *
 	 * The following state attributes are available for styling:
 	 *
@@ -25074,11 +26099,11 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes GestureEventListeners
 	 * @demo demo/index.html
 	 */
 	class CheckboxElement extends
@@ -25113,6 +26138,7 @@ public class Application extends SpringBootServletInitializer {
         position: absolute;
         top: 0;
         left: 0;
+        right: 0;
         width: 100%;
         height: 100%;
         opacity: 0;
@@ -25142,7 +26168,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.2.10';
+	    return '2.3.0';
 	  }
 
 	  static get properties() {
@@ -25245,7 +26271,7 @@ public class Application extends SpringBootServletInitializer {
 	    if (this.indeterminate) {
 	      this.setAttribute('aria-checked', 'mixed');
 	    } else {
-	      this.setAttribute('aria-checked', checked);
+	      this.setAttribute('aria-checked', Boolean(checked));
 	    }
 	  }
 
@@ -25420,6 +26446,29 @@ public class Application extends SpringBootServletInitializer {
         max-height: 0;
         overflow: hidden;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="label"] {
+        margin-left: 0;
+        margin-right: calc(var(--lumo-border-radius-m) / 4);
+      }
+
+      :host([required][dir="rtl"]) [part="label"] {
+        padding-left: 1em;
+        padding-right: 0;
+      }
+
+      :host([dir="rtl"]) [part="label"]::after {
+        right: auto;
+        left: 0;
+      }
+
+      :host([dir="rtl"]) [part="error-message"] {
+        margin-left: 0;
+        margin-right: calc(var(--lumo-border-radius-m) / 4);
+      }
+
     </style>
   </template>
 </dom-module>`;
@@ -25519,12 +26568,12 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @element vaadin-checkbox-group
 	 * @demo demo/index.html
 	 */
-	class CheckboxGroupElement extends ThemableMixin(PolymerElement) {
+	class CheckboxGroupElement extends ThemableMixin(DirMixin(PolymerElement)) {
 	  static get template() {
 	    return html`
     <style>
@@ -25681,7 +26730,11 @@ public class Application extends SpringBootServletInitializer {
 	        }
 	      });
 
-	      if (addedCheckboxes.some(checkbox => !checkbox.hasAttribute('value'))) {
+	      const hasValue = checkbox => {
+	        const {value} = checkbox;
+	        return checkbox.hasAttribute('value') || value && value !== 'on';
+	      };
+	      if (!addedCheckboxes.every(hasValue)) {
 	        console.warn('Please add value attribute to all checkboxes in checkbox group');
 	      }
 	    });
@@ -26052,6 +27105,24 @@ public class Application extends SpringBootServletInitializer {
         margin-left: 0;
         margin-right: 0;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="prefix"] {
+        margin-left: 0.25em;
+        margin-right: -0.25em;
+      }
+
+      :host([dir="rtl"]) [part="suffix"] {
+        margin-left: -0.25em;
+        margin-right: 0.25em;
+      }
+
+      :host([dir="rtl"][theme~="icon"]) [part="prefix"],
+      :host([dir="rtl"][theme~="icon"]) [part="suffix"] {
+        margin-left: 0;
+        margin-right: 0;
+      }
     </style>
   </template>
 </dom-module>`;
@@ -26097,11 +27168,11 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes GestureEventListeners
 	 * @demo demo/index.html
 	 */
 	class ButtonElement extends
@@ -26159,6 +27230,7 @@ public class Application extends SpringBootServletInitializer {
         position: absolute;
         top: 0;
         left: 0;
+        right: 0;
         width: 100%;
         height: 100%;
         opacity: 0;
@@ -26185,7 +27257,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.2.1';
+	    return '2.3.0';
 	  }
 
 	  ready() {
@@ -26199,6 +27271,9 @@ public class Application extends SpringBootServletInitializer {
 	    this.$.button.setAttribute('role', 'presentation');
 
 	    this._addActiveListeners();
+
+	    // Fix for https://github.com/vaadin/vaadin-button-flow/issues/120
+	    window.ShadyDOM && window.ShadyDOM.flush();
 	  }
 
 	  /**
@@ -26416,7 +27491,7 @@ public class Application extends SpringBootServletInitializer {
 	 * That's why we have this helper here.
 	 * See https://github.com/PolymerElements/iron-overlay-behavior/issues/282
 	 */
-	const FocusablesHelper = {
+	class FocusablesHelper {
 
 	  /**
 	   * Returns a sorted array of tabbable nodes, including the root node.
@@ -26425,7 +27500,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @param {!Node} node
 	   * @return {!Array<!HTMLElement>}
 	   */
-	  getTabbableNodes: function(node) {
+	  static getTabbableNodes(node) {
 	    const result = [];
 	    // If there is at least one element with tabindex > 0, we need to sort
 	    // the final array by tabindex.
@@ -26434,14 +27509,14 @@ public class Application extends SpringBootServletInitializer {
 	      return this._sortByTabIndex(result);
 	    }
 	    return result;
-	  },
+	  }
 
 	  /**
 	   * Returns if a element is focusable.
 	   * @param {!HTMLElement} element
 	   * @return {boolean}
 	   */
-	  isFocusable: function(element) {
+	  static isFocusable(element) {
 	    // From http://stackoverflow.com/a/1600194/4228703:
 	    // There isn't a definite list, it's up to the browser. The only
 	    // standard we have is DOM Level 2 HTML
@@ -26458,7 +27533,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	    // Elements that can be focused even if they have [disabled] attribute.
 	    return matches$1.call(element, 'a[href], area[href], iframe, [tabindex], [contentEditable]');
-	  },
+	  }
 
 	  /**
 	   * Returns if a element is tabbable. To be tabbable, a element must be
@@ -26466,11 +27541,11 @@ public class Application extends SpringBootServletInitializer {
 	   * @param {!HTMLElement} element
 	   * @return {boolean}
 	   */
-	  isTabbable: function(element) {
+	  static isTabbable(element) {
 	    return this.isFocusable(element) &&
 	        matches$1.call(element, ':not([tabindex="-1"])') &&
 	        this._isVisible(element);
-	  },
+	  }
 
 	  /**
 	   * Returns the normalized element tabindex. If not focusable, returns -1.
@@ -26481,13 +27556,13 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {!number}
 	   * @private
 	   */
-	  _normalizedTabIndex: function(element) {
+	  static _normalizedTabIndex(element) {
 	    if (this.isFocusable(element)) {
 	      const tabIndex = element.getAttribute('tabindex') || 0;
 	      return Number(tabIndex);
 	    }
 	    return -1;
-	  },
+	  }
 
 	  /**
 	   * Searches for nodes that are tabbable and adds them to the `result` array.
@@ -26497,7 +27572,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {boolean}
 	   * @private
 	   */
-	  _collectTabbableNodes: function(node, result) {
+	  static _collectTabbableNodes(node, result) {
 	    // If not an element or not visible, no need to explore children.
 	    if (node.nodeType !== Node.ELEMENT_NODE || !this._isVisible(node)) {
 	      return false;
@@ -26535,7 +27610,7 @@ public class Application extends SpringBootServletInitializer {
 	      }
 	    }
 	    return needsSort;
-	  },
+	  }
 
 	  /**
 	   * Returns false if the element has `visibility: hidden` or `display: none`
@@ -26543,7 +27618,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {boolean}
 	   * @private
 	   */
-	  _isVisible: function(element) {
+	  static _isVisible(element) {
 	    // Check inline style first to save a re-flow. If looks good, check also
 	    // computed style.
 	    let style = element.style;
@@ -26552,7 +27627,7 @@ public class Application extends SpringBootServletInitializer {
 	      return (style.visibility !== 'hidden' && style.display !== 'none');
 	    }
 	    return false;
-	  },
+	  }
 
 	  /**
 	   * Sorts an array of tabbable elements by tabindex. Returns a new array.
@@ -26560,7 +27635,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {!Array<!HTMLElement>}
 	   * @private
 	   */
-	  _sortByTabIndex: function(tabbables) {
+	  static _sortByTabIndex(tabbables) {
 	    // Implement a merge sort as Array.prototype.sort does a non-stable sort
 	    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort
 	    const len = tabbables.length;
@@ -26571,7 +27646,7 @@ public class Application extends SpringBootServletInitializer {
 	    const left = this._sortByTabIndex(tabbables.slice(0, pivot));
 	    const right = this._sortByTabIndex(tabbables.slice(pivot));
 	    return this._mergeSortByTabIndex(left, right);
-	  },
+	  }
 
 	  /**
 	   * Merge sort iterator, merges the two arrays into one, sorted by tab index.
@@ -26580,7 +27655,7 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {!Array<!HTMLElement>}
 	   * @private
 	   */
-	  _mergeSortByTabIndex: function(left, right) {
+	  static _mergeSortByTabIndex(left, right) {
 	    const result = [];
 	    while ((left.length > 0) && (right.length > 0)) {
 	      if (this._hasLowerTabOrder(left[0], right[0])) {
@@ -26591,7 +27666,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    return result.concat(left, right);
-	  },
+	  }
 
 	  /**
 	   * Returns if element `a` has lower tab order compared to element `b`
@@ -26604,14 +27679,14 @@ public class Application extends SpringBootServletInitializer {
 	   * @return {boolean}
 	   * @private
 	   */
-	  _hasLowerTabOrder: function(a, b) {
+	  static _hasLowerTabOrder(a, b) {
 	    // Normalize tabIndexes
 	    // e.g. in Firefox `<div contenteditable>` has `tabIndex = -1`
 	    const ati = Math.max(a.tabIndex, 0);
 	    const bti = Math.max(b.tabIndex, 0);
 	    return (ati === 0 || bti === 0) ? bti > ati : ati > bti;
 	  }
-	};
+	}
 
 	/**
 	@license
@@ -26641,8 +27716,7 @@ public class Application extends SpringBootServletInitializer {
 
 	  // NOTE(platosha): Have to use an awkward IIFE returning class here
 	  // to prevent this class from showing up in analysis.json & API docs.
-	  /** @private */
-	  const klass = (() => class extends HTMLElement {
+	  const klass = (() => /** @private */ class extends HTMLElement {
 	    static get is() {
 	      return is;
 	    }
@@ -26759,11 +27833,11 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
-	class OverlayElement extends ThemableMixin(PolymerElement) {
+	class OverlayElement extends ThemableMixin(DirMixin(PolymerElement)) {
 	  static get template() {
 	    return html`
     <style>
@@ -26850,6 +27924,9 @@ public class Application extends SpringBootServletInitializer {
 
 	  static get properties() {
 	    return {
+	      /**
+	       * When true, the overlay is visible and attached to body.
+	       */
 	      opened: {
 	        type: Boolean,
 	        notify: true,
@@ -26859,6 +27936,7 @@ public class Application extends SpringBootServletInitializer {
 
 	      /**
 	       * Owner element passed with renderer function
+	       * @type {HTMLElement}
 	       */
 	      owner: Element,
 
@@ -26869,11 +27947,13 @@ public class Application extends SpringBootServletInitializer {
 	       * - `root` The root container DOM element. Append your content to it.
 	       * - `owner` The host element of the renderer function.
 	       * - `model` The object with the properties related with rendering.
+	       * @type {OverlayRenderer | null | undefined}
 	       */
 	      renderer: Function,
 
 	      /**
 	       * The template of the overlay content.
+	       * @type {HTMLTemplateElement | null | undefined}
 	       */
 	      template: {
 	        type: Object,
@@ -26889,12 +27969,17 @@ public class Application extends SpringBootServletInitializer {
 
 	      /**
 	       * References the content container after the template is stamped.
+	       * @type {!HTMLElement | undefined}
 	       */
 	      content: {
 	        type: Object,
 	        notify: true
 	      },
 
+	      /**
+	       * When true the overlay has backdrop on top of content when opened.
+	       * @type {boolean}
+	       */
 	      withBackdrop: {
 	        type: Boolean,
 	        value: false,
@@ -26909,6 +27994,7 @@ public class Application extends SpringBootServletInitializer {
 	      /**
 	       * When true the overlay won't disable the main content, showing
 	       * it doesn’t change the functionality of the user interface.
+	       * @type {boolean}
 	       */
 	      modeless: {
 	        type: Boolean,
@@ -26920,6 +28006,7 @@ public class Application extends SpringBootServletInitializer {
 	      /**
 	       * When set to true, the overlay is hidden. This also closes the overlay
 	       * immediately in case there is a closing animation in progress.
+	       * @type {boolean}
 	       */
 	      hidden: {
 	        type: Boolean,
@@ -26930,6 +28017,7 @@ public class Application extends SpringBootServletInitializer {
 	      /**
 	       * When true move focus to the first focusable element in the overlay,
 	       * or to the overlay if there are no focusable elements.
+	       * @type {boolean}
 	       */
 	      focusTrap: {
 	        type: Boolean,
@@ -26938,38 +28026,50 @@ public class Application extends SpringBootServletInitializer {
 
 	      /**
 	       * Set to true to enable restoring of focus when overlay is closed.
+	       * @type {boolean}
 	       */
 	      restoreFocusOnClose: {
 	        type: Boolean,
 	        value: false,
 	      },
 
+	      /** @private */
 	      _mouseDownInside: {
 	        type: Boolean
 	      },
 
+	      /** @private */
 	      _mouseUpInside: {
 	        type: Boolean
 	      },
 
+	      /** @private */
 	      _instance: {
 	        type: Object
 	      },
 
+	      /** @private */
 	      _originalContentPart: Object,
 
+	      /** @private */
 	      _contentNodes: Array,
 
+	      /** @private */
 	      _oldOwner: Element,
 
+	      /** @private */
 	      _oldModel: Object,
 
+	      /** @private */
 	      _oldTemplate: Object,
 
+	      /** @private */
 	      _oldInstanceProps: Object,
 
+	      /** @private */
 	      _oldRenderer: Object,
 
+	      /** @private */
 	      _oldOpened: Boolean
 	    };
 	  }
@@ -27012,6 +28112,7 @@ public class Application extends SpringBootServletInitializer {
 	    this.$.backdrop.addEventListener('click', () => {});
 	  }
 
+	  /** @private */
 	  _detectIosNavbar() {
 	    if (!this.opened) {
 	      return;
@@ -27031,11 +28132,16 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	   * @param {!Array<!Element>} nodes
+	   * @protected
+	   */
 	  _setTemplateFromNodes(nodes) {
 	    this.template = nodes.filter(node => node.localName && node.localName === 'template')[0] || this.template;
 	  }
 
 	  /**
+	   * @param {Event=} sourceEvent
 	   * @event vaadin-overlay-close
 	   * fired before the `vaadin-overlay` will be closed. If canceled the closing of the overlay is canceled as well.
 	   */
@@ -27062,14 +28168,17 @@ public class Application extends SpringBootServletInitializer {
 	    this._boundIosResizeListener && window.removeEventListener('resize', this._boundIosResizeListener);
 	  }
 
+	  /** @private */
 	  _ironOverlayCanceled(event) {
 	    event.preventDefault();
 	  }
 
+	  /** @private */
 	  _mouseDownListener(event) {
 	    this._mouseDownInside = event.composedPath().indexOf(this.$.overlay) >= 0;
 	  }
 
+	  /** @private */
 	  _mouseUpListener(event) {
 	    this._mouseUpInside = event.composedPath().indexOf(this.$.overlay) >= 0;
 	  }
@@ -27081,6 +28190,8 @@ public class Application extends SpringBootServletInitializer {
 	   *
 	   * @event vaadin-overlay-outside-click
 	   * fired before the `vaadin-overlay` will be closed on outside click. If canceled the closing of the overlay is canceled as well.
+	   *
+	   * @private
 	   */
 	  _outsideClickListener(event) {
 	    if (event.composedPath().indexOf(this.$.overlay) !== -1 ||
@@ -27104,6 +28215,8 @@ public class Application extends SpringBootServletInitializer {
 	  /**
 	   * @event vaadin-overlay-escape-press
 	   * fired before the `vaadin-overlay` will be closed on ESC button press. If canceled the closing of the overlay is canceled as well.
+	   *
+	   * @private
 	   */
 	  _keydownListener(event) {
 	    if (!this._last) {
@@ -27111,7 +28224,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    // TAB
-	    if (event.key === 'Tab' && this.focusTrap) {
+	    if (event.key === 'Tab' && this.focusTrap && !event.defaultPrevented) {
 	      // if only tab key is pressed, cycle forward, else cycle backwards.
 	      this._cycleTab(event.shiftKey ? -1 : 1);
 
@@ -27128,6 +28241,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _ensureTemplatized() {
 	    this._setTemplateFromNodes(Array.from(this.children));
 	  }
@@ -27135,6 +28249,8 @@ public class Application extends SpringBootServletInitializer {
 	  /**
 	   * @event vaadin-overlay-open
 	   * fired after the `vaadin-overlay` is opened.
+	   *
+	   * @private
 	   */
 	  _openedChanged(opened, wasOpened) {
 	    if (!this._instance) {
@@ -27167,21 +28283,34 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @private */
 	  _hiddenChanged(hidden) {
 	    if (hidden && this.hasAttribute('closing')) {
 	      this._flushAnimation('closing');
 	    }
 	  }
 
+	  /**
+	   * @return {boolean}
+	   * @protected
+	   */
 	  _shouldAnimate() {
 	    const name = getComputedStyle(this).getPropertyValue('animation-name');
 	    const hidden = getComputedStyle(this).getPropertyValue('display') === 'none';
 	    return !hidden && name && name != 'none';
 	  }
 
+	  /**
+	   * @param {string} type
+	   * @param {Function} callback
+	   * @protected
+	   */
 	  _enqueueAnimation(type, callback) {
 	    const handler = `__${type}Handler`;
-	    const listener = () => {
+	    const listener = event => {
+	      if (event && event.target !== this) {
+	        return;
+	      }
 	      callback();
 	      this.removeEventListener('animationend', listener);
 	      delete this[handler];
@@ -27190,6 +28319,10 @@ public class Application extends SpringBootServletInitializer {
 	    this.addEventListener('animationend', listener);
 	  }
 
+	  /**
+	   * @param {string} type
+	   * @protected
+	   */
 	  _flushAnimation(type) {
 	    const handler = `__${type}Handler`;
 	    if (typeof this[handler] === 'function') {
@@ -27197,20 +28330,21 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _animatedOpening() {
 	    if (this.parentNode === document.body && this.hasAttribute('closing')) {
 	      this._flushAnimation('closing');
 	    }
 	    this._attachOverlay();
+	    if (!this.modeless) {
+	      this._enterModalState();
+	    }
 	    this.setAttribute('opening', '');
 
 	    const finishOpening = () => {
-	      this.removeAttribute('opening');
 	      document.addEventListener('iron-overlay-canceled', this._boundIronOverlayCanceledListener);
 
-	      if (!this.modeless) {
-	        this._enterModalState();
-	      }
+	      this.removeAttribute('opening');
 	    };
 
 	    if (this._shouldAnimate()) {
@@ -27220,41 +28354,43 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _attachOverlay() {
 	    this._placeholder = document.createComment('vaadin-overlay-placeholder');
 	    this.parentNode.insertBefore(this._placeholder, this);
 	    document.body.appendChild(this);
+	    this.bringToFront();
 	  }
 
+	  /** @protected */
 	  _animatedClosing() {
 	    if (this.hasAttribute('opening')) {
 	      this._flushAnimation('opening');
 	    }
 	    if (this._placeholder) {
+	      this._exitModalState();
+
+	      if (this.restoreFocusOnClose && this.__restoreFocusNode) {
+	        // If the activeElement is `<body>` or inside the overlay,
+	        // we are allowed to restore the focus. In all the other
+	        // cases focus might have been moved elsewhere by another
+	        // component or by the user interaction (e.g. click on a
+	        // button outside the overlay).
+	        const activeElement = this._getActiveElement();
+
+	        if (activeElement === document.body || this._deepContains(activeElement)) {
+	          this.__restoreFocusNode.focus();
+	        }
+	        this.__restoreFocusNode = null;
+	      }
+
 	      this.setAttribute('closing', '');
 
 	      const finishClosing = () => {
-	        this.shadowRoot.querySelector('[part="overlay"]').style.removeProperty('pointer-events');
-
-	        this._exitModalState();
-
 	        document.removeEventListener('iron-overlay-canceled', this._boundIronOverlayCanceledListener);
 	        this._detachOverlay();
+	        this.shadowRoot.querySelector('[part="overlay"]').style.removeProperty('pointer-events');
 	        this.removeAttribute('closing');
-
-	        if (this.restoreFocusOnClose && this.__restoreFocusNode) {
-	          // If the activeElement is `<body>` or inside the overlay,
-	          // we are allowed to restore the focus. In all the other
-	          // cases focus might have been moved elsewhere by another
-	          // component or by the user interaction (e.g. click on a
-	          // button outside the overlay).
-	          const activeElement = this._getActiveElement();
-
-	          if (activeElement === document.body || this._deepContains(activeElement)) {
-	            this.__restoreFocusNode.focus();
-	          }
-	          this.__restoreFocusNode = null;
-	        }
 	      };
 
 	      if (this._shouldAnimate()) {
@@ -27265,25 +28401,32 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _detachOverlay() {
 	    this._placeholder.parentNode.insertBefore(this, this._placeholder);
 	    this._placeholder.parentNode.removeChild(this._placeholder);
 	  }
 
 	  /**
-	   * Returns all attached overlays.
+	   * Returns all attached overlays in visual stacking order.
+	   * @private
 	   */
 	  static get __attachedInstances() {
-	    return Array.from(document.body.children).filter(el => el instanceof OverlayElement);
+	    return Array.from(document.body.children)
+	      .filter(el => el instanceof OverlayElement && !el.hasAttribute('closing'))
+	      .sort((a, b) => (a.__zIndex - b.__zIndex) || 0);
 	  }
 
 	  /**
 	   * returns true if this is the last one in the opened overlays stack
+	   * @return {boolean}
+	   * @protected
 	   */
 	  get _last() {
 	    return this === OverlayElement.__attachedInstances.pop();
 	  }
 
+	  /** @private */
 	  _modelessChanged(modeless) {
 	    if (!modeless) {
 	      if (this.opened) {
@@ -27296,6 +28439,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _addGlobalListeners() {
 	    document.addEventListener('mousedown', this._boundMouseDownListener);
 	    document.addEventListener('mouseup', this._boundMouseUpListener);
@@ -27305,6 +28449,7 @@ public class Application extends SpringBootServletInitializer {
 	    document.addEventListener('keydown', this._boundKeydownListener);
 	  }
 
+	  /** @protected */
 	  _enterModalState() {
 	    if (document.body.style.pointerEvents !== 'none') {
 	      // Set body pointer-events to 'none' to disable mouse interactions with
@@ -27315,12 +28460,13 @@ public class Application extends SpringBootServletInitializer {
 
 	    // Disable pointer events in other attached overlays
 	    OverlayElement.__attachedInstances.forEach(el => {
-	      if (el !== this && !el.hasAttribute('opening') && !el.hasAttribute('closing')) {
+	      if (el !== this) {
 	        el.shadowRoot.querySelector('[part="overlay"]').style.pointerEvents = 'none';
 	      }
 	    });
 	  }
 
+	  /** @protected */
 	  _removeGlobalListeners() {
 	    document.removeEventListener('mousedown', this._boundMouseDownListener);
 	    document.removeEventListener('mouseup', this._boundMouseUpListener);
@@ -27328,6 +28474,7 @@ public class Application extends SpringBootServletInitializer {
 	    document.removeEventListener('keydown', this._boundKeydownListener);
 	  }
 
+	  /** @protected */
 	  _exitModalState() {
 	    if (this._previousDocumentPointerEvents !== undefined) {
 	      // Restore body pointer-events
@@ -27352,6 +28499,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @protected */
 	  _removeOldContent() {
 	    if (!this.content || !this._contentNodes) {
 	      return;
@@ -27378,6 +28526,11 @@ public class Application extends SpringBootServletInitializer {
 	    this.content = undefined;
 	  }
 
+	  /**
+	   * @param {!HTMLTemplateElement} template
+	   * @param {object} instanceProps
+	   * @protected
+	   */
 	  _stampOverlayTemplate(template, instanceProps) {
 	    this._removeOldContent();
 
@@ -27451,6 +28604,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @private */
 	  _removeNewRendererOrTemplate(template, oldTemplate, renderer, oldRenderer) {
 	    if (template !== oldTemplate) {
 	      this.template = undefined;
@@ -27468,6 +28622,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /** @private */
 	  _templateOrRendererChanged(template, renderer, owner, model, instanceProps, opened) {
 	    if (template && renderer) {
 	      this._removeNewRendererOrTemplate(template, this._oldTemplate, renderer, this._oldRenderer);
@@ -27505,15 +28660,30 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	   * @param {Element} element
+	   * @return {boolean}
+	   * @protected
+	   */
 	  _isFocused(element) {
 	    return element && element.getRootNode().activeElement === element;
 	  }
 
+	  /**
+	   * @param {Element[]} elements
+	   * @return {number}
+	   * @protected
+	   */
 	  _focusedIndex(elements) {
 	    elements = elements || this._getFocusableElements();
 	    return elements.indexOf(elements.filter(this._isFocused).pop());
 	  }
 
+	  /**
+	   * @param {number} increment
+	   * @param {number | undefined} index
+	   * @protected
+	   */
 	  _cycleTab(increment, index) {
 	    const focusableElements = this._getFocusableElements();
 
@@ -27534,11 +28704,19 @@ public class Application extends SpringBootServletInitializer {
 	    focusableElements[index].focus();
 	  }
 
+	  /**
+	   * @return {!Array<!HTMLElement>}
+	   * @protected
+	   */
 	  _getFocusableElements() {
 	    // collect all focusable elements
 	    return FocusablesHelper.getTabbableNodes(this.$.overlay);
 	  }
 
+	  /**
+	   * @return {!Element}
+	   * @protected
+	   */
 	  _getActiveElement() {
 	    let active = document._activeElement || document.activeElement;
 	    // document.activeElement can be null
@@ -27555,6 +28733,11 @@ public class Application extends SpringBootServletInitializer {
 	    return active;
 	  }
 
+	  /**
+	   * @param {!Node} node
+	   * @return {boolean}
+	   * @protected
+	   */
 	  _deepContains(node) {
 	    if (this.contains(node)) {
 	      return true;
@@ -27566,6 +28749,20 @@ public class Application extends SpringBootServletInitializer {
 	      n = n.parentNode || n.host;
 	    }
 	    return n === this;
+	  }
+
+	  /**
+	   * Brings the overlay as visually the frontmost one
+	   */
+	  bringToFront() {
+	    let zIndex = '';
+	    const frontmost = OverlayElement.__attachedInstances.filter(o => o !== this).pop();
+	    if (frontmost) {
+	      const frontmostZIndex = frontmost.__zIndex;
+	      zIndex = frontmostZIndex + 1;
+	    }
+	    this.style.zIndex = zIndex;
+	    this.__zIndex = zIndex || parseFloat(getComputedStyle(this).zIndex);
 	  }
 	}
 
@@ -28123,7 +29320,33 @@ public class Application extends SpringBootServletInitializer {
 
 	document.head.appendChild($_documentContainer$j.content);
 
-	const $_documentContainer$k = html`<dom-module id="lumo-text-field" theme-for="vaadin-text-field">
+	const $_documentContainer$k = html`<dom-module id="lumo-date-picker" theme-for="vaadin-date-picker">
+  <template>
+    <style include="lumo-field-button">
+      :host {
+        outline: none;
+      }
+
+      [part="toggle-button"]::before {
+        content: var(--lumo-icons-calendar);
+      }
+
+      [part="clear-button"]::before {
+        content: var(--lumo-icons-cross);
+      }
+
+      @media (max-width: 420px), (max-height: 420px) {
+        [part="overlay-content"] {
+          height: 70vh;
+        }
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$k.content);
+
+	const $_documentContainer$l = html`<dom-module id="lumo-text-field" theme-for="vaadin-text-field">
   <template>
     <style include="lumo-required-field lumo-field-button">
       :host {
@@ -28161,8 +29384,8 @@ public class Application extends SpringBootServletInitializer {
       }
 
       [part="value"]:focus,
-      [part="input-field"] ::slotted(input):focus,
-      [part="input-field"] ::slotted(textarea):focus {
+      :host([focused]) [part="input-field"] ::slotted(input),
+      :host([focused]) [part="input-field"] ::slotted(textarea) {
         -webkit-mask-image: none;
         mask-image: none;
       }
@@ -28354,6 +29577,11 @@ public class Application extends SpringBootServletInitializer {
 
       /* Text align */
 
+      :host([theme~="align-left"]) [part="value"] {
+        text-align: left;
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
       :host([theme~="align-center"]) [part="value"] {
         text-align: center;
         --_lumo-text-field-overflow-mask-image: none;
@@ -28371,6 +29599,12 @@ public class Application extends SpringBootServletInitializer {
         }
       }
 
+      @-moz-document url-prefix() {
+        /* Firefox is smart enough to align overflowing text to right */
+        :host([theme~="align-left"]) [part="value"] {
+          --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent 0.25em, #000 1.5em);
+        }
+      }
       /* Slotted content */
 
       [part="input-field"] ::slotted(:not([part]):not(iron-icon):not(input):not(textarea)) {
@@ -28395,20 +29629,74 @@ public class Application extends SpringBootServletInitializer {
       [part="clear-button"]::before {
         content: var(--lumo-icons-cross);
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="input-field"]::after {
+        transform-origin: 0% 0;
+      }
+
+      :host([dir="rtl"]) [part="value"],
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input),
+      :host([dir="rtl"]) [part="input-field"] ::slotted(textarea) {
+        --_lumo-text-field-overflow-mask-image: linear-gradient(to right, transparent, #000 1.25em);
+      }
+
+      :host([dir="rtl"]) [part="value"]:focus,
+      :host([focused][dir="rtl"]) [part="input-field"] ::slotted(input),
+      :host([focused][dir="rtl"]) [part="input-field"] ::slotted(textarea) {
+        -webkit-mask-image: none;
+        mask-image: none;
+      }
+
+      @-moz-document url-prefix() {
+        :host([dir="rtl"]) [part="value"],
+        :host([dir="rtl"]) [part="input-field"] ::slotted(input),
+        :host([dir="rtl"]) [part="input-field"] ::slotted(textarea),
+        :host([dir="rtl"]) [part="input-field"] ::slotted([part="value"]) {
+          mask-image: var(--_lumo-text-field-overflow-mask-image);
+        }
+      }
+
+      :host([theme~="align-left"][dir="rtl"]) [part="value"] {
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
+      :host([theme~="align-center"][dir="rtl"]) [part="value"] {
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
+      :host([theme~="align-right"][dir="rtl"]) [part="value"] {
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
+      @-moz-document url-prefix() {
+        /* Firefox is smart enough to align overflowing text to right */
+        :host([theme~="align-right"][dir="rtl"]) [part="value"] {
+          --_lumo-text-field-overflow-mask-image: linear-gradient(to right, transparent 0.25em, #000 1.5em);
+        }
+      }
+
+      @-moz-document url-prefix() {
+        /* Firefox is smart enough to align overflowing text to right */
+        :host([theme~="align-left"][dir="rtl"]) [part="value"] {
+          --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent 0.25em, #000 1.5em);
+        }
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$k.content);
+	document.head.appendChild($_documentContainer$l.content);
 
 	/**
 	@license
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$l = document.createElement('template');
+	const $_documentContainer$m = document.createElement('template');
 
-	$_documentContainer$l.innerHTML = `<dom-module id="vaadin-text-field-shared-styles">
+	$_documentContainer$m.innerHTML = `<dom-module id="vaadin-text-field-shared-styles">
   <template>
     <style>
       :host {
@@ -28508,12 +29796,12 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$l.content);
+	document.head.appendChild($_documentContainer$m.content);
 
 	const HOST_PROPS = {
 	  default: ['list', 'autofocus', 'pattern', 'autocapitalize', 'autocorrect', 'maxlength',
-	    'minlength', 'name', 'placeholder', 'autocomplete', 'title'],
-	  accessible: ['disabled', 'readonly', 'required', 'invalid']
+	    'minlength', 'name', 'placeholder', 'autocomplete', 'title', 'disabled', 'readonly', 'required'],
+	  accessible: ['invalid']
 	};
 
 	const PROP_TYPE = {
@@ -28524,7 +29812,7 @@ public class Application extends SpringBootServletInitializer {
 
 	/**
 	 * @polymerMixin
-	 * @mixes Vaadin.ControlStateMixin
+	 * @mixes ControlStateMixin
 	 */
 	const TextFieldMixin = subclass => class VaadinTextFieldMixin extends ControlStateMixin(subclass) {
 	  static get properties() {
@@ -28697,6 +29985,18 @@ public class Application extends SpringBootServletInitializer {
 	        type: Boolean
 	      },
 
+	      /**
+	       * A pattern matched against individual characters the user inputs.
+	       * When set, the field will prevent:
+	       * - `keyDown` events if the entered key doesn't match `/^_enabledCharPattern$/`
+	       * - `paste` events if the pasted text doesn't match `/^_enabledCharPattern*$/`
+	       * - `drop` events if the dropped text doesn't match `/^_enabledCharPattern*$/`
+	       *
+	       * For example, to enable entering only numbers and minus signs,
+	       * `_enabledCharPattern = "[\\d-]"`
+	       */
+	      _enabledCharPattern: String,
+
 	      _labelId: String,
 
 	      _errorId: String,
@@ -28711,17 +30011,9 @@ public class Application extends SpringBootServletInitializer {
 	      '_hostAccessiblePropsChanged(' + HOST_PROPS.accessible.join(', ') + ')',
 	      '_getActiveErrorId(invalid, errorMessage, _errorId)',
 	      '_getActiveLabelId(label, _labelId, _inputId)',
-	      '__observeOffsetHeight(errorMessage, invalid, label)'
+	      '__observeOffsetHeight(errorMessage, invalid, label)',
+	      '__enabledCharPatternChanged(_enabledCharPattern)'
 	    ];
-	  }
-
-	  constructor() {
-	    super();
-	    // This complex observer needs to be added dynamically here (instead of defining it above in the `get observers()`)
-	    // so that it runs after complex observers of inheriting classes. Otherwise e.g. `_stepOrMinChanged()` observer of
-	    // vaadin-number-field would run after this and the `min` and `step` properties would not yet be propagated to
-	    // the `inputElement` when this runs.
-	    this._createMethodObserver('__constraintsChanged(required, minlength, maxlength, pattern, min, max, step)');
 	  }
 
 	  get focusElement() {
@@ -28744,6 +30036,14 @@ public class Application extends SpringBootServletInitializer {
 
 	  get _slottedTagName() {
 	    return 'input';
+	  }
+
+	  _createConstraintsObserver() {
+	    // This complex observer needs to be added dynamically here (instead of defining it above in the `get observers()`)
+	    // so that it runs after complex observers of inheriting classes. Otherwise e.g. `_stepOrMinChanged()` observer of
+	    // vaadin-number-field would run after this and the `min` and `step` properties would not yet be propagated to
+	    // the `inputElement` when this runs.
+	    this._createMethodObserver('_constraintsChanged(required, minlength, maxlength, pattern)');
 	  }
 
 	  _onInput(e) {
@@ -28771,7 +30071,9 @@ public class Application extends SpringBootServletInitializer {
 	    if (!e.__fromClearButton) {
 	      this.__userInput = true;
 	    }
+
 	    this.value = e.target.value;
+	    this.__userInput = false;
 	  }
 
 	  // NOTE(yuriy): Workaround needed for IE11 and Edge for proper displaying
@@ -28818,7 +30120,6 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    if (this.__userInput) {
-	      this.__userInput = false;
 	      return;
 	    } else if (newVal !== undefined) {
 	      this.inputElement.value = newVal;
@@ -28881,10 +30182,10 @@ public class Application extends SpringBootServletInitializer {
 	    const input = this.inputElement;
 	    const attributeNames = HOST_PROPS[type];
 
-	    if (type === 'accessible') {
+	    if (type === PROP_TYPE.ACCESSIBLE) {
 	      attributeNames.forEach((attr, index) => {
 	        this._setOrToggleAttribute(attr, attributesValues[index], input);
-	        this._setOrToggleAttribute(`aria-${attr}`, attributesValues[index], input);
+	        this._setOrToggleAttribute(`aria-${attr}`, attributesValues[index] ? 'true' : false, input);
 	      });
 	    } else {
 	      attributeNames.forEach((attr, index) => {
@@ -28905,14 +30206,12 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
-	  __constraintsChanged(required, minlength, maxlength, pattern, min, max, step) {
+	  _constraintsChanged(required, minlength, maxlength, pattern) {
 	    if (!this.invalid) {
 	      return;
 	    }
 
-	    const isNumUnset = n => (!n && n !== 0);
-
-	    if (!required && !minlength && !maxlength && !pattern && isNumUnset(min) && isNumUnset(max)) {
+	    if (!required && !minlength && !maxlength && !pattern) {
 	      this.invalid = false;
 	    } else {
 	      this.validate();
@@ -28924,7 +30223,9 @@ public class Application extends SpringBootServletInitializer {
 	   * @returns {boolean}
 	   */
 	  checkValidity() {
-	    if (this.required || this.pattern || this.maxlength || this.minlength) {
+	    // Note (Yuriy): `__forceCheckValidity` is used in containing components (i.e. `vaadin-date-picker`) in order
+	    // to force the checkValidity instead of returning the previous invalid state.
+	    if (this.required || this.pattern || this.maxlength || this.minlength || this.__forceCheckValidity) {
 	      return this.inputElement.checkValidity();
 	    } else {
 	      return !this.invalid;
@@ -28936,6 +30237,9 @@ public class Application extends SpringBootServletInitializer {
 	    node.addEventListener('change', this._boundOnChange);
 	    node.addEventListener('blur', this._boundOnBlur);
 	    node.addEventListener('focus', this._boundOnFocus);
+	    node.addEventListener('paste', this._boundOnPaste);
+	    node.addEventListener('drop', this._boundOnDrop);
+	    node.addEventListener('beforeinput', this._boundOnBeforeInput);
 	  }
 
 	  _removeInputListeners(node) {
@@ -28943,15 +30247,23 @@ public class Application extends SpringBootServletInitializer {
 	    node.removeEventListener('change', this._boundOnChange);
 	    node.removeEventListener('blur', this._boundOnBlur);
 	    node.removeEventListener('focus', this._boundOnFocus);
+	    node.removeEventListener('paste', this._boundOnPaste);
+	    node.removeEventListener('drop', this._boundOnDrop);
+	    node.removeEventListener('beforeinput', this._boundOnBeforeInput);
 	  }
 
 	  ready() {
 	    super.ready();
 
+	    this._createConstraintsObserver();
+
 	    this._boundOnInput = this._onInput.bind(this);
 	    this._boundOnChange = this._onChange.bind(this);
 	    this._boundOnBlur = this._onBlur.bind(this);
 	    this._boundOnFocus = this._onFocus.bind(this);
+	    this._boundOnPaste = this._onPaste.bind(this);
+	    this._boundOnDrop = this._onDrop.bind(this);
+	    this._boundOnBeforeInput = this._onBeforeInput.bind(this);
 
 	    const defaultInput = this.shadowRoot.querySelector('[part="value"]');
 	    this._slottedInput = this.querySelector(`${this._slottedTagName}[slot="${this._slottedTagName}"]`);
@@ -29045,6 +30357,49 @@ public class Application extends SpringBootServletInitializer {
 	      this.clear();
 	      dispatchChange && this.inputElement.dispatchEvent(new Event('change', {bubbles: !this._slottedInput}));
 	    }
+
+	    if (this._enabledCharPattern && !this.__shouldAcceptKey(e)) {
+	      e.preventDefault();
+	    }
+	  }
+
+	  __shouldAcceptKey(event) {
+	    return (event.metaKey || event.ctrlKey)
+	      || !event.key // allow typing anything if event.key is not supported
+	      || event.key.length !== 1 // allow "Backspace", "ArrowLeft" etc.
+	      || this.__enabledCharRegExp.test(event.key);
+	  }
+
+	  _onPaste(e) {
+	    if (this._enabledCharPattern) {
+	      const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+	      if (!this.__enabledTextRegExp.test(pastedText)) {
+	        e.preventDefault();
+	      }
+	    }
+	  }
+
+	  _onDrop(e) {
+	    if (this._enabledCharPattern) {
+	      const draggedText = e.dataTransfer.getData('text');
+	      if (!this.__enabledTextRegExp.test(draggedText)) {
+	        e.preventDefault();
+	      }
+	    }
+	  }
+
+	  _onBeforeInput(e) {
+	    // The `beforeinput` event covers all the cases for `_enabledCharPattern`: keyboard, pasting and dropping,
+	    // but it is still experimental technology so we can't rely on it. It's used here just as an additional check,
+	    // because it seems to be the only way to detect and prevent specific keys on mobile devices. See issue #429.
+	    if (this._enabledCharPattern && e.data && !this.__enabledTextRegExp.test(e.data)) {
+	      e.preventDefault();
+	    }
+	  }
+
+	  __enabledCharPatternChanged(_enabledCharPattern) {
+	    this.__enabledCharRegExp = _enabledCharPattern && new RegExp('^' + _enabledCharPattern + '$');
+	    this.__enabledTextRegExp = _enabledCharPattern && new RegExp('^' + _enabledCharPattern + '*$');
 	  }
 
 	  _addIEListeners(node) {
@@ -29133,6 +30488,15 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  // Workaround for https://github.com/Polymer/polymer/issues/5259
+	  get __data() {
+	    return this.__dataValue || {};
+	  }
+
+	  set __data(value) {
+	    this.__dataValue = value;
+	  }
+
 	  /**
 	   * Fired when the user commits a value change.
 	   *
@@ -29212,9 +30576,9 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.TextFieldMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes TextFieldMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class TextFieldElement extends ElementMixin$1(TextFieldMixin(ThemableMixin(PolymerElement))) {
@@ -29252,7 +30616,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.4.11';
+	    return '2.6.2';
 	  }
 
 	  static get properties() {
@@ -29274,7 +30638,7 @@ public class Application extends SpringBootServletInitializer {
 	      },
 
 	      /**
-	       * Message to show to the user when validation fails.
+	       * The text usually displayed in a tooltip popup when the mouse is over the field.
 	       */
 	      title: {
 	        type: String
@@ -29285,31 +30649,79 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(TextFieldElement.is, TextFieldElement);
 
-	const $_documentContainer$m = html`<dom-module id="lumo-date-picker" theme-for="vaadin-date-picker">
+	const $_documentContainer$n = html`<dom-module id="lumo-date-picker-text-field" theme-for="vaadin-date-picker-text-field">
   <template>
-    <style include="lumo-field-button">
-      :host {
-        outline: none;
+    <style>
+      :not(*):placeholder-shown, /* to prevent broken styles on IE */
+      :host([dir="rtl"]) [part="value"]:placeholder-shown,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input:placeholder-shown) {
+        --_lumo-text-field-overflow-mask-image: none;
       }
 
-      [part="toggle-button"]::before {
-        content: var(--lumo-icons-calendar);
-      }
-
-      [part="clear-button"]::before {
-        content: var(--lumo-icons-cross);
-      }
-
-      @media (max-width: 420px), (max-height: 420px) {
-        [part="overlay-content"] {
-          height: 70vh;
-        }
+      :host([dir="rtl"]) [part="value"],
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input) {
+        --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent, #000 1.25em);
       }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$m.content);
+	document.head.appendChild($_documentContainer$n.content);
+
+	/**
+	@license
+	Copyright (c) 2019 Vaadin Ltd.
+	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
+	*/
+
+	const $_documentContainer$o = document.createElement('template');
+
+	$_documentContainer$o.innerHTML = `<dom-module id="vaadin-date-picker-text-field-styles" theme-for="vaadin-date-picker-text-field">
+  <template>
+    <style>
+      :host([dir="rtl"]) [part="input-field"] {
+        direction: ltr;
+      }
+
+      :host([dir="rtl"]) [part="value"]::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input)::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="value"]:-ms-input-placeholder,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input):-ms-input-placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$o.content);
+	/**
+	  * The text-field element for date input.
+	  *
+	  * ### Styling
+	  *
+	  * See [`<vaadin-text-field>` documentation](https://github.com/vaadin/vaadin-text-field/blob/master/src/vaadin-text-field.html)
+	  * for `<vaadin-date-picker-text-field>` parts and available slots (prefix, suffix etc.)
+	  *
+	  * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
+	  *
+	  * @extends PolymerElement
+	  */
+	class DatePickerTextFieldElement extends TextFieldElement {
+	  static get is() {
+	    return 'vaadin-date-picker-text-field';
+	  }
+	}
+
+	customElements.define(DatePickerTextFieldElement.is, DatePickerTextFieldElement);
 
 	/**
 	@license
@@ -29373,7 +30785,7 @@ public class Application extends SpringBootServletInitializer {
 	// super simple {...} lexer that returns a node tree
 	/**
 	 * @param {string} text
-	 * @return {StyleNode}
+	 * @return {!StyleNode}
 	 */
 	function lex(text) {
 	  let root = new StyleNode();
@@ -29404,7 +30816,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * @param {StyleNode} node
 	 * @param {string} text
-	 * @return {StyleNode}
+	 * @return {!StyleNode}
 	 */
 	function parseCss(node, text) {
 	  let t = text.substring(node['start'], node['end'] - 1);
@@ -29592,7 +31004,9 @@ public class Application extends SpringBootServletInitializer {
 	  const text = style.textContent;
 	  if (!styleTextSet.has(text)) {
 	    styleTextSet.add(text);
-	    const newStyle = style.cloneNode(true);
+	    const newStyle = document.createElement('style');
+	    newStyle.setAttribute('shady-unscoped', '');
+	    newStyle.textContent = text;
 	    document.head.appendChild(newStyle);
 	  }
 	}
@@ -30661,10 +32075,10 @@ public class Application extends SpringBootServletInitializer {
 	/** @type {?MutationObserver} */
 	let observer = null;
 
-	let DOCUMENT_DIR = '';
+	let documentDir = '';
 
 	function getRTL() {
-	  DOCUMENT_DIR = document.documentElement.getAttribute('dir');
+	  documentDir = document.documentElement.getAttribute('dir');
 	}
 
 	/**
@@ -30673,13 +32087,13 @@ public class Application extends SpringBootServletInitializer {
 	function setRTL(instance) {
 	  if (!instance.__autoDirOptOut) {
 	    const el = /** @type {!HTMLElement} */(instance);
-	    el.setAttribute('dir', DOCUMENT_DIR);
+	    el.setAttribute('dir', documentDir);
 	  }
 	}
 
 	function updateDirection() {
 	  getRTL();
-	  DOCUMENT_DIR = document.documentElement.getAttribute('dir');
+	  documentDir = document.documentElement.getAttribute('dir');
 	  for (let i = 0; i < DIR_INSTANCES.length; i++) {
 	    setRTL(DIR_INSTANCES[i]);
 	  }
@@ -30717,7 +32131,7 @@ public class Application extends SpringBootServletInitializer {
 	 * @param {function(new:T)} superClass Class to apply mixin to.
 	 * @return {function(new:T)} superClass with mixin applied.
 	 */
-	const DirMixin = dedupingMixin((base) => {
+	const DirMixin$1 = dedupingMixin((base) => {
 
 	  if (!SHIM_SHADOW) {
 	    if (!observer) {
@@ -30891,7 +32305,7 @@ public class Application extends SpringBootServletInitializer {
 	class DomApiNative {
 
 	  /**
-	   * @param {Node} node Node for which to create a Polymer.dom helper object.
+	   * @param {!Node} node Node for which to create a Polymer.dom helper object.
 	   */
 	  constructor(node) {
 	    if (window['ShadyDOM'] && window['ShadyDOM']['inUse']) {
@@ -30959,7 +32373,7 @@ public class Application extends SpringBootServletInitializer {
 	  /**
 	   * Returns the root node of this node.  Equivalent to `getRootNode()`.
 	   *
-	   * @return {Node} Top most element in the dom tree in which the node
+	   * @return {!Node} Top most element in the dom tree in which the node
 	   * exists. If the node is connected to a document this is either a
 	   * shadowRoot or the document; otherwise, it may be the node
 	   * itself or a node or document fragment containing it.
@@ -31138,94 +32552,6 @@ public class Application extends SpringBootServletInitializer {
 	    return this.event.composedPath();
 	  }
 	}
-
-	/**
-	 * @function
-	 * @param {boolean=} deep
-	 * @return {!Node}
-	 */
-	DomApiNative.prototype.cloneNode;
-	/**
-	 * @function
-	 * @param {!Node} node
-	 * @return {!Node}
-	 */
-	DomApiNative.prototype.appendChild;
-	/**
-	 * @function
-	 * @param {!Node} newChild
-	 * @param {Node} refChild
-	 * @return {!Node}
-	 */
-	DomApiNative.prototype.insertBefore;
-	/**
-	 * @function
-	 * @param {!Node} node
-	 * @return {!Node}
-	 */
-	DomApiNative.prototype.removeChild;
-	/**
-	 * @function
-	 * @param {!Node} oldChild
-	 * @param {!Node} newChild
-	 * @return {!Node}
-	 */
-	DomApiNative.prototype.replaceChild;
-	/**
-	 * @function
-	 * @param {string} name
-	 * @param {string} value
-	 * @return {void}
-	 */
-	DomApiNative.prototype.setAttribute;
-	/**
-	 * @function
-	 * @param {string} name
-	 * @return {void}
-	 */
-	DomApiNative.prototype.removeAttribute;
-	/**
-	 * @function
-	 * @param {string} selector
-	 * @return {?Element}
-	 */
-	DomApiNative.prototype.querySelector;
-	/**
-	 * @function
-	 * @param {string} selector
-	 * @return {!NodeList<!Element>}
-	 */
-	DomApiNative.prototype.querySelectorAll;
-
-	/** @type {?Node} */
-	DomApiNative.prototype.parentNode;
-	/** @type {?Node} */
-	DomApiNative.prototype.firstChild;
-	/** @type {?Node} */
-	DomApiNative.prototype.lastChild;
-	/** @type {?Node} */
-	DomApiNative.prototype.nextSibling;
-	/** @type {?Node} */
-	DomApiNative.prototype.previousSibling;
-	/** @type {?HTMLElement} */
-	DomApiNative.prototype.firstElementChild;
-	/** @type {?HTMLElement} */
-	DomApiNative.prototype.lastElementChild;
-	/** @type {?HTMLElement} */
-	DomApiNative.prototype.nextElementSibling;
-	/** @type {?HTMLElement} */
-	DomApiNative.prototype.previousElementSibling;
-	/** @type {!Array<!Node>} */
-	DomApiNative.prototype.childNodes;
-	/** @type {!Array<!HTMLElement>} */
-	DomApiNative.prototype.children;
-	/** @type {?DOMTokenList} */
-	DomApiNative.prototype.classList;
-
-	/** @type {string} */
-	DomApiNative.prototype.textContent;
-	/** @type {string} */
-	DomApiNative.prototype.innerHTML;
 
 	let DomApiImpl = DomApiNative;
 
@@ -31435,6 +32761,170 @@ public class Application extends SpringBootServletInitializer {
 	}
 
 	/**
+	 * @fileoverview
+	 * @suppress {checkPrototypalTypes}
+	 * @license Copyright (c) 2017 The Polymer Project Authors. All rights reserved.
+	 * This code may only be used under the BSD style license found at
+	 * http://polymer.github.io/LICENSE.txt The complete set of authors may be found
+	 * at http://polymer.github.io/AUTHORS.txt The complete set of contributors may
+	 * be found at http://polymer.github.io/CONTRIBUTORS.txt Code distributed by
+	 * Google as part of the polymer project is also subject to an additional IP
+	 * rights grant found at http://polymer.github.io/PATENTS.txt
+	 */
+
+	const DISABLED_ATTR = 'disable-upgrade';
+
+	const findObservedAttributesGetter = (ctor) => {
+	  while (ctor) {
+	    const desc = Object.getOwnPropertyDescriptor(ctor, 'observedAttributes');
+	    if (desc) {
+	      return desc.get;
+	    }
+	    ctor = Object.getPrototypeOf(ctor.prototype).constructor;
+	  }
+	  return () => [];
+	};
+
+	/**
+	 * Element class mixin that allows the element to boot up in a non-enabled
+	 * state when the `disable-upgrade` attribute is present. This mixin is
+	 * designed to be used with element classes like PolymerElement that perform
+	 * initial startup work when they are first connected. When the
+	 * `disable-upgrade` attribute is removed, if the element is connected, it
+	 * boots up and "enables" as it otherwise would; if it is not connected, the
+	 * element boots up when it is next connected.
+	 *
+	 * Using `disable-upgrade` with PolymerElement prevents any data propagation
+	 * to the element, any element DOM from stamping, or any work done in
+	 * connected/disconnctedCallback from occuring, but it does not prevent work
+	 * done in the element constructor.
+	 *
+	 * Note, this mixin must be applied on top of any element class that
+	 * itself implements a `connectedCallback` so that it can control the work
+	 * done in `connectedCallback`. For example,
+	 *
+	 *     MyClass = DisableUpgradeMixin(class extends BaseClass {...});
+	 *
+	 * @mixinFunction
+	 * @polymer
+	 * @appliesMixin ElementMixin
+	 * @template T
+	 * @param {function(new:T)} superClass Class to apply mixin to.
+	 * @return {function(new:T)} superClass with mixin applied.
+	 */
+	const DisableUpgradeMixin = dedupingMixin((base) => {
+	  /**
+	   * @constructor
+	   * @implements {Polymer_ElementMixin}
+	   * @extends {HTMLElement}
+	   * @private
+	   */
+	  const superClass = ElementMixin(base);
+
+	  // Work around for closure bug #126934458. Using `super` in a property
+	  // getter does not work so instead we search the Base prototype for an
+	  // implementation of observedAttributes so that we can override and call
+	  // the `super` getter. Note, this is done one time ever because we assume
+	  // that `Base` is always comes from `Polymer.LegacyElementMixn`.
+	  let observedAttributesGetter = findObservedAttributesGetter(superClass);
+
+	  /**
+	   * @polymer
+	   * @mixinClass
+	   * @implements {Polymer_DisableUpgradeMixin}
+	   */
+	  class DisableUpgradeClass extends superClass {
+
+	    constructor() {
+	      super();
+	      /** @type {boolean|undefined} */
+	      this.__isUpgradeDisabled;
+	    }
+
+	    static get observedAttributes() {
+	      return observedAttributesGetter.call(this).concat(DISABLED_ATTR);
+	    }
+
+	    // Prevent element from initializing properties when it's upgrade disabled.
+	    /** @override */
+	    _initializeProperties() {
+	      if (this.hasAttribute(DISABLED_ATTR)) {
+	        this.__isUpgradeDisabled = true;
+	      } else {
+	        super._initializeProperties();
+	      }
+	    }
+
+	    // Prevent element from enabling properties when it's upgrade disabled.
+	    // Normally overriding connectedCallback would be enough, but dom-* elements
+	    /** @override */
+	    _enableProperties() {
+	      if (!this.__isUpgradeDisabled) {
+	        super._enableProperties();
+	      }
+	    }
+
+	    // If the element starts upgrade-disabled and a property is set for
+	    // which an accessor exists, the default should not be applied.
+	    // This additional check is needed because defaults are applied via
+	    // `_initializeProperties` which is called after initial properties
+	    // have been set when the element starts upgrade-disabled.
+	    /** @override */
+	    _canApplyPropertyDefault(property) {
+	      return super._canApplyPropertyDefault(property) &&
+	        !(this.__isUpgradeDisabled && this._isPropertyPending(property));
+	    }
+
+	    /**
+	     * @override
+	     * @param {string} name Attribute name.
+	     * @param {?string} old The previous value for the attribute.
+	     * @param {?string} value The new value for the attribute.
+	     * @param {?string} namespace The XML namespace for the attribute.
+	     * @return {void}
+	     */
+	    attributeChangedCallback(name, old, value, namespace) {
+	      if (name == DISABLED_ATTR) {
+	        // When disable-upgrade is removed, intialize properties and
+	        // provoke connectedCallback if the element is already connected.
+	        if (this.__isUpgradeDisabled && value == null) {
+	          super._initializeProperties();
+	          this.__isUpgradeDisabled = false;
+	          if (wrap(this).isConnected) {
+	            super.connectedCallback();
+	          }
+	        }
+	      } else {
+	        super.attributeChangedCallback(
+	            name, old, value, /** @type {null|string} */ (namespace));
+	      }
+	    }
+
+	    // Prevent element from connecting when it's upgrade disabled.
+	    // This prevents user code in `attached` from being called.
+	    /** @override */
+	    connectedCallback() {
+	      if (!this.__isUpgradeDisabled) {
+	        super.connectedCallback();
+	      }
+	    }
+
+	    // Prevent element from disconnecting when it's upgrade disabled.
+	    // This avoids allowing user code `detached` from being called without a
+	    // paired call to `attached`.
+	    /** @override */
+	    disconnectedCallback() {
+	      if (!this.__isUpgradeDisabled) {
+	        super.disconnectedCallback();
+	      }
+	    }
+
+	  }
+
+	  return DisableUpgradeClass;
+	});
+
+	/**
 	@license
 	Copyright (c) 2017 The Polymer Project Authors. All rights reserved.
 	This code may only be used under the BSD style license found at http://polymer.github.io/LICENSE.txt
@@ -31443,6 +32933,8 @@ public class Application extends SpringBootServletInitializer {
 	Code distributed by Google as part of the polymer project is also
 	subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 	*/
+
+	const DISABLED_ATTR$1 = 'disable-upgrade';
 
 	let styleInterface = window.ShadyCSS;
 
@@ -31456,11 +32948,15 @@ public class Application extends SpringBootServletInitializer {
 	 * @polymer
 	 * @appliesMixin ElementMixin
 	 * @appliesMixin GestureEventListeners
+	 * @appliesMixin DirMixin
 	 * @property isAttached {boolean} Set to `true` in this element's
 	 *   `connectedCallback` and `false` in `disconnectedCallback`
 	 * @summary Element class mixin that provides Polymer's "legacy" API
 	 */
 	const LegacyElementMixin = dedupingMixin((base) => {
+
+	  // TODO(kschaaf): Note, the `@implements {Polymer_DirMixin}` is required here
+	  // (rather than on legacyElementBase) for unknown reasons.
 	  /**
 	   * @constructor
 	   * @implements {Polymer_ElementMixin}
@@ -31469,7 +32965,20 @@ public class Application extends SpringBootServletInitializer {
 	   * @extends {HTMLElement}
 	   * @private
 	   */
-	  const legacyElementBase = DirMixin(GestureEventListeners(ElementMixin(base)));
+	  const GesturesElement = GestureEventListeners(ElementMixin(base));
+
+	  // Note, the DirMixin does nothing if css is built so avoid including it
+	  // in that case.
+
+	  /**
+	   * @constructor
+	   * @extends {GesturesElement}
+	   * @private
+	   */
+	  const legacyElementBase = builtCSS ? GesturesElement :
+	    DirMixin$1(GesturesElement);
+
+	  const observedAttributesGetter = findObservedAttributesGetter(legacyElementBase);
 
 	  /**
 	   * Map of simple names to touch action names
@@ -31499,6 +33008,13 @@ public class Application extends SpringBootServletInitializer {
 	      this.__boundListeners;
 	      /** @type {?Object<string, ?Function>} */
 	      this._debouncers;
+	      // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	      /** @type {boolean|undefined} */
+	      this.__isUpgradeDisabled;
+	      /** @type {boolean|undefined} */
+	      this.__needsAttributesAtConnected;
+	      /** @type {boolean|undefined} */
+	      this._legacyForceObservedAttributes;
 	    }
 
 	    /**
@@ -31523,15 +33039,103 @@ public class Application extends SpringBootServletInitializer {
 	    created() {}
 
 	    /**
+	     * Processes an attribute reaction when the `legacyNoObservedAttributes`
+	     * setting is in use.
+	     * @param {string} name Name of attribute that changed
+	     * @param {?string} old Old attribute value
+	     * @param {?string} value New attribute value
+	     * @return {void}
+	     */
+	    __attributeReaction(name, old, value) {
+	      if ((this.__dataAttributes && this.__dataAttributes[name]) || name === DISABLED_ATTR$1) {
+	        this.attributeChangedCallback(name, old, value, null);
+	      }
+	    }
+
+	    /**
+	     * Sets the value of an attribute.
+	     * @override
+	     * @param {string} name The name of the attribute to change.
+	     * @param {string|number|boolean|!TrustedHTML|!TrustedScriptURL|!TrustedURL} value The new attribute value.
+	     */
+	    setAttribute(name, value) {
+	      if (legacyNoObservedAttributes && !this._legacyForceObservedAttributes) {
+	        const oldValue = this.getAttribute(name);
+	        super.setAttribute(name, value);
+	        // value coerced to String for closure's benefit
+	        this.__attributeReaction(name, oldValue, String(value));
+	      } else {
+	        super.setAttribute(name, value);
+	      }
+	    }
+
+	    /**
+	     * Removes an attribute.
+	     * @override
+	     * @param {string} name The name of the attribute to remove.
+	     */
+	    removeAttribute(name) {
+	      if (legacyNoObservedAttributes && !this._legacyForceObservedAttributes) {
+	        const oldValue = this.getAttribute(name);
+	        super.removeAttribute(name);
+	        this.__attributeReaction(name, oldValue, null);
+	      } else {
+	        super.removeAttribute(name);
+	      }
+	    }
+
+	    // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	    static get observedAttributes() {
+	      if (legacyNoObservedAttributes && !this.prototype._legacyForceObservedAttributes) {
+	        // Ensure this element is property registered with the telemetry system.
+	        if (!this.hasOwnProperty(JSCompiler_renameProperty('__observedAttributes', this))) {
+	          this.__observedAttributes = [];
+	          register(this.prototype);
+	        }
+	        return this.__observedAttributes;
+	      } else {
+	        return observedAttributesGetter.call(this).concat(DISABLED_ATTR$1);
+	      }
+	    }
+
+	    // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	    // Prevent element from enabling properties when it's upgrade disabled.
+	    // Normally overriding connectedCallback would be enough, but dom-* elements
+	    /** @override */
+	    _enableProperties() {
+	      if (!this.__isUpgradeDisabled) {
+	        super._enableProperties();
+	      }
+	    }
+
+	    // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	    // If the element starts upgrade-disabled and a property is set for
+	    // which an accessor exists, the default should not be applied.
+	    // This additional check is needed because defaults are applied via
+	    // `_initializeProperties` which is called after initial properties
+	    // have been set when the element starts upgrade-disabled.
+	    /** @override */
+	    _canApplyPropertyDefault(property) {
+	      return super._canApplyPropertyDefault(property) &&
+	        !(this.__isUpgradeDisabled && this._isPropertyPending(property));
+	    }
+
+	    /**
 	     * Provides an implementation of `connectedCallback`
 	     * which adds Polymer legacy API's `attached` method.
 	     * @return {void}
 	     * @override
 	     */
 	    connectedCallback() {
-	      super.connectedCallback();
-	      this.isAttached = true;
-	      this.attached();
+	      if (this.__needsAttributesAtConnected) {
+	        this._takeAttributes();
+	      }
+	      // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	      if (!this.__isUpgradeDisabled) {
+	        super.connectedCallback();
+	        this.isAttached = true;
+	        this.attached();
+	      }
 	    }
 
 	    /**
@@ -31549,9 +33153,12 @@ public class Application extends SpringBootServletInitializer {
 	     * @override
 	     */
 	    disconnectedCallback() {
-	      super.disconnectedCallback();
-	      this.isAttached = false;
-	      this.detached();
+	      // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	      if (!this.__isUpgradeDisabled) {
+	        super.disconnectedCallback();
+	        this.isAttached = false;
+	        this.detached();
+	      }
 	    }
 
 	    /**
@@ -31574,8 +33181,21 @@ public class Application extends SpringBootServletInitializer {
 	     */
 	    attributeChangedCallback(name, old, value, namespace) {
 	      if (old !== value) {
-	        super.attributeChangedCallback(name, old, value, namespace);
-	        this.attributeChanged(name, old, value);
+	        // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	        if (name == DISABLED_ATTR$1) {
+	          // When disable-upgrade is removed, intialize properties and
+	          // provoke connectedCallback if the element is already connected.
+	          if (this.__isUpgradeDisabled && value == null) {
+	            this._initializeProperties();
+	            this.__isUpgradeDisabled = false;
+	            if (wrap(this).isConnected) {
+	              this.connectedCallback();
+	            }
+	          }
+	        } else {
+	          super.attributeChangedCallback(name, old, value, namespace);
+	          this.attributeChanged(name, old, value);
+	        }
 	      }
 	    }
 
@@ -31600,20 +33220,43 @@ public class Application extends SpringBootServletInitializer {
 	     * @suppress {invalidCasts}
 	     */
 	    _initializeProperties() {
-	      let proto = Object.getPrototypeOf(this);
-	      if (!proto.hasOwnProperty('__hasRegisterFinished')) {
-	        this._registered();
-	        // backstop in case the `_registered` implementation does not set this
-	        proto.__hasRegisterFinished = true;
+	      // NOTE: Inlined for perf from version of DisableUpgradeMixin.
+	      // Only auto-use disable-upgrade if legacyOptimizations is set.
+	      if (legacyOptimizations && this.hasAttribute(DISABLED_ATTR$1)) {
+	        this.__isUpgradeDisabled = true;
+	      } else {
+	        let proto = Object.getPrototypeOf(this);
+	        if (!proto.hasOwnProperty(JSCompiler_renameProperty('__hasRegisterFinished', proto))) {
+	          this._registered();
+	          // backstop in case the `_registered` implementation does not set this
+	          proto.__hasRegisterFinished = true;
+	        }
+	        super._initializeProperties();
+	        this.root = /** @type {HTMLElement} */(this);
+	        this.created();
+	        // Pull all attribute values 1x if `legacyNoObservedAttributes` is set.
+	        if (legacyNoObservedAttributes && !this._legacyForceObservedAttributes) {
+	          if (this.hasAttributes()) {
+	            this._takeAttributes();
+	          // Element created from scratch or parser generated
+	          } else if (!this.parentNode) {
+	            this.__needsAttributesAtConnected = true;
+	          }
+	        }
+	        // Ensure listeners are applied immediately so that they are
+	        // added before declarative event listeners. This allows an element to
+	        // decorate itself via an event prior to any declarative listeners
+	        // seeing the event. Note, this ensures compatibility with 1.x ordering.
+	        this._applyListeners();
 	      }
-	      super._initializeProperties();
-	      this.root = /** @type {HTMLElement} */(this);
-	      this.created();
-	      // Ensure listeners are applied immediately so that they are
-	      // added before declarative event listeners. This allows an element to
-	      // decorate itself via an event prior to any declarative listeners
-	      // seeing the event. Note, this ensures compatibility with 1.x ordering.
-	      this._applyListeners();
+	    }
+
+	    _takeAttributes() {
+	      const a = this.attributes;
+	      for (let i=0, l=a.length; i < l; i++) {
+	        const attr = a[i];
+	        this.__attributeReaction(attr.name, null, attr.value);
+	      }
 	    }
 
 	    /**
@@ -32473,7 +34116,7 @@ public class Application extends SpringBootServletInitializer {
 	     *
 	     * @param {string} methodName Method name to associate with message
 	     * @param {...*} args Array of strings or objects to log
-	     * @return {Array} Array with formatting information for `console`
+	     * @return {!Array} Array with formatting information for `console`
 	     *   logging.
 	     * @override
 	     */
@@ -32662,6 +34305,8 @@ public class Application extends SpringBootServletInitializer {
 	  }
 	}
 
+	const LegacyElement = LegacyElementMixin(HTMLElement);
+
 	/* Note about construction and extension of legacy classes.
 	  [Changed in Q4 2018 to optimize performance.]
 
@@ -32788,7 +34433,7 @@ public class Application extends SpringBootServletInitializer {
 	      */
 	      // only proceed if the generated class' prototype has not been registered.
 	      const generatedProto = PolymerGenerated.prototype;
-	      if (!generatedProto.hasOwnProperty('__hasRegisterFinished')) {
+	      if (!generatedProto.hasOwnProperty(JSCompiler_renameProperty('__hasRegisterFinished', generatedProto))) {
 	        generatedProto.__hasRegisterFinished = true;
 	        // ensure superclass is registered first.
 	        super._registered();
@@ -33017,8 +34662,8 @@ public class Application extends SpringBootServletInitializer {
 	  if (!info) {
 	    console.warn('Polymer.Class requires `info` argument');
 	  }
-	  let klass = mixin ? mixin(LegacyElementMixin(HTMLElement)) :
-	      LegacyElementMixin(HTMLElement);
+	  let klass = mixin ? mixin(LegacyElement) :
+	      LegacyElement;
 	  klass = GenerateClassFromInfo(info, klass, info.behaviors);
 	  // decorate klass with registration info
 	  klass.is = klass.prototype.is = info.is;
@@ -33062,6 +34707,10 @@ public class Application extends SpringBootServletInitializer {
 	    klass = info;
 	  } else {
 	    klass = Polymer.Class(info);
+	  }
+	  // Copy opt out for `legacyNoObservedAttributes` from info object to class.
+	  if (info._legacyForceObservedAttributes) {
+	    klass.prototype._legacyForceObservedAttributes = info._legacyForceObservedAttributes;
 	  }
 	  customElements.define(klass.is, /** @type {!HTMLElement} */(klass));
 	  return klass;
@@ -33337,7 +34986,7 @@ public class Application extends SpringBootServletInitializer {
 	  render() {
 	    let template;
 	    if (!this.__children) {
-	      template = /** @type {HTMLTemplateElement} */(template || this.querySelector('template'));
+	      template = /** @type {?HTMLTemplateElement} */(template || this.querySelector('template'));
 	      if (!template) {
 	        // Wait until childList changes and template should be there by then
 	        let observer = new MutationObserver(() => {
@@ -33603,20 +35252,20 @@ public class Application extends SpringBootServletInitializer {
 	       */
 	      renderedItemCount: {
 	        type: Number,
-	        notify: true,
+	        notify: !suppressTemplateNotifications,
 	        readOnly: true
 	      },
 
 	      /**
-	       * Defines an initial count of template instances to render after setting
-	       * the `items` array, before the next paint, and puts the `dom-repeat`
-	       * into "chunking mode".  The remaining items will be created and rendered
-	       * incrementally at each animation frame therof until all instances have
-	       * been rendered.
+	       * When greater than zero, defines an initial count of template instances
+	       * to render after setting the `items` array, before the next paint, and
+	       * puts the `dom-repeat` into "chunking mode".  The remaining items (and
+	       * any future items as a result of pushing onto the array) will be created
+	       * and rendered incrementally at each animation frame thereof until all
+	       * instances have been rendered.
 	       */
 	      initialCount: {
-	        type: Number,
-	        observer: '__initializeChunking'
+	        type: Number
 	      },
 
 	      /**
@@ -33639,6 +35288,34 @@ public class Application extends SpringBootServletInitializer {
 	      _targetFrameTime: {
 	        type: Number,
 	        computed: '__computeFrameTime(targetFramerate)'
+	      },
+
+	      /**
+	       * When the global `suppressTemplateNotifications` setting is used, setting
+	       * `notifyDomChange: true` will enable firing `dom-change` events on this
+	       * element.
+	       */
+	      notifyDomChange: {
+	        type: Boolean
+	      },
+
+	      /**
+	       * When chunking is enabled via `initialCount` and the `items` array is
+	       * set to a new array, this flag controls whether the previously rendered
+	       * instances are reused or not.
+	       *
+	       * When `true`, any previously rendered template instances are updated in
+	       * place to their new item values synchronously in one shot, and then any
+	       * further items (if any) are chunked out.  When `false`, the list is
+	       * returned back to its `initialCount` (any instances over the initial
+	       * count are discarded) and the remainder of the list is chunked back in.
+	       * Set this to `true` to avoid re-creating the list and losing scroll
+	       * position, although note that when changing the list to completely
+	       * different data the render thread will be blocked until all existing
+	       * instances are updated to their new data.
+	       */
+	      reuseChunkedInstances: {
+	        type: Boolean
 	      }
 
 	    };
@@ -33652,12 +35329,14 @@ public class Application extends SpringBootServletInitializer {
 	  constructor() {
 	    super();
 	    this.__instances = [];
-	    this.__limit = Infinity;
-	    this.__pool = [];
 	    this.__renderDebouncer = null;
 	    this.__itemsIdxToInstIdx = {};
 	    this.__chunkCount = null;
-	    this.__lastChunkTime = null;
+	    this.__renderStartTime = null;
+	    this.__itemsArrayChanged = false;
+	    this.__shouldMeasureChunk = false;
+	    this.__shouldContinueChunking = false;
+	    this.__chunkingId = 0;
 	    this.__sortFn = null;
 	    this.__filterFn = null;
 	    this.__observePaths = null;
@@ -33665,6 +35344,8 @@ public class Application extends SpringBootServletInitializer {
 	    this.__ctor = null;
 	    this.__isDetached = true;
 	    this.template = null;
+	    /** @type {TemplateInfo} */
+	    this._templateInfo;
 	  }
 
 	  /**
@@ -33703,9 +35384,15 @@ public class Application extends SpringBootServletInitializer {
 	    // until ready, since won't have its template content handed back to
 	    // it until then
 	    if (!this.__ctor) {
-	      let template = this.template = /** @type {HTMLTemplateElement} */(this.querySelector('template'));
+	      // When `removeNestedTemplates` is true, the "template" is the element
+	      // itself, which has been given a `_templateInfo` property
+	      const thisAsTemplate = /** @type {!HTMLTemplateElement} */ (
+	          /** @type {!HTMLElement} */ (this));
+	      let template = this.template = thisAsTemplate._templateInfo ?
+	          thisAsTemplate :
+	          /** @type {!HTMLTemplateElement} */ (this.querySelector('template'));
 	      if (!template) {
-	        // // Wait until childList changes and template should be there by then
+	        // Wait until childList changes and template should be there by then
 	        let observer = new MutationObserver(() => {
 	          if (this.querySelector('template')) {
 	            observer.disconnect();
@@ -33791,55 +35478,9 @@ public class Application extends SpringBootServletInitializer {
 	    return Math.ceil(1000/rate);
 	  }
 
-	  __initializeChunking() {
-	    if (this.initialCount) {
-	      this.__limit = this.initialCount;
-	      this.__chunkCount = this.initialCount;
-	      this.__lastChunkTime = performance.now();
-	    }
-	  }
-
-	  __tryRenderChunk() {
-	    // Debounced so that multiple calls through `_render` between animation
-	    // frames only queue one new rAF (e.g. array mutation & chunked render)
-	    if (this.items && this.__limit < this.items.length) {
-	      this.__debounceRender(this.__requestRenderChunk);
-	    }
-	  }
-
-	  __requestRenderChunk() {
-	    requestAnimationFrame(()=>this.__renderChunk());
-	  }
-
-	  __renderChunk() {
-	    // Simple auto chunkSize throttling algorithm based on feedback loop:
-	    // measure actual time between frames and scale chunk count by ratio
-	    // of target/actual frame time
-	    let currChunkTime = performance.now();
-	    let ratio = this._targetFrameTime / (currChunkTime - this.__lastChunkTime);
-	    this.__chunkCount = Math.round(this.__chunkCount * ratio) || 1;
-	    this.__limit += this.__chunkCount;
-	    this.__lastChunkTime = currChunkTime;
-	    this.__debounceRender(this.__render);
-	  }
-
 	  __observeChanged() {
 	    this.__observePaths = this.observe &&
 	      this.observe.replace('.*', '.').split(' ');
-	  }
-
-	  __itemsChanged(change) {
-	    if (this.items && !Array.isArray(this.items)) {
-	      console.warn('dom-repeat expected array for `items`, found', this.items);
-	    }
-	    // If path was to an item (e.g. 'items.3' or 'items.3.foo'), forward the
-	    // path to that instance synchronously (returns false for non-item paths)
-	    if (!this.__handleItemPath(change.path, change.value)) {
-	      // Otherwise, the array was reset ('items') or spliced ('items.splices'),
-	      // so queue a full refresh
-	      this.__initializeChunking();
-	      this.__debounceRender(this.__render);
-	    }
 	  }
 
 	  __handleObservedPaths(path) {
@@ -33857,6 +35498,23 @@ public class Application extends SpringBootServletInitializer {
 	          }
 	        }
 	      }
+	    }
+	  }
+
+	  __itemsChanged(change) {
+	    if (this.items && !Array.isArray(this.items)) {
+	      console.warn('dom-repeat expected array for `items`, found', this.items);
+	    }
+	    // If path was to an item (e.g. 'items.3' or 'items.3.foo'), forward the
+	    // path to that instance synchronously (returns false for non-item paths)
+	    if (!this.__handleItemPath(change.path, change.value)) {
+	      // Otherwise, the array was reset ('items') or spliced ('items.splices'),
+	      // so queue a render.  Restart chunking when the items changed (for
+	      // backward compatibility), unless `reuseChunkedInstances` option is set
+	      if (change.path === 'items') {
+	        this.__itemsArrayChanged = true;
+	      }
+	      this.__debounceRender(this.__render);
 	    }
 	  }
 
@@ -33891,26 +35549,36 @@ public class Application extends SpringBootServletInitializer {
 	      // No template found yet
 	      return;
 	    }
-	    this.__applyFullRefresh();
-	    // Reset the pool
-	    // TODO(kschaaf): Reuse pool across turns and nested templates
-	    // Now that objects/arrays are re-evaluated when set, we can safely
-	    // reuse pooled instances across turns, however we still need to decide
-	    // semantics regarding how long to hold, how many to hold, etc.
-	    this.__pool.length = 0;
+	    let items = this.items || [];
+	    // Sort and filter the items into a mapping array from instance->item
+	    const isntIdxToItemsIdx = this.__sortAndFilterItems(items);
+	    // If we're chunking, increase the limit if there are new instances to
+	    // create and schedule the next chunk
+	    const limit = this.__calculateLimit(isntIdxToItemsIdx.length);
+	    // Create, update, and/or remove instances
+	    this.__updateInstances(items, limit, isntIdxToItemsIdx);
+	    // If we're chunking, schedule a rAF task to measure/continue chunking.     
+	    // Do this before any notifying events (renderedItemCount & dom-change)
+	    // since those could modify items and enqueue a new full render which will
+	    // pre-empt this measurement.
+	    if (this.initialCount &&
+	       (this.__shouldMeasureChunk || this.__shouldContinueChunking)) {
+	      cancelAnimationFrame(this.__chunkingId);
+	      this.__chunkingId = requestAnimationFrame(() => this.__continueChunking());
+	    }
 	    // Set rendered item count
 	    this._setRenderedItemCount(this.__instances.length);
 	    // Notify users
-	    this.dispatchEvent(new CustomEvent('dom-change', {
-	      bubbles: true,
-	      composed: true
-	    }));
-	    // Check to see if we need to render more items
-	    this.__tryRenderChunk();
+	    if (!suppressTemplateNotifications || this.notifyDomChange) {
+	      this.dispatchEvent(new CustomEvent('dom-change', {
+	        bubbles: true,
+	        composed: true
+	      }));
+	    }
 	  }
 
-	  __applyFullRefresh() {
-	    let items = this.items || [];
+	  __sortAndFilterItems(items) {
+	    // Generate array maping the instance index to the items array index
 	    let isntIdxToItemsIdx = new Array(items.length);
 	    for (let i=0; i<items.length; i++) {
 	      isntIdxToItemsIdx[i] = i;
@@ -33924,12 +35592,69 @@ public class Application extends SpringBootServletInitializer {
 	    if (this.__sortFn) {
 	      isntIdxToItemsIdx.sort((a, b) => this.__sortFn(items[a], items[b]));
 	    }
+	    return isntIdxToItemsIdx;
+	  }
+
+	  __calculateLimit(filteredItemCount) {
+	    let limit = filteredItemCount;
+	    const currentCount = this.__instances.length;
+	    // When chunking, we increase the limit from the currently rendered count
+	    // by the chunk count that is re-calculated after each rAF (with special
+	    // cases for reseting the limit to initialCount after changing items)
+	    if (this.initialCount) {
+	      let newCount;
+	      if (!this.__chunkCount ||
+	        (this.__itemsArrayChanged && !this.reuseChunkedInstances)) {
+	        // Limit next render to the initial count
+	        limit = Math.min(filteredItemCount, this.initialCount);
+	        // Subtract off any existing instances to determine the number of
+	        // instances that will be created
+	        newCount = Math.max(limit - currentCount, 0);
+	        // Initialize the chunk size with how many items we're creating
+	        this.__chunkCount = newCount || 1;
+	      } else {
+	        // The number of new instances that will be created is based on the
+	        // existing instances, the new list size, and the chunk size
+	        newCount = Math.min(
+	          Math.max(filteredItemCount - currentCount, 0), 
+	          this.__chunkCount);
+	        // Update the limit based on how many new items we're making, limited
+	        // buy the total size of the list
+	        limit = Math.min(currentCount + newCount, filteredItemCount);
+	      }
+	      // Record some state about chunking for use in `__continueChunking`
+	      this.__shouldMeasureChunk = newCount === this.__chunkCount;
+	      this.__shouldContinueChunking = limit < filteredItemCount;
+	      this.__renderStartTime = performance.now();
+	    }
+	    this.__itemsArrayChanged = false;
+	    return limit;
+	  }
+
+	  __continueChunking() {
+	    // Simple auto chunkSize throttling algorithm based on feedback loop:
+	    // measure actual time between frames and scale chunk count by ratio of
+	    // target/actual frame time.  Only modify chunk size if our measurement
+	    // reflects the cost of a creating a full chunk's worth of instances; this
+	    // avoids scaling up the chunk size if we e.g. quickly re-rendered instances
+	    // in place
+	    if (this.__shouldMeasureChunk) {
+	      const renderTime = performance.now() - this.__renderStartTime;
+	      const ratio = this._targetFrameTime / renderTime;
+	      this.__chunkCount = Math.round(this.__chunkCount * ratio) || 1;
+	    }
+	    // Enqueue a new render if we haven't reached the full size of the list
+	    if (this.__shouldContinueChunking) {
+	      this.__debounceRender(this.__render);
+	    }
+	  }
+	  
+	  __updateInstances(items, limit, isntIdxToItemsIdx) {
 	    // items->inst map kept for item path forwarding
 	    const itemsIdxToInstIdx = this.__itemsIdxToInstIdx = {};
-	    let instIdx = 0;
+	    let instIdx;
 	    // Generate instances and assign items
-	    const limit = Math.min(isntIdxToItemsIdx.length, this.__limit);
-	    for (; instIdx<limit; instIdx++) {
+	    for (instIdx=0; instIdx<limit; instIdx++) {
 	      let inst = this.__instances[instIdx];
 	      let itemIdx = isntIdxToItemsIdx[instIdx];
 	      let item = items[itemIdx];
@@ -33966,10 +35691,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  __detachAndRemoveInstance(idx) {
-	    let inst = this.__detachInstance(idx);
-	    if (inst) {
-	      this.__pool.push(inst);
-	    }
+	    this.__detachInstance(idx);
 	    this.__instances.splice(idx, 1);
 	  }
 
@@ -33982,17 +35704,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  __insertInstance(item, instIdx, itemIdx) {
-	    let inst = this.__pool.pop();
-	    if (inst) {
-	      // TODO(kschaaf): If the pool is shared across turns, hostProps
-	      // need to be re-set to reused instances in addition to item
-	      inst._setPendingProperty(this.as, item);
-	      inst._setPendingProperty(this.indexAs, instIdx);
-	      inst._setPendingProperty(this.itemsIndexAs, itemIdx);
-	      inst._flushProperties();
-	    } else {
-	      inst = this.__stampInstance(item, instIdx, itemIdx);
-	    }
+	    const inst = this.__stampInstance(item, instIdx, itemIdx);
 	    let beforeRow = this.__instances[instIdx + 1];
 	    let beforeNode = beforeRow ? beforeRow.children[0] : this;
 	    wrap(wrap(this).parentNode).insertBefore(inst.root, beforeNode);
@@ -34110,27 +35822,13 @@ public class Application extends SpringBootServletInitializer {
 	*/
 
 	/**
-	 * The `<dom-if>` element will stamp a light-dom `<template>` child when
-	 * the `if` property becomes truthy, and the template can use Polymer
-	 * data-binding and declarative event features when used in the context of
-	 * a Polymer element's template.
-	 *
-	 * When `if` becomes falsy, the stamped content is hidden but not
-	 * removed from dom. When `if` subsequently becomes truthy again, the content
-	 * is simply re-shown. This approach is used due to its favorable performance
-	 * characteristics: the expense of creating template content is paid only
-	 * once and lazily.
-	 *
-	 * Set the `restamp` property to true to force the stamped content to be
-	 * created / destroyed when the `if` condition changes.
-	 *
 	 * @customElement
 	 * @polymer
 	 * @extends PolymerElement
-	 * @summary Custom element that conditionally stamps and hides or removes
-	 *   template content based on a boolean flag.
+	 * @summary Base class for dom-if element; subclassed into concrete
+	 *   implementation.
 	 */
-	class DomIf extends PolymerElement {
+	class DomIfBase extends PolymerElement {
 
 	  // Not needed to find template; can be removed once the analyzer
 	  // can find the tag name from customElements.define call
@@ -34168,8 +35866,16 @@ public class Application extends SpringBootServletInitializer {
 	      restamp: {
 	        type: Boolean,
 	        observer: '__debounceRender'
-	      }
+	      },
 
+	      /**
+	       * When the global `suppressTemplateNotifications` setting is used, setting
+	       * `notifyDomChange: true` will enable firing `dom-change` events on this
+	       * element.
+	       */
+	      notifyDomChange: {
+	        type: Boolean
+	      }
 	    };
 
 	  }
@@ -34177,11 +35883,12 @@ public class Application extends SpringBootServletInitializer {
 	  constructor() {
 	    super();
 	    this.__renderDebouncer = null;
-	    this.__invalidProps = null;
-	    this.__instance = null;
 	    this._lastIf = false;
-	    this.__ctor = null;
 	    this.__hideTemplateChildren__ = false;
+	    /** @type {!HTMLTemplateElement|undefined} */
+	    this.__template;
+	    /** @type {!TemplateInfo|undefined} */
+	    this._templateInfo;
 	  }
 
 	  __debounceRender() {
@@ -34236,31 +35943,120 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  /**
+	   * Ensures a template has been assigned to `this.__template`.  If it has not
+	   * yet been, it querySelectors for it in its children and if it does not yet
+	   * exist (e.g. in parser-generated case), opens a mutation observer and
+	   * waits for it to appear (returns false if it has not yet been found,
+	   * otherwise true).  In the `removeNestedTemplates` case, the "template" will
+	   * be the `dom-if` element itself.
+	   *
+	   * @return {boolean} True when a template has been found, false otherwise
+	   */
+	  __ensureTemplate() {
+	    if (!this.__template) {
+	      // When `removeNestedTemplates` is true, the "template" is the element
+	      // itself, which has been given a `_templateInfo` property
+	      const thisAsTemplate = /** @type {!HTMLTemplateElement} */ (
+	          /** @type {!HTMLElement} */ (this));
+	      let template = thisAsTemplate._templateInfo ?
+	          thisAsTemplate :
+	          /** @type {!HTMLTemplateElement} */
+	          (wrap(thisAsTemplate).querySelector('template'));
+	      if (!template) {
+	        // Wait until childList changes and template should be there by then
+	        let observer = new MutationObserver(() => {
+	          if (wrap(this).querySelector('template')) {
+	            observer.disconnect();
+	            this.__render();
+	          } else {
+	            throw new Error('dom-if requires a <template> child');
+	          }
+	        });
+	        observer.observe(this, {childList: true});
+	        return false;
+	      }
+	      this.__template = template;
+	    }
+	    return true;
+	  }
+
+	  /**
+	   * Ensures a an instance of the template has been created and inserted. This
+	   * method may return false if the template has not yet been found or if
+	   * there is no `parentNode` to insert the template into (in either case,
+	   * connection or the template-finding mutation observer firing will queue
+	   * another render, causing this method to be called again at a more
+	   * appropriate time).
+	   *
+	   * Subclasses should implement the following methods called here:
+	   * - `__hasInstance`
+	   * - `__createAndInsertInstance`
+	   * - `__getInstanceNodes`
+	   *
+	   * @return {boolean} True if the instance was created, false otherwise.
+	   */
+	  __ensureInstance() {
+	    let parentNode = wrap(this).parentNode;
+	    if (!this.__hasInstance()) {
+	      // Guard against element being detached while render was queued
+	      if (!parentNode) {
+	        return false;
+	      }
+	      // Find the template (when false, there was no template yet)
+	      if (!this.__ensureTemplate()) {
+	        return false;
+	      }
+	      this.__createAndInsertInstance(parentNode);
+	    } else {
+	      // Move instance children if necessary
+	      let children = this.__getInstanceNodes();
+	      if (children && children.length) {
+	        // Detect case where dom-if was re-attached in new position
+	        let lastChild = wrap(this).previousSibling;
+	        if (lastChild !== children[children.length-1]) {
+	          for (let i=0, n; (i<children.length) && (n=children[i]); i++) {
+	            wrap(parentNode).insertBefore(n, this);
+	          }
+	        }
+	      }
+	    }
+	    return true;
+	  }
+
+	  /**
 	   * Forces the element to render its content. Normally rendering is
 	   * asynchronous to a provoking change. This is done for efficiency so
 	   * that multiple changes trigger only a single render. The render method
 	   * should be called if, for example, template rendering is required to
 	   * validate application state.
+	   *
 	   * @return {void}
 	   */
 	  render() {
 	    flush();
 	  }
 
+	  /**
+	   * Performs the key rendering steps:
+	   * 1. Ensure a template instance has been stamped (when true)
+	   * 2. Remove the template instance (when false and restamp:true)
+	   * 3. Sync the hidden state of the instance nodes with the if/restamp state
+	   * 4. Fires the `dom-change` event when necessary
+	   *
+	   * @return {void}
+	   */
 	  __render() {
 	    if (this.if) {
 	      if (!this.__ensureInstance()) {
 	        // No template found yet
 	        return;
 	      }
-	      this._showHideChildren();
 	    } else if (this.restamp) {
 	      this.__teardownInstance();
 	    }
-	    if (!this.restamp && this.__instance) {
-	      this._showHideChildren();
-	    }
-	    if (this.if != this._lastIf) {
+	    this._showHideChildren();
+	    if ((!suppressTemplateNotifications || this.notifyDomChange)
+	        && this.if != this._lastIf) {
 	      this.dispatchEvent(new CustomEvent('dom-change', {
 	        bubbles: true,
 	        composed: true
@@ -34269,81 +36065,323 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
-	  __ensureInstance() {
-	    let parentNode = wrap(this).parentNode;
-	    // Guard against element being detached while render was queued
-	    if (parentNode) {
-	      if (!this.__ctor) {
-	        let template = /** @type {HTMLTemplateElement} */(wrap(this).querySelector('template'));
-	        if (!template) {
-	          // Wait until childList changes and template should be there by then
-	          let observer = new MutationObserver(() => {
-	            if (wrap(this).querySelector('template')) {
-	              observer.disconnect();
-	              this.__render();
-	            } else {
-	              throw new Error('dom-if requires a <template> child');
-	            }
-	          });
-	          observer.observe(this, {childList: true});
-	          return false;
+	  // Ideally these would be annotated as abstract methods in an abstract class,
+	  // but closure compiler is finnicky
+	  /* eslint-disable valid-jsdoc */
+	  /**
+	   * Abstract API to be implemented by subclass: Returns true if a template
+	   * instance has been created and inserted.
+	   *
+	   * @protected
+	   * @return {boolean} True when an instance has been created.
+	   */
+	  __hasInstance() { }
+
+	  /**
+	   * Abstract API to be implemented by subclass: Returns the child nodes stamped
+	   * from a template instance.
+	   *
+	   * @protected
+	   * @return {Array<Node>} Array of child nodes stamped from the template
+	   * instance.
+	   */
+	  __getInstanceNodes() { }
+
+	  /**
+	   * Abstract API to be implemented by subclass: Creates an instance of the
+	   * template and inserts it into the given parent node.
+	   *
+	   * @protected
+	   * @param {Node} parentNode The parent node to insert the instance into
+	   * @return {void}
+	   */
+	  __createAndInsertInstance(parentNode) { } // eslint-disable-line no-unused-vars
+
+	  /**
+	   * Abstract API to be implemented by subclass: Removes nodes created by an
+	   * instance of a template and any associated cleanup.
+	   *
+	   * @protected
+	   * @return {void}
+	   */
+	  __teardownInstance() { }
+
+	  /**
+	   * Abstract API to be implemented by subclass: Shows or hides any template
+	   * instance childNodes based on the `if` state of the element and its
+	   * `__hideTemplateChildren__` property.
+	   *
+	   * @protected
+	   * @return {void}
+	   */
+	  _showHideChildren() { }
+	  /* eslint-enable valid-jsdoc */
+	}
+
+	/**
+	 * The version of DomIf used when `fastDomIf` setting is in use, which is
+	 * optimized for first-render (but adds a tax to all subsequent property updates
+	 * on the host, whether they were used in a given `dom-if` or not).
+	 *
+	 * This implementation avoids use of `Templatizer`, which introduces a new scope
+	 * (a non-element PropertyEffects instance), which is not strictly necessary
+	 * since `dom-if` never introduces new properties to its scope (unlike
+	 * `dom-repeat`). Taking advantage of this fact, the `dom-if` reaches up to its
+	 * `__dataHost` and stamps the template directly from the host using the host's
+	 * runtime `_stampTemplate` API, which binds the property effects of the
+	 * template directly to the host. This both avoids the intermediary
+	 * `Templatizer` instance, but also avoids the need to bind host properties to
+	 * the `<template>` element and forward those into the template instance.
+	 *
+	 * In this version of `dom-if`, the `this.__instance` method is the
+	 * `DocumentFragment` returned from `_stampTemplate`, which also serves as the
+	 * handle for later removing it using the `_removeBoundDom` method.
+	 */
+	class DomIfFast extends DomIfBase {
+
+	  constructor() {
+	    super();
+	    this.__instance = null;
+	    this.__syncInfo = null;
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * @override
+	   * @return {boolean} True when an instance has been created.
+	   */
+	  __hasInstance() {
+	    return Boolean(this.__instance);
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * @override
+	   * @return {Array<Node>} Array of child nodes stamped from the template
+	   * instance.
+	   */
+	  __getInstanceNodes() {
+	    return this.__instance.templateInfo.childNodes;
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Stamps the template by calling `_stampTemplate` on the `__dataHost` of this
+	   * element and then inserts the resulting nodes into the given `parentNode`.
+	   *
+	   * @override
+	   * @param {Node} parentNode The parent node to insert the instance into
+	   * @return {void}
+	   */
+	  __createAndInsertInstance(parentNode) {
+	    const host = this.__dataHost || this;
+	    if (strictTemplatePolicy) {
+	      if (!this.__dataHost) {
+	        throw new Error('strictTemplatePolicy: template owner not trusted');
+	      }
+	    }
+	    // Pre-bind and link the template into the effects system
+	    const templateInfo = host._bindTemplate(
+	        /** @type {!HTMLTemplateElement} */ (this.__template), true);
+	    // Install runEffects hook that prevents running property effects
+	    // (and any nested template effects) when the `if` is false
+	    templateInfo.runEffects = (runEffects, changedProps, hasPaths) => {
+	      let syncInfo = this.__syncInfo;
+	      if (this.if) {
+	        // Mix any props that changed while the `if` was false into `changedProps`
+	        if (syncInfo) {
+	          // If there were properties received while the `if` was false, it is
+	          // important to sync the hidden state with the element _first_, so that
+	          // new bindings to e.g. `textContent` do not get stomped on by
+	          // pre-hidden values if `_showHideChildren` were to be called later at
+	          // the next render. Clearing `__invalidProps` here ensures
+	          // `_showHideChildren`'s call to `__syncHostProperties` no-ops, so
+	          // that we don't call `runEffects` more often than necessary.
+	          this.__syncInfo = null;
+	          this._showHideChildren();
+	          changedProps = Object.assign(syncInfo.changedProps, changedProps);
 	        }
-	        this.__ctor = templatize(template, this, {
-	          // dom-if templatizer instances require `mutable: true`, as
-	          // `__syncHostProperties` relies on that behavior to sync objects
-	          mutableData: true,
-	          /**
-	           * @param {string} prop Property to forward
-	           * @param {*} value Value of property
-	           * @this {DomIf}
-	           */
-	          forwardHostProp: function(prop, value) {
-	            if (this.__instance) {
-	              if (this.if) {
-	                this.__instance.forwardHostProp(prop, value);
-	              } else {
-	                // If we have an instance but are squelching host property
-	                // forwarding due to if being false, note the invalidated
-	                // properties so `__syncHostProperties` can sync them the next
-	                // time `if` becomes true
-	                this.__invalidProps = this.__invalidProps || Object.create(null);
-	                this.__invalidProps[root(prop)] = true;
+	        runEffects(changedProps, hasPaths);
+	      } else {
+	        // Accumulate any values changed while `if` was false, along with the
+	        // runEffects method to sync them, so that we can replay them once `if`
+	        // becomes true
+	        if (this.__instance) {
+	          if (!syncInfo) {
+	            syncInfo = this.__syncInfo = { runEffects, changedProps: {} };
+	          }
+	          if (hasPaths) {
+	            // Store root object of any paths; this will ensure direct bindings
+	            // like [[obj.foo]] bindings run after a `set('obj.foo', v)`, but
+	            // note that path notifications like `set('obj.foo.bar', v)` will
+	            // not propagate. Since batched path notifications are not
+	            // supported, we cannot simply accumulate path notifications. This
+	            // is equivalent to the non-fastDomIf case, which stores root(p) in
+	            // __invalidProps.
+	            for (const p in changedProps) {
+	              const rootProp = root(p);
+	              syncInfo.changedProps[rootProp] = this.__dataHost[rootProp];
+	            }
+	          } else {
+	            Object.assign(syncInfo.changedProps, changedProps);
+	          }
+	        }
+	      }
+	    };
+	    // Stamp the template, and set its DocumentFragment to the "instance"
+	    this.__instance = host._stampTemplate(
+	        /** @type {!HTMLTemplateElement} */ (this.__template), templateInfo);
+	    wrap(parentNode).insertBefore(this.__instance, this);
+	  }
+
+	  /**
+	   * Run effects for any properties that changed while the `if` was false.
+	   *
+	   * @return {void}
+	   */
+	  __syncHostProperties() {
+	    const syncInfo = this.__syncInfo;
+	    if (syncInfo) {
+	      this.__syncInfo = null;
+	      syncInfo.runEffects(syncInfo.changedProps, false);
+	    }
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Remove the instance and any nodes it created.  Uses the `__dataHost`'s
+	   * runtime `_removeBoundDom` method.
+	   *
+	   * @override
+	   * @return {void}
+	   */
+	  __teardownInstance() {
+	    const host = this.__dataHost || this;
+	    if (this.__instance) {
+	      host._removeBoundDom(this.__instance);
+	      this.__instance = null;
+	      this.__syncInfo = null;
+	    }
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Shows or hides the template instance top level child nodes. For
+	   * text nodes, `textContent` is removed while "hidden" and replaced when
+	   * "shown."
+	   *
+	   * @override
+	   * @return {void}
+	   * @protected
+	   * @suppress {visibility}
+	   */
+	  _showHideChildren() {
+	    const hidden = this.__hideTemplateChildren__ || !this.if;
+	    if (this.__instance && Boolean(this.__instance.__hidden) !== hidden) {
+	      this.__instance.__hidden = hidden;
+	      showHideChildren(hidden, this.__instance.templateInfo.childNodes);
+	    }
+	    if (!hidden) {
+	      this.__syncHostProperties();
+	    }
+	  }
+	}
+
+	/**
+	 * The "legacy" implementation of `dom-if`, implemented using `Templatizer`.
+	 *
+	 * In this version, `this.__instance` is the `TemplateInstance` returned
+	 * from the templatized constructor.
+	 */
+	class DomIfLegacy extends DomIfBase {
+
+	  constructor() {
+	    super();
+	    this.__ctor = null;
+	    this.__instance = null;
+	    this.__invalidProps = null;
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * @override
+	   * @return {boolean} True when an instance has been created.
+	   */
+	  __hasInstance() {
+	    return Boolean(this.__instance);
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * @override
+	   * @return {Array<Node>} Array of child nodes stamped from the template
+	   * instance.
+	   */
+	  __getInstanceNodes() {
+	    return this.__instance.children;
+	  }
+
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Stamps the template by creating a new instance of the templatized
+	   * constructor (which is created lazily if it does not yet exist), and then
+	   * inserts its resulting `root` doc fragment into the given `parentNode`.
+	   *
+	   * @override
+	   * @param {Node} parentNode The parent node to insert the instance into
+	   * @return {void}
+	   */
+	  __createAndInsertInstance(parentNode) {
+	    // Ensure we have an instance constructor
+	    if (!this.__ctor) {
+	      this.__ctor = templatize(
+	          /** @type {!HTMLTemplateElement} */ (this.__template), this, {
+	            // dom-if templatizer instances require `mutable: true`, as
+	            // `__syncHostProperties` relies on that behavior to sync objects
+	            mutableData: true,
+	            /**
+	             * @param {string} prop Property to forward
+	             * @param {*} value Value of property
+	             * @this {DomIfLegacy}
+	             */
+	            forwardHostProp: function(prop, value) {
+	              if (this.__instance) {
+	                if (this.if) {
+	                  this.__instance.forwardHostProp(prop, value);
+	                } else {
+	                  // If we have an instance but are squelching host property
+	                  // forwarding due to if being false, note the invalidated
+	                  // properties so `__syncHostProperties` can sync them the next
+	                  // time `if` becomes true
+	                  this.__invalidProps =
+	                      this.__invalidProps || Object.create(null);
+	                  this.__invalidProps[root(prop)] = true;
+	                }
 	              }
 	            }
-	          }
-	        });
-	      }
-	      if (!this.__instance) {
-	        this.__instance = new this.__ctor();
-	        wrap(parentNode).insertBefore(this.__instance.root, this);
-	      } else {
-	        this.__syncHostProperties();
-	        let c$ = this.__instance.children;
-	        if (c$ && c$.length) {
-	          // Detect case where dom-if was re-attached in new position
-	          let lastChild = wrap(this).previousSibling;
-	          if (lastChild !== c$[c$.length-1]) {
-	            for (let i=0, n; (i<c$.length) && (n=c$[i]); i++) {
-	              wrap(parentNode).insertBefore(n, this);
-	            }
-	          }
-	        }
-	      }
+	          });
 	    }
-	    return true;
+	    // Create and insert the instance
+	    this.__instance = new this.__ctor();
+	    wrap(parentNode).insertBefore(this.__instance.root, this);
 	  }
 
-	  __syncHostProperties() {
-	    let props = this.__invalidProps;
-	    if (props) {
-	      for (let prop in props) {
-	        this.__instance._setPendingProperty(prop, this.__dataHost[prop]);
-	      }
-	      this.__invalidProps = null;
-	      this.__instance._flushProperties();
-	    }
-	  }
-
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Removes the instance and any nodes it created.
+	   *
+	   * @override
+	   * @return {void}
+	   */
 	  __teardownInstance() {
 	    if (this.__instance) {
 	      let c$ = this.__instance.children;
@@ -34359,27 +36397,75 @@ public class Application extends SpringBootServletInitializer {
 	          }
 	        }
 	      }
-	      this.__instance = null;
 	      this.__invalidProps = null;
+	      this.__instance = null;
 	    }
 	  }
 
 	  /**
-	   * Shows or hides the template instance top level child elements. For
-	   * text nodes, `textContent` is removed while "hidden" and replaced when
-	   * "shown."
+	   * Forwards any properties that changed while the `if` was false into the
+	   * template instance and flushes it.
+	   *
 	   * @return {void}
-	   * @protected
-	   * @suppress {visibility}
 	   */
-	  _showHideChildren() {
-	    let hidden = this.__hideTemplateChildren__ || !this.if;
-	    if (this.__instance) {
-	      this.__instance._showHideChildren(hidden);
+	  __syncHostProperties() {
+	    let props = this.__invalidProps;
+	    if (props) {
+	      this.__invalidProps = null;
+	      for (let prop in props) {
+	        this.__instance._setPendingProperty(prop, this.__dataHost[prop]);
+	      }
+	      this.__instance._flushProperties();
 	    }
 	  }
 
+	  /**
+	   * Implementation of abstract API needed by DomIfBase.
+	   *
+	   * Shows or hides the template instance top level child elements. For
+	   * text nodes, `textContent` is removed while "hidden" and replaced when
+	   * "shown."
+	   *
+	   * @override
+	   * @protected
+	   * @return {void}
+	   * @suppress {visibility}
+	   */
+	  _showHideChildren() {
+	    const hidden = this.__hideTemplateChildren__ || !this.if;
+	    if (this.__instance && Boolean(this.__instance.__hidden) !== hidden) {
+	      this.__instance.__hidden = hidden;
+	      this.__instance._showHideChildren(hidden);
+	    }
+	    if (!hidden) {
+	      this.__syncHostProperties();
+	    }
+	  }
 	}
+
+	/**
+	 * The `<dom-if>` element will stamp a light-dom `<template>` child when
+	 * the `if` property becomes truthy, and the template can use Polymer
+	 * data-binding and declarative event features when used in the context of
+	 * a Polymer element's template.
+	 *
+	 * When `if` becomes falsy, the stamped content is hidden but not
+	 * removed from dom. When `if` subsequently becomes truthy again, the content
+	 * is simply re-shown. This approach is used due to its favorable performance
+	 * characteristics: the expense of creating template content is paid only
+	 * once and lazily.
+	 *
+	 * Set the `restamp` property to true to force the stamped content to be
+	 * created / destroyed when the `if` condition changes.
+	 *
+	 * @customElement
+	 * @polymer
+	 * @extends DomIfBase
+	 * @constructor
+	 * @summary Custom element that conditionally stamps and hides or removes
+	 *   template content based on a boolean flag.
+	 */
+	const DomIf = fastDomIf ? DomIfFast : DomIfLegacy;
 
 	customElements.define(DomIf.is, DomIf);
 
@@ -35018,129 +37104,6 @@ public class Application extends SpringBootServletInitializer {
 	});
 
 	/**
-	 * @fileoverview
-	 * @suppress {checkPrototypalTypes}
-	 * @license Copyright (c) 2017 The Polymer Project Authors. All rights reserved.
-	 * This code may only be used under the BSD style license found at
-	 * http://polymer.github.io/LICENSE.txt The complete set of authors may be found
-	 * at http://polymer.github.io/AUTHORS.txt The complete set of contributors may
-	 * be found at http://polymer.github.io/CONTRIBUTORS.txt Code distributed by
-	 * Google as part of the polymer project is also subject to an additional IP
-	 * rights grant found at http://polymer.github.io/PATENTS.txt
-	 */
-
-	const DISABLED_ATTR = 'disable-upgrade';
-
-	/**
-	 * Element class mixin that allows the element to boot up in a non-enabled
-	 * state when the `disable-upgrade` attribute is present. This mixin is
-	 * designed to be used with element classes like PolymerElement that perform
-	 * initial startup work when they are first connected. When the
-	 * `disable-upgrade` attribute is removed, if the element is connected, it
-	 * boots up and "enables" as it otherwise would; if it is not connected, the
-	 * element boots up when it is next connected.
-	 *
-	 * Using `disable-upgrade` with PolymerElement prevents any data propagation
-	 * to the element, any element DOM from stamping, or any work done in
-	 * connected/disconnctedCallback from occuring, but it does not prevent work
-	 * done in the element constructor.
-	 *
-	 * Note, this mixin must be applied on top of any element class that
-	 * itself implements a `connectedCallback` so that it can control the work
-	 * done in `connectedCallback`. For example,
-	 *
-	 *     MyClass = DisableUpgradeMixin(class extends BaseClass {...});
-	 *
-	 * @mixinFunction
-	 * @polymer
-	 * @appliesMixin ElementMixin
-	 * @template T
-	 * @param {function(new:T)} superClass Class to apply mixin to.
-	 * @return {function(new:T)} superClass with mixin applied.
-	 */
-	const DisableUpgradeMixin = dedupingMixin((base) => {
-	  /**
-	   * @constructor
-	   * @implements {Polymer_ElementMixin}
-	   * @extends {HTMLElement}
-	   * @private
-	   */
-	  const superClass = ElementMixin(base);
-
-	  /**
-	   * @polymer
-	   * @mixinClass
-	   * @implements {Polymer_DisableUpgradeMixin}
-	   */
-	  class DisableUpgradeClass extends superClass {
-
-	    /**
-	     * @suppress {missingProperties} go/missingfnprops
-	     */
-	    static get observedAttributes() {
-	      return super.observedAttributes.concat(DISABLED_ATTR);
-	    }
-
-	    /**
-	     * @override
-	     * @param {string} name Attribute name.
-	     * @param {?string} old The previous value for the attribute.
-	     * @param {?string} value The new value for the attribute.
-	     * @param {?string} namespace The XML namespace for the attribute.
-	     * @return {void}
-	     */
-	    attributeChangedCallback(name, old, value, namespace) {
-	      if (name == DISABLED_ATTR) {
-	        if (!this.__dataEnabled && value == null && this.isConnected) {
-	          super.connectedCallback();
-	        }
-	      } else {
-	        super.attributeChangedCallback(
-	            name, old, value, /** @type {null|string} */ (namespace));
-	      }
-	    }
-
-	    /*
-	      NOTE: cannot gate on attribute because this is called before
-	      attributes are delivered. Therefore, we stub this out and
-	      call `super._initializeProperties()` manually.
-	    */
-	    /** @override */
-	    _initializeProperties() {}
-
-	    // prevent user code in connected from running
-	    /** @override */
-	    connectedCallback() {
-	      if (this.__dataEnabled || !this.hasAttribute(DISABLED_ATTR)) {
-	        super.connectedCallback();
-	      }
-	    }
-
-	    // prevent element from turning on properties
-	    /** @override */
-	    _enableProperties() {
-	      if (!this.hasAttribute(DISABLED_ATTR)) {
-	        if (!this.__dataEnabled) {
-	          super._initializeProperties();
-	        }
-	        super._enableProperties();
-	      }
-	    }
-
-	    // only go if "enabled"
-	    /** @override */
-	    disconnectedCallback() {
-	      if (this.__dataEnabled) {
-	        super.disconnectedCallback();
-	      }
-	    }
-
-	  }
-
-	  return DisableUpgradeClass;
-	});
-
-	/**
 	@license
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
@@ -35155,7 +37118,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class DatePickerOverlayElement extends DisableUpgradeMixin(OverlayElement) {
@@ -35691,10 +37654,10 @@ public class Application extends SpringBootServletInitializer {
 
 	Note: announcements are only audible if you have a screen reader enabled.
 
-	@group Iron Elements
 	@demo demo/index.html
 	*/
 	const IronA11yAnnouncer = Polymer({
+	  /** @override */
 	  _template: html`
     <style>
       :host {
@@ -35717,16 +37680,22 @@ public class Application extends SpringBootServletInitializer {
 	     */
 	    mode: {type: String, value: 'polite'},
 
-	    _text: {type: String, value: ''}
+	    /**
+	     * The timeout on refreshing the announcement text. Larger timeouts are
+	     * needed for certain screen readers to re-announce the same message.
+	     */
+	    timeout: {type: Number, value: 150},
+
+	    _text: {type: String, value: ''},
 	  },
 
+	  /** @override */
 	  created: function() {
 	    if (!IronA11yAnnouncer.instance) {
 	      IronA11yAnnouncer.instance = this;
 	    }
 
-	    document.body.addEventListener(
-	        'iron-announce', this._onIronAnnounce.bind(this));
+	    document.addEventListener('iron-announce', this._onIronAnnounce.bind(this));
 	  },
 
 	  /**
@@ -35738,7 +37707,7 @@ public class Application extends SpringBootServletInitializer {
 	    this._text = '';
 	    this.async(function() {
 	      this._text = text;
-	    }, 100);
+	    }, this.timeout);
 	  },
 
 	  _onIronAnnounce: function(event) {
@@ -35755,7 +37724,13 @@ public class Application extends SpringBootServletInitializer {
 	    IronA11yAnnouncer.instance = document.createElement('iron-a11y-announcer');
 	  }
 
-	  document.body.appendChild(IronA11yAnnouncer.instance);
+	  if (document.body) {
+	    document.body.appendChild(IronA11yAnnouncer.instance);
+	  } else {
+	    document.addEventListener('load', function() {
+	      document.body.appendChild(IronA11yAnnouncer.instance);
+	    });
+	  }
 	};
 
 	/**
@@ -35865,7 +37840,7 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 	/**
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class MonthCalendarElement extends ThemableMixin(GestureEventListeners(PolymerElement)) {
@@ -36209,7 +38184,7 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 	/**
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class InfiniteScrollerElement extends PolymerElement {
@@ -36568,9 +38543,9 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(InfiniteScrollerElement.is, InfiniteScrollerElement);
 
-	const $_documentContainer$n = document.createElement('template');
+	const $_documentContainer$p = document.createElement('template');
 
-	$_documentContainer$n.innerHTML = `<dom-module id="vaadin-date-picker-overlay-styles" theme-for="vaadin-date-picker-overlay">
+	$_documentContainer$p.innerHTML = `<dom-module id="vaadin-date-picker-overlay-styles" theme-for="vaadin-date-picker-overlay">
   <template>
     <style>
       :host {
@@ -36586,7 +38561,11 @@ public class Application extends SpringBootServletInitializer {
         align-items: flex-end;
       }
 
-      :host([right-aligned][dir="rtl"]) {
+      :host([dir="rtl"]) {
+        align-items: flex-end;
+      }
+
+      :host([dir="rtl"][right-aligned]) {
         align-items: flex-start;
       }
 
@@ -36602,7 +38581,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$n.content);
+	document.head.appendChild($_documentContainer$p.content);
 
 	/**
 	@license
@@ -36610,13 +38589,14 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 	/**
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class DatePickerOverlayContentElement extends
 	  ThemableMixin(
 	    ThemePropertyMixin(
-	      GestureEventListeners(PolymerElement))) {
+	      DirMixin(
+	        GestureEventListeners(PolymerElement)))) {
 	  static get template() {
 	    return html`
     <style>
@@ -36878,6 +38858,10 @@ public class Application extends SpringBootServletInitializer {
 	       */
 	      label: String
 	    };
+	  }
+
+	  get __isRTL() {
+	    return this.getAttribute('dir') === 'rtl';
 	  }
 
 	  ready() {
@@ -37317,12 +39301,12 @@ public class Application extends SpringBootServletInitializer {
 	          break;
 	        case 'right':
 	          if (isScroller) {
-	            this._moveFocusByDays(1);
+	            this._moveFocusByDays(this.__isRTL ? -1 : 1);
 	          }
 	          break;
 	        case 'left':
 	          if (isScroller) {
-	            this._moveFocusByDays(-1);
+	            this._moveFocusByDays(this.__isRTL ? 1 : -1);
 	          }
 	          break;
 	        case 'enter':
@@ -37826,6 +39810,11 @@ public class Application extends SpringBootServletInitializer {
 	      },
 
 	      /**
+	       * Set true to prevent the overlay from opening automatically.
+	       */
+	      autoOpenDisabled: Boolean,
+
+	      /**
 	       * Set true to display ISO-8601 week numbers in the calendar. Notice that
 	       * displaying week numbers is only supported when `i18n.firstDayOfWeek`
 	       * is 1 (Monday).
@@ -38046,7 +40035,6 @@ public class Application extends SpringBootServletInitializer {
 	  static get observers() {
 	    return [
 	      '_updateHasValue(value)',
-	      '_validateInput(_selectedDate, _minDate, _maxDate)',
 	      '_selectedDateChanged(_selectedDate, i18n.formatDate)',
 	      '_focusedDateChanged(_focusedDate, i18n.formatDate)',
 	      '_announceFocusedDate(_focusedDate, opened, _ignoreAnnounce)'
@@ -38059,25 +40047,50 @@ public class Application extends SpringBootServletInitializer {
 	    this._boundFocus = this._focus.bind(this);
 	    this._boundUpdateAlignmentAndPosition = this._updateAlignmentAndPosition.bind(this);
 
+	    const isClearButton = e => {
+	      const path = e.composedPath();
+	      const inputIndex = path.indexOf(this._inputElement);
+	      return path.slice(0, inputIndex)
+	        .filter(el => el.getAttribute && el.getAttribute('part') === 'clear-button')
+	        .length === 1;
+	    };
+
 	    addListener(this, 'tap', e => {
 	      // FIXME(platosha): use preventDefault in the text field clear button,
 	      // then the following composedPath check could be simplified down
 	      // to `if (!e.defaultPrevented)`.
 	      // https://github.com/vaadin/vaadin-text-field/issues/352
-	      const inputIndex = e.composedPath().indexOf(this._inputElement);
-	      if (
-	        e.composedPath().slice(0, inputIndex)
-	          .filter(el => el.getAttribute && el.getAttribute('part') === 'clear-button')
-	          .length === 0
-	      ) {
+	      if (!isClearButton(e) && (!this.autoOpenDisabled || this._noInput)) {
 	        this.open();
 	      }
 	    });
 
-	    this.addEventListener('touchend', this._preventDefault.bind(this));
+	    this.addEventListener('touchend', e => {
+	      if (!isClearButton(e)) {
+	        e.preventDefault();
+	      }
+	    });
 	    this.addEventListener('keydown', this._onKeydown.bind(this));
 	    this.addEventListener('input', this._onUserInput.bind(this));
 	    this.addEventListener('focus', e => this._noInput && e.target.blur());
+	    this.addEventListener('blur', e => {
+	      if (!this.opened) {
+	        if (this.autoOpenDisabled) {
+	          const parsedDate = this._getParsedDate();
+	          if (this._isValidDate(parsedDate)) {
+	            this._selectedDate = parsedDate;
+	          }
+	        }
+
+	        if (this._inputElement.value === '' && this.__dispatchChange) {
+	          this.validate();
+	          this.value = '';
+	          this.__dispatchChange = false;
+	        } else {
+	          this.validate();
+	        }
+	      }
+	    });
 	  }
 
 	  _initOverlay() {
@@ -38094,6 +40107,17 @@ public class Application extends SpringBootServletInitializer {
 	    this._overlayContent.addEventListener('focus', () => this.focusElement._setFocused(true));
 
 	    this.$.overlay.addEventListener('vaadin-overlay-close', this._onVaadinOverlayClose.bind(this));
+
+	    const bringToFrontListener = (e) => {
+	      if (this.$.overlay.bringToFront) {
+	        requestAnimationFrame(() => {
+	          this.$.overlay.bringToFront();
+	        });
+	      }
+	    };
+
+	    this.addEventListener('mousedown', bringToFrontListener);
+	    this.addEventListener('touchstart', bringToFrontListener);
 	  }
 
 	  /**
@@ -38130,7 +40154,7 @@ public class Application extends SpringBootServletInitializer {
 	   * Closes the dropdown.
 	   */
 	  close() {
-	    if (this._overlayInitialized) {
+	    if (this._overlayInitialized || this.autoOpenDisabled) {
 	      this.$.overlay.close();
 	    }
 	  }
@@ -38211,16 +40235,19 @@ public class Application extends SpringBootServletInitializer {
 	    if (this.__userInputOccurred) {
 	      this.__dispatchChange = true;
 	    }
-	    const inputValue = selectedDate && formatDate(DatePickerHelper._extractDateParts(selectedDate));
 	    const value = this._formatISO(selectedDate);
+
+	    this.__keepInputValue || this._applyInputValue(selectedDate);
+
 	    if (value !== this.value) {
-	      this.validate(inputValue);
+	      this.validate();
 	      this.value = value;
 	    }
 	    this.__userInputOccurred = false;
 	    this.__dispatchChange = false;
+	    this._ignoreFocusedDateChange = true;
 	    this._focusedDate = selectedDate;
-	    this._inputValue = selectedDate ? inputValue : '';
+	    this._ignoreFocusedDateChange = false;
 	  }
 
 	  _focusedDateChanged(focusedDate, formatDate) {
@@ -38229,7 +40256,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	    this.__userInputOccurred = true;
 	    if (!this._ignoreFocusedDateChange && !this._noInput) {
-	      this._inputValue = focusedDate ? formatDate(DatePickerHelper._extractDateParts(focusedDate)) : '';
+	      this._applyInputValue(focusedDate);
 	    }
 	  }
 
@@ -38261,6 +40288,7 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	    if (!DatePickerHelper._dateEquals(this[property], date)) {
 	      this[property] = date;
+	      this.value && this.validate();
 	    }
 	  }
 
@@ -38387,6 +40415,26 @@ public class Application extends SpringBootServletInitializer {
 	    return result;
 	  }
 
+	  _selectParsedOrFocusedDate() {
+	    // Select the parsed input or focused date
+	    this._ignoreFocusedDateChange = true;
+	    if (this.i18n.parseDate) {
+	      const inputValue = this._inputValue || '';
+	      const parsedDate = this._getParsedDate(inputValue);
+
+	      if (this._isValidDate(parsedDate)) {
+	        this._selectedDate = parsedDate;
+	      } else {
+	        this.__keepInputValue = true;
+	        this._selectedDate = null;
+	        this.__keepInputValue = false;
+	      }
+	    } else if (this._focusedDate) {
+	      this._selectedDate = this._focusedDate;
+	    }
+	    this._ignoreFocusedDateChange = false;
+	  }
+
 	  _onOverlayClosed() {
 	    this._ignoreAnnounce = true;
 
@@ -38401,29 +40449,16 @@ public class Application extends SpringBootServletInitializer {
 
 	    this.updateStyles();
 
-	    // Select the parsed input or focused date
-	    this._ignoreFocusedDateChange = true;
-	    if (this.i18n.parseDate) {
-	      var inputValue = this._inputValue || '';
-	      const dateObject = this.i18n.parseDate(inputValue);
-	      const parsedDate = dateObject &&
-	        this._parseDate(`${dateObject.year}-${dateObject.month + 1}-${dateObject.day}`);
-
-	      if (this._isValidDate(parsedDate)) {
-	        this._selectedDate = parsedDate;
-	      } else {
-	        this._selectedDate = null;
-	        this._inputValue = inputValue;
-	      }
-	    } else if (this._focusedDate) {
-	      this._selectedDate = this._focusedDate;
-	    }
-	    this._ignoreFocusedDateChange = false;
+	    this._selectParsedOrFocusedDate();
 
 	    if (this._nativeInput && this._nativeInput.selectionStart) {
 	      this._nativeInput.selectionStart = this._nativeInput.selectionEnd;
 	    }
-	    this.validate();
+	    // No need to revalidate the value after `_selectedDateChanged`
+	    // Needed in case the value was not changed: open and close dropdown.
+	    if (!this.value) {
+	      this.validate();
+	    }
 	  }
 
 	  /**
@@ -38432,11 +40467,11 @@ public class Application extends SpringBootServletInitializer {
 	   * @param {string} value Value to validate. Optional, defaults to user's input value.
 	   * @return {boolean} True if the value is valid and sets the `invalid` flag appropriately
 	   */
-	  validate(value) {
-	    // reset invalid state on the underlying text field
-	    this.invalid = false;
-	    value = value !== undefined ? value : this._inputValue;
-	    return !(this.invalid = !this.checkValidity(value));
+	  validate() {
+	    // Note (Yuriy): Workaround `this._inputValue` is used in order
+	    // to avoid breaking change on custom `checkValidity`.
+	    // Can be removed with next major.
+	    return !(this.invalid = !this.checkValidity(this._inputValue));
 	  }
 
 	  /**
@@ -38447,20 +40482,22 @@ public class Application extends SpringBootServletInitializer {
 	   * @param {string} value Value to validate. Optional, defaults to the selected date.
 	   * @return {boolean} True if the value is valid
 	   */
-	  checkValidity(value) {
-	    var inputValid = !value ||
-	      (this._selectedDate && value === this.i18n.formatDate(DatePickerHelper._extractDateParts(this._selectedDate)));
-	    var minMaxValid = !this._selectedDate ||
+	  checkValidity() {
+	    const inputValid = !this._inputValue ||
+	      (this._selectedDate && this._inputValue === this._getFormattedDate(this.i18n.formatDate, this._selectedDate));
+	    const minMaxValid = !this._selectedDate ||
 	      DatePickerHelper._dateAllowed(this._selectedDate, this._minDate, this._maxDate);
 
-	    var inputValidity = true;
+	    let inputValidity = true;
 	    if (this._inputElement) {
 	      if (this._inputElement.checkValidity) {
 	        // vaadin native input elements have the checkValidity method
-	        inputValidity = this._inputElement.checkValidity(value);
+	        this._inputElement.__forceCheckValidity = true;
+	        inputValidity = this._inputElement.checkValidity();
+	        this._inputElement.__forceCheckValidity = false;
 	      } else if (this._inputElement.validate) {
 	        // iron-form-elements have the validate API
-	        inputValidity = this._inputElement.validate(value);
+	        inputValidity = this._inputElement.validate();
 	      }
 	    }
 
@@ -38486,14 +40523,18 @@ public class Application extends SpringBootServletInitializer {
 	    this._setSelectionRange(0, this._inputValue.length);
 	  }
 
+	  _applyInputValue(date) {
+	    this._inputValue = date ? this._getFormattedDate(this.i18n.formatDate, date) : '';
+	  }
+
+	  _getFormattedDate(formatDate, date) {
+	    return formatDate(DatePickerHelper._extractDateParts(date));
+	  }
+
 	  _setSelectionRange(a, b) {
 	    if (this._nativeInput && this._nativeInput.setSelectionRange) {
 	      this._nativeInput.setSelectionRange(a, b);
 	    }
-	  }
-
-	  _preventDefault(e) {
-	    e.preventDefault();
 	  }
 
 	  /**
@@ -38543,19 +40584,40 @@ public class Application extends SpringBootServletInitializer {
 
 	        break;
 	      case 'enter': {
-	        const dateObject = this.i18n.parseDate(this._inputValue);
-	        const parsedDate = dateObject &&
-	          this._parseDate(dateObject.year + '-' + (dateObject.month + 1) + '-' + dateObject.day);
-
-	        if (this._overlayInitialized && this._overlayContent.focusedDate && this._isValidDate(parsedDate)) {
-	          this._selectedDate = this._overlayContent.focusedDate;
+	        const parsedDate = this._getParsedDate();
+	        const isValidDate = this._isValidDate(parsedDate);
+	        if (this.opened) {
+	          if (this._overlayInitialized && this._overlayContent.focusedDate && isValidDate) {
+	            this._selectedDate = this._overlayContent.focusedDate;
+	          }
+	          this.close();
+	        } else {
+	          if (!isValidDate && this._inputElement.value !== '') {
+	            this.validate();
+	          } else {
+	            const oldValue = this.value;
+	            this._selectParsedOrFocusedDate();
+	            if (oldValue === this.value) {
+	              this.validate();
+	            }
+	          }
 	        }
-	        this.close();
 	        break;
 	      }
 	      case 'esc':
-	        this._focusedDate = this._selectedDate;
-	        this._close();
+	        if (this.opened) {
+	          this._focusedDate = this._selectedDate;
+	          this._close();
+	        } else if (this.autoOpenDisabled) {
+	          // Do not restore selected date if Esc was pressed after clearing input field
+	          if (this._inputElement.value === '') {
+	            this._selectedDate = null;
+	          }
+	          this._applyInputValue(this._selectedDate);
+	        } else {
+	          this._focusedDate = this._selectedDate;
+	          this._selectParsedOrFocusedDate();
+	        }
 	        break;
 	      case 'tab':
 	        if (this.opened) {
@@ -38574,24 +40636,30 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
-	  _validateInput(date, min, max) {
-	    if (date && (min || max)) {
-	      this.invalid = !DatePickerHelper._dateAllowed(date, min, max);
-	    }
+	  _getParsedDate(inputValue = this._inputValue) {
+	    const dateObject = this.i18n.parseDate && this.i18n.parseDate(inputValue);
+	    const parsedDate = dateObject &&
+	      this._parseDate(dateObject.year + '-' + (dateObject.month + 1) + '-' + dateObject.day);
+	    return parsedDate;
 	  }
 
 	  _onUserInput(e) {
-	    if (!this.opened && this._inputElement.value) {
+	    if (!this.opened && this._inputElement.value && !this.autoOpenDisabled) {
 	      this.open();
 	    }
 	    this._userInputValueChanged();
+
+	    if (e.__fromClearButton) {
+	      this.validate();
+	      this.__dispatchChange = true;
+	      this.value = '';
+	      this.__dispatchChange = false;
+	    }
 	  }
 
 	  _userInputValueChanged(value) {
 	    if (this.opened && this._inputValue) {
-	      const dateObject = this.i18n.parseDate && this.i18n.parseDate(this._inputValue);
-	      const parsedDate = dateObject &&
-	        this._parseDate(`${dateObject.year}-${dateObject.month + 1}-${dateObject.day}`);
+	      const parsedDate = this._getParsedDate();
 
 	      if (this._isValidDate(parsedDate)) {
 	        this._ignoreFocusedDateChange = true;
@@ -38697,13 +40765,13 @@ public class Application extends SpringBootServletInitializer {
 	 * Note: the `theme` attribute value set on `<vaadin-date-picker>` is
 	 * propagated to the internal themable components listed above.
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ThemePropertyMixin
-	 * @mixes Vaadin.DatePickerMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes ThemePropertyMixin
+	 * @mixes DatePickerMixin
+	 * @mixes GestureEventListeners
 	 * @demo demo/index.html
 	 */
 	class DatePickerElement extends
@@ -38735,10 +40803,10 @@ public class Application extends SpringBootServletInitializer {
     </style>
 
 
-    <vaadin-text-field id="input" role="application" autocomplete="off" on-focus="_focus" value="{{_userInputValue}}" invalid="[[invalid]]" label="[[label]]" name="[[name]]" placeholder="[[placeholder]]" required="[[required]]" disabled="[[disabled]]" readonly="[[readonly]]" error-message="[[errorMessage]]" clear-button-visible="[[clearButtonVisible]]" aria-label\$="[[label]]" part="text-field" theme\$="[[theme]]">
+    <vaadin-date-picker-text-field id="input" role="application" autocomplete="off" on-focus="_focus" value="{{_userInputValue}}" invalid="[[invalid]]" label="[[label]]" name="[[name]]" placeholder="[[placeholder]]" required="[[required]]" disabled="[[disabled]]" readonly="[[readonly]]" error-message="[[errorMessage]]" clear-button-visible="[[clearButtonVisible]]" aria-label\$="[[label]]" part="text-field" theme\$="[[theme]]">
       <slot name="prefix" slot="prefix"></slot>
       <div part="toggle-button" slot="suffix" on-tap="_toggle" role="button" aria-label\$="[[i18n.calendar]]" aria-expanded\$="[[_getAriaExpanded(opened)]]"></div>
-    </vaadin-text-field>
+    </vaadin-date-picker-text-field>
 
     <vaadin-date-picker-overlay id="overlay" fullscreen\$="[[_fullscreen]]" theme\$="[[__getOverlayTheme(theme, _overlayInitialized)]]" on-vaadin-overlay-open="_onOverlayOpened" on-vaadin-overlay-close="_onOverlayClosed" disable-upgrade="">
       <template>
@@ -38757,7 +40825,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '4.0.3';
+	    return '4.2.0';
 	  }
 
 	  static get properties() {
@@ -38825,14 +40893,11 @@ public class Application extends SpringBootServletInitializer {
 	    // In order to have synchronized invalid property, we need to use the same validate logic.
 	    afterNextRender(this, () => this._inputElement.validate = () => {});
 
-	    // FIXME(platosha): dispatch `input` event on
-	    // <vaadin-text-field> clear button
-	    // https://github.com/vaadin/vaadin-text-field/issues/347
-	    this._inputElement.addEventListener('change', () => {
-	      if (this._inputElement.value === '') {
+	    this._inputElement.addEventListener('change', (e) => {
+	      // For change event on text-field blur, after the field is cleared,
+	      // we schedule change event to be dispatched on date-picker blur.
+	      if (this._inputElement.value === '' && !e.__fromClearButton) {
 	        this.__dispatchChange = true;
-	        this.value = '';
-	        this.__dispatchChange = false;
 	      }
 	    });
 	  }
@@ -38886,7 +40951,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(DatePickerElement.is, DatePickerElement);
 
-	const $_documentContainer$o = html`<dom-module id="lumo-split-layout" theme-for="vaadin-split-layout">
+	const $_documentContainer$q = html`<dom-module id="lumo-split-layout" theme-for="vaadin-split-layout">
   <template>
     <style>
       [part="splitter"] {
@@ -38975,11 +41040,18 @@ public class Application extends SpringBootServletInitializer {
       :host([theme~="minimal"]) > [part="splitter"]:active > [part="handle"]::after {
         opacity: 1;
       }
+
+      /* RTL specific styles */
+
+      :host([theme~="small"][dir="rtl"]) > [part="splitter"] {
+        border-left: auto;
+        border-right: 1px solid var(--lumo-contrast-10pct);
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$o.content);
+	document.head.appendChild($_documentContainer$q.content);
 
 	/**
 	@license
@@ -39129,9 +41201,9 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
+	 * @mixes GestureEventListeners
 	 * @demo demo/index.html
 	 */
 	class SplitLayoutElement extends
@@ -39206,7 +41278,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '4.1.1';
+	    return '4.2.0';
 	  }
 
 	  static get properties() {
@@ -39290,8 +41362,11 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    var distance = this.orientation === 'vertical' ? event.detail.dy : event.detail.dx;
-	    this._setFlexBasis(this._primaryChild, this._startSize.primary + distance, this._startSize.container);
-	    this._setFlexBasis(this._secondaryChild, this._startSize.secondary - distance, this._startSize.container);
+	    const isRtl = this.orientation !== 'vertical' && this.getAttribute('dir') === 'rtl';
+	    const dirDistance = isRtl ? -distance : distance;
+
+	    this._setFlexBasis(this._primaryChild, this._startSize.primary + dirDistance, this._startSize.container);
+	    this._setFlexBasis(this._secondaryChild, this._startSize.secondary - dirDistance, this._startSize.container);
 
 	    this.notifyResize();
 
@@ -39318,7 +41393,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(SplitLayoutElement.is, SplitLayoutElement);
 
-	const $_documentContainer$p = html`<dom-module id="lumo-progress-bar" theme-for="vaadin-progress-bar">
+	const $_documentContainer$r = html`<dom-module id="lumo-progress-bar" theme-for="vaadin-progress-bar">
   <template>
     <style>
       :host {
@@ -39436,6 +41511,76 @@ public class Application extends SpringBootServletInitializer {
         --lumo-progress-indeterminate-progress-bar-background: linear-gradient(to right, var(--lumo-success-color-10pct) 10%, var(--lumo-success-color));
         --lumo-progress-indeterminate-progress-bar-background-reverse: linear-gradient(to left, var(--lumo-success-color-10pct) 10%, var(--lumo-success-color));
       }
+
+      /* RTL specific styles */
+
+      :host([indeterminate][dir="rtl"]) [part="value"] {
+        --lumo-progress-indeterminate-progress-bar-background: linear-gradient(to left, var(--lumo-primary-color-10pct) 10%, var(--lumo-primary-color));
+        --lumo-progress-indeterminate-progress-bar-background-reverse: linear-gradient(to right, var(--lumo-primary-color-10pct) 10%, var(--lumo-primary-color));
+        animation: vaadin-progress-indeterminate-rtl 1.6s infinite cubic-bezier(.355, .045, .645, 1);
+      }
+
+      :host(:not([aria-valuenow])[dir="rtl"]) [part="value"]::before,
+      :host([indeterminate][dir="rtl"]) [part="value"]::before {
+        animation: vaadin-progress-pulse3 1.6s infinite cubic-bezier(.355, .045, .645, 1);
+      }
+
+      @keyframes vaadin-progress-indeterminate-rtl {
+        0% {
+          transform: scaleX(0.015);
+          transform-origin: 100% 0%;
+        }
+
+        25% {
+          transform: scaleX(0.4);
+        }
+
+        50% {
+          transform: scaleX(0.015);
+          transform-origin: 0% 0%;
+          background-image: var(--lumo-progress-indeterminate-progress-bar-background);
+        }
+
+        50.1% {
+          transform: scaleX(0.015);
+          transform-origin: 0% 0%;
+          background-image: var(--lumo-progress-indeterminate-progress-bar-background-reverse);
+        }
+
+        75% {
+          transform: scaleX(0.4);
+        }
+
+        100% {
+          transform: scaleX(0.015);
+          transform-origin: 100% 0%;
+          background-image: var(--lumo-progress-indeterminate-progress-bar-background-reverse);
+        }
+      }
+
+      /* Contrast color */
+
+      :host([theme~="contrast"][dir="rtl"]) [part="value"],
+      :host([theme~="contrast"][dir="rtl"]) [part="value"]::before {
+        --lumo-progress-indeterminate-progress-bar-background: linear-gradient(to left, var(--lumo-contrast-5pct) 10%, var(--lumo-contrast-80pct));
+        --lumo-progress-indeterminate-progress-bar-background-reverse: linear-gradient(to right, var(--lumo-contrast-5pct) 10%, var(--lumo-contrast-60pct));
+      }
+
+      /* Error color */
+
+      :host([theme~="error"][dir="rtl"]) [part="value"],
+      :host([theme~="error"][dir="rtl"]) [part="value"]::before {
+        --lumo-progress-indeterminate-progress-bar-background: linear-gradient(to left, var(--lumo-error-color-10pct) 10%, var(--lumo-error-color));
+        --lumo-progress-indeterminate-progress-bar-background-reverse: linear-gradient(to right, var(--lumo-error-color-10pct) 10%, var(--lumo-error-color));
+      }
+
+      /* Primary color */
+
+      :host([theme~="success"][dir="rtl"]) [part="value"],
+      :host([theme~="success"][dir="rtl"]) [part="value"]::before {
+        --lumo-progress-indeterminate-progress-bar-background: linear-gradient(to left, var(--lumo-success-color-10pct) 10%, var(--lumo-success-color));
+        --lumo-progress-indeterminate-progress-bar-background-reverse: linear-gradient(to right, var(--lumo-success-color-10pct) 10%, var(--lumo-success-color));
+      }
     </style>
   </template>
 </dom-module><custom-style>
@@ -39453,7 +41598,7 @@ public class Application extends SpringBootServletInitializer {
   </style>
 </custom-style>`;
 
-	document.head.appendChild($_documentContainer$p.content);
+	document.head.appendChild($_documentContainer$r.content);
 
 	/* Safari fails to declare animations for pseudo elements inside a shadow DOM */
 
@@ -39594,9 +41739,9 @@ public class Application extends SpringBootServletInitializer {
 	 * ----------------|-------------|------------
 	 * `indeterminate` | Set to an indeterminate progress bar | :host
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ProgressMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ProgressMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class ProgressBarElement extends ElementMixin$1(ThemableMixin(ProgressMixin(PolymerElement))) {
@@ -39623,6 +41768,11 @@ public class Application extends SpringBootServletInitializer {
         transform: scaleX(var(--vaadin-progress-value));
       }
 
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="value"] {
+        transform-origin: 100% 50%;
+      }
     </style>
 
     <div part="bar">
@@ -39636,7 +41786,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.1.2';
+	    return '1.2.0';
 	  }
 	}
 
@@ -39667,11 +41817,11 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @private
 	 */
-	class ComboBoxItemElement extends ThemableMixin(PolymerElement) {
+	class ComboBoxItemElement extends ThemableMixin(DirMixin(PolymerElement)) {
 	  static get template() {
 	    return html`
     <style>
@@ -39770,6 +41920,11 @@ public class Application extends SpringBootServletInitializer {
 	        this.$.content.appendChild(this._itemTemplateInstance.root);
 	      }
 	    }
+
+	    const hostDir = this._comboBox.getAttribute('dir');
+	    if (hostDir) {
+	      this.setAttribute('dir', hostDir);
+	    }
 	  }
 
 	  _render() {
@@ -39817,7 +41972,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(ComboBoxItemElement.is, ComboBoxItemElement);
 
-	const $_documentContainer$q = html`<dom-module id="lumo-combo-box-overlay" theme-for="vaadin-combo-box-overlay">
+	const $_documentContainer$s = html`<dom-module id="lumo-combo-box-overlay" theme-for="vaadin-combo-box-overlay">
   <template>
     <style include="lumo-overlay lumo-menu-overlay-core">
       [part="content"] {
@@ -39896,13 +42051,23 @@ public class Application extends SpringBootServletInitializer {
           transform: rotate(360deg);
         }
       }
+
+      /* RTL specific styles */
+
+      :host([loading][dir="rtl"]) [part~="loader"] {
+        left: auto;
+        margin-left: 0;
+        margin-right: auto;
+        margin-inline-start: 0;
+        margin-inline-end: auto;
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$q.content);
+	document.head.appendChild($_documentContainer$s.content);
 
-	const $_documentContainer$r = html`<dom-module id="lumo-item" theme-for="vaadin-item">
+	const $_documentContainer$t = html`<dom-module id="lumo-item" theme-for="vaadin-item">
   <template>
     <style>
       :host {
@@ -39968,7 +42133,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$r.content);
+	document.head.appendChild($_documentContainer$t.content);
 
 	/**
 	@license
@@ -40152,11 +42317,11 @@ public class Application extends SpringBootServletInitializer {
 	 * `selected` | Set when the item is selected | :host
 	 * `active` | Set when mousedown or enter/spacebar pressed | :host
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ItemMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ItemMixin
+	 * @mixes ThemableMixin
 	 */
-	class ItemElement extends ItemMixin(ThemableMixin(PolymerElement)) {
+	class ItemElement extends ItemMixin(ThemableMixin(DirMixin(PolymerElement))) {
 	  static get template() {
 	    return html`
     <style>
@@ -40179,7 +42344,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.1.1';
+	    return '2.2.0';
 	  }
 
 	  constructor() {
@@ -40195,7 +42360,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(ItemElement.is, ItemElement);
 
-	const $_documentContainer$s = html`<dom-module id="lumo-combo-box-item" theme-for="vaadin-combo-box-item">
+	const $_documentContainer$u = html`<dom-module id="lumo-combo-box-item" theme-for="vaadin-combo-box-item">
   <template>
     <style include="lumo-item">
       /* TODO partly duplicated from vaadin-list-box styles. Should find a way to make it DRY */
@@ -40233,11 +42398,17 @@ public class Application extends SpringBootServletInitializer {
           box-shadow: none;
         }
       }
+
+      /* RTL specific styles */
+      :host([dir="rtl"]) {
+        padding-right: calc(var(--lumo-border-radius) / 4);
+        padding-left: calc(var(--lumo-space-l) + var(--lumo-border-radius) / 4);
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$s.content);
+	document.head.appendChild($_documentContainer$u.content);
 
 	/**
 	@license
@@ -40278,6 +42449,11 @@ public class Application extends SpringBootServletInitializer {
 	        reflectToAttribute: true,
 	        observer: '_openedChanged'
 	      },
+
+	      /**
+	       * Set true to prevent the overlay from opening automatically.
+	       */
+	      autoOpenDisabled: Boolean,
 
 	      /**
 	       * Set to true to disable this element.
@@ -40471,46 +42647,55 @@ public class Application extends SpringBootServletInitializer {
 	    ];
 	  }
 
+	  constructor() {
+	    super();
+	    this._boundOnFocusout = this._onFocusout.bind(this);
+	    this._boundOverlaySelectedItemChanged = this._overlaySelectedItemChanged.bind(this);
+	    this._boundClose = this.close.bind(this);
+	    this._boundOnOpened = this._onOpened.bind(this);
+	    this._boundOnKeyDown = this._onKeyDown.bind(this);
+	    this._boundOnClick = this._onClick.bind(this);
+	    this._boundOnOverlayTouchAction = this._onOverlayTouchAction.bind(this);
+	    this._boundOnTouchend = this._onTouchend.bind(this);
+	  }
+
 	  ready() {
 	    super.ready();
 
-	    this.addEventListener('focusout', e => {
-	      // Fixes the problem with `focusout` happening when clicking on the scroll bar on Edge
-	      const dropdown = this.$.overlay.$.dropdown;
-	      if (dropdown && dropdown.$ && e.relatedTarget === dropdown.$.overlay) {
-	        e.composedPath()[0].focus();
-	        return;
-	      }
-	      if (!this._closeOnBlurIsPrevented) {
-	        this.close();
-	      }
-	    });
+	    this.addEventListener('focusout', this._boundOnFocusout);
 
 	    this._lastCommittedValue = this.value;
 	    IronA11yAnnouncer.requestAvailability();
 
 	    // 2.0 does not support 'overlay.selection-changed' syntax in listeners
-	    this.$.overlay.addEventListener('selection-changed', this._overlaySelectedItemChanged.bind(this));
+	    this.$.overlay.addEventListener('selection-changed', this._boundOverlaySelectedItemChanged);
 
-	    this.addEventListener('vaadin-combo-box-dropdown-closed', this.close.bind(this));
-	    this.addEventListener('vaadin-combo-box-dropdown-opened', this._onOpened.bind(this));
-	    this.addEventListener('keydown', this._onKeyDown.bind(this));
-	    this.addEventListener('click', this._onClick.bind(this));
+	    this.addEventListener('vaadin-combo-box-dropdown-closed', this._boundClose);
+	    this.addEventListener('vaadin-combo-box-dropdown-opened', this._boundOnOpened);
+	    this.addEventListener('keydown', this._boundOnKeyDown);
+	    this.addEventListener('click', this._boundOnClick);
 
-	    this.$.overlay.addEventListener('vaadin-overlay-touch-action', this._onOverlayTouchAction.bind(this));
+	    this.$.overlay.addEventListener('vaadin-overlay-touch-action', this._boundOnOverlayTouchAction);
 
-	    this.addEventListener('touchend', e => {
-	      if (!this._clearElement || e.composedPath()[0] !== this._clearElement) {
-	        return;
-	      }
-
-	      e.preventDefault();
-	      this._clear();
-	    });
+	    this.addEventListener('touchend', this._boundOnTouchend);
 
 	    this._observer = new FlattenedNodesObserver(this, info => {
 	      this._setTemplateFromNodes(info.addedNodes);
 	    });
+
+	    const bringToFrontListener = (e) => {
+	      const overlay = this.$.overlay;
+	      const dropdown = overlay && overlay.$.dropdown;
+	      // Check dropdown.$ because overlay is lazily instantiated
+	      if (dropdown && dropdown.$ && this.$.overlay.$.dropdown.$.overlay.bringToFront) {
+	        requestAnimationFrame(() => {
+	          dropdown.$.overlay.bringToFront();
+	        });
+	      }
+	    };
+
+	    this.addEventListener('mousedown', bringToFrontListener);
+	    this.addEventListener('touchstart', bringToFrontListener);
 	  }
 
 
@@ -40601,7 +42786,7 @@ public class Application extends SpringBootServletInitializer {
 	    } else if (path.indexOf(this.inputElement) !== -1) {
 	      if (path.indexOf(this._toggleElement) > -1 && this.opened) {
 	        this.close();
-	      } else {
+	      } else if (path.indexOf(this._toggleElement) > -1 || !this.autoOpenDisabled) {
 	        this.open();
 	      }
 	    }
@@ -40722,11 +42907,19 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  _closeOrCommit() {
+	    if (this.autoOpenDisabled && !this.opened) {
+	      this._commitValue();
+	    } else {
+	      this.close();
+	    }
+	  }
+
 	  _onEnter(e) {
 	    // should close on enter when custom values are allowed, input field is cleared, or when an existing
-	    // item is focused with keyboard.
-	    if (this.opened && (this.allowCustomValue || this._inputElementValue === '' || this._focusedIndex > -1)) {
-	      this.close();
+	    // item is focused with keyboard. If auto open is disabled, under the same conditions, commit value.
+	    if ((this.opened || this.autoOpenDisabled) && (this.allowCustomValue || this._inputElementValue === '' || this._focusedIndex > -1)) {
+	      this._closeOrCommit();
 
 	      // Do not submit the surrounding form.
 	      e.preventDefault();
@@ -40737,7 +42930,10 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _onEscape(e) {
-	    if (this.opened) {
+	    if (this.autoOpenDisabled) {
+	      this._focusedIndex = -1;
+	      this.cancel();
+	    } else if (this.opened) {
 	      this._stopPropagation(e);
 
 	      if (this._focusedIndex > -1) {
@@ -40782,7 +42978,7 @@ public class Application extends SpringBootServletInitializer {
 	    this._revertInputValueToValue();
 	    // In the next _detectAndDispatchChange() call, the change detection should not pass
 	    this._lastCommittedValue = this.value;
-	    this.close();
+	    this._closeOrCommit();
 	  }
 
 	  _onOpened() {
@@ -40812,12 +43008,15 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _onClosed() {
-
 	    // Happens when the overlay is closed by clicking outside
 	    if (this.opened) {
 	      this.close();
 	    }
 
+	    this._commitValue();
+	  }
+
+	  _commitValue() {
 	    if (this.$.overlay._items && this._focusedIndex > -1) {
 	      const focusedItem = this.$.overlay._items[this._focusedIndex];
 	      if (this.selectedItem !== focusedItem) {
@@ -40832,7 +43031,10 @@ public class Application extends SpringBootServletInitializer {
 	        this.value = '';
 	      }
 	    } else {
-	      if (this.allowCustomValue) {
+	      if (this.allowCustomValue
+	        // to prevent a repetitive input value being saved after pressing ESC and Tab.
+	        && !(this.filteredItems && this.filteredItems.filter(item => this._getItemLabel(item) === this._inputElementValue).length)) {
+
 	        const e = new CustomEvent('custom-value-set', {detail: this._inputElementValue, composed: true, cancelable: true, bubbles: true});
 	        this.dispatchEvent(e);
 	        if (!e.defaultPrevented) {
@@ -40841,7 +43043,7 @@ public class Application extends SpringBootServletInitializer {
 	          this.value = customValue;
 	        }
 	      } else {
-	        this._inputElementValue = this.selectedItem ? this._getItemLabel(this.selectedItem) : '';
+	        this._inputElementValue = this.selectedItem ? this._getItemLabel(this.selectedItem) : (this.value || '');
 	      }
 	    }
 
@@ -40870,7 +43072,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _filterFromInput(e) {
-	    if (!this.opened && !e.__fromClearButton) {
+	    if (!this.opened && !e.__fromClearButton && !this.autoOpenDisabled) {
 	      this.open();
 	    }
 
@@ -41037,7 +43239,7 @@ public class Application extends SpringBootServletInitializer {
 	    if (e.path === 'filteredItems' || e.path === 'filteredItems.splices') {
 	      this._setOverlayItems(this.filteredItems);
 
-	      this._focusedIndex = this.opened ?
+	      this._focusedIndex = this.opened || this.autoOpenDisabled ?
 	        this.$.overlay.indexOfLabel(this.filter) :
 	        this._indexOfValue(this.value, this.filteredItems);
 
@@ -41052,11 +43254,13 @@ public class Application extends SpringBootServletInitializer {
 	      return arr;
 	    }
 
-	    return arr.filter(item => {
+	    const filteredItems = arr.filter(item => {
 	      filter = filter ? filter.toString().toLowerCase() : '';
 	      // Check if item contains input value.
 	      return this._getItemLabel(item).toString().toLowerCase().indexOf(filter) > -1;
 	    });
+
+	    return !filteredItems.length && this.autoOpenDisabled ? arr : filteredItems;
 	  }
 
 	  _selectItemForValue(value) {
@@ -41146,6 +43350,26 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  _onFocusout(event) {
+	    // Fixes the problem with `focusout` happening when clicking on the scroll bar on Edge
+	    const dropdown = this.$.overlay.$.dropdown;
+	    if (dropdown && dropdown.$ && event.relatedTarget === dropdown.$.overlay) {
+	      event.composedPath()[0].focus();
+	      return;
+	    }
+	    if (!this._closeOnBlurIsPrevented) {
+	      this._closeOrCommit();
+	    }
+	  }
+
+	  _onTouchend(event) {
+	    if (!this._clearElement || event.composedPath()[0] !== this._clearElement) {
+	      return;
+	    }
+
+	    event.preventDefault();
+	    this._clear();
+	  }
 
 	  /**
 	   * Returns true if `value` is valid, and sets the `invalid` flag appropriately.
@@ -41454,7 +43678,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _pageSizeChanged(pageSize, oldPageSize) {
-	    if (Math.floor(pageSize) !== pageSize || pageSize === 0) {
+	    if (Math.floor(pageSize) !== pageSize || pageSize < 1) {
 	      this.pageSize = oldPageSize;
 	      throw new Error('`pageSize` value must be an integer > 0');
 	    }
@@ -42005,12 +44229,12 @@ public class Application extends SpringBootServletInitializer {
 	into pages so you can bring in a page at the time. The page could contain 500
 	items, and iron-list will only render 20.
 
-	@group Iron Element
 	@element iron-list
 	@demo demo/index.html
 
 	*/
 	Polymer({
+	  /** @override */
 	  _template: html`
     <style>
       :host {
@@ -42163,7 +44387,7 @@ public class Application extends SpringBootServletInitializer {
 	  _scrollerPaddingTop: 0,
 
 	  /**
-	   * This value is the same as `scrollTop`.
+	   * This value is a cached value of `scrollTop` from the last `scroll` event.
 	   */
 	  _scrollPosition: 0,
 
@@ -42217,7 +44441,7 @@ public class Application extends SpringBootServletInitializer {
 
 	  /**
 	   * An array of DOM nodes that are currently in the tree
-	   * @type {?Array<!TemplateInstanceBase>}
+	   * @type {?Array<!HTMLElement>}
 	   */
 	  _physicalItems: null,
 
@@ -42264,13 +44488,14 @@ public class Application extends SpringBootServletInitializer {
 
 	  /**
 	   * The the item that is focused if it is moved offscreen.
-	   * @private {?TemplatizerNode}
+	   * @private {?HTMLElement}
 	   */
 	  _offscreenFocusedItem: null,
 
 	  /**
 	   * The item that backfills the `_offscreenFocusedItem` in the physical items
 	   * list when that item is moved offscreen.
+	   * @type {?HTMLElement}
 	   */
 	  _focusBackfillItem: null,
 
@@ -42492,10 +44717,12 @@ public class Application extends SpringBootServletInitializer {
 	    return this._scrollerPaddingTop + this.scrollOffset;
 	  },
 
+	  /** @override */
 	  ready: function() {
 	    this.addEventListener('focus', this._didFocus.bind(this), true);
 	  },
 
+	  /** @override */
 	  attached: function() {
 	    this._debounce('_render', this._render, animationFrame);
 	    // `iron-resize` is fired when the list is attached if the event is added
@@ -42504,6 +44731,7 @@ public class Application extends SpringBootServletInitializer {
 	    this.listen(this, 'keydown', '_keydownHandler');
 	  },
 
+	  /** @override */
 	  detached: function() {
 	    this.unlisten(this, 'iron-resize', '_resizeHandler');
 	    this.unlisten(this, 'keydown', '_keydownHandler');
@@ -42556,9 +44784,16 @@ public class Application extends SpringBootServletInitializer {
 	          Math.round(delta / this._physicalAverage) * this._itemsPerRow;
 	      this._virtualStart = this._virtualStart + idxAdjustment;
 	      this._physicalStart = this._physicalStart + idxAdjustment;
-	      // Estimate new physical offset.
-	      this._physicalTop = Math.floor(this._virtualStart / this._itemsPerRow) *
-	          this._physicalAverage;
+	      // Estimate new physical offset based on the virtual start index.
+	      // adjusts the physical start position to stay in sync with the clamped
+	      // virtual start index. It's critical not to let this value be
+	      // more than the scroll position however, since that would result in
+	      // the physical items not covering the viewport, and leading to
+	      // _increasePoolIfNeeded to run away creating items to try to fill it.
+	      this._physicalTop = Math.min(
+	          Math.floor(this._virtualStart / this._itemsPerRow) *
+	              this._physicalAverage,
+	          this._scrollPosition);
 	      this._update();
 	    } else if (this._physicalCount > 0) {
 	      var reusables = this._getReusables(isScrollingDown);
@@ -42594,7 +44829,8 @@ public class Application extends SpringBootServletInitializer {
 	    var physicalCount = this._physicalCount;
 	    var top = this._physicalTop + this._scrollOffset;
 	    var bottom = this._physicalBottom + this._scrollOffset;
-	    var scrollTop = this._scrollTop;
+	    // This may be called outside of a scrollHandler, so use last cached position
+	    var scrollTop = this._scrollPosition;
 	    var scrollBottom = this._scrollBottom;
 
 	    if (fromTop) {
@@ -42786,7 +45022,8 @@ public class Application extends SpringBootServletInitializer {
 	    if (this.ctor) {
 	      return;
 	    }
-	    this._userTemplate = this.queryEffectiveChildren('template');
+	    this._userTemplate = /** @type {!HTMLTemplateElement} */ (
+	        this.queryEffectiveChildren('template'));
 	    if (!this._userTemplate) {
 	      console.warn('iron-list requires a template to be provided in light-dom');
 	    }
@@ -42883,7 +45120,7 @@ public class Application extends SpringBootServletInitializer {
 	    path = path.substring(dot + 1);
 	    path = this.as + (path ? '.' + path : '');
 	    inst._setPendingPropertyOrPath(path, value, false, true);
-	    inst._flushProperties && inst._flushProperties(true);
+	    inst._flushProperties && inst._flushProperties();
 	    // TODO(blasten): V1 doesn't do this and it's a bug
 	    if (isIndexRendered) {
 	      this._updateMetrics([pidx]);
@@ -43073,10 +45310,19 @@ public class Application extends SpringBootServletInitializer {
 	        }
 	      });
 	    } else {
+	      const order = [];
 	      this._iterateItems(function(pidx, vidx) {
-	        this.translate3d(0, y + 'px', 0, this._physicalItems[pidx]);
+	        const item = this._physicalItems[pidx];
+	        this.translate3d(0, y + 'px', 0, item);
 	        y += this._physicalSizes[pidx];
+	        const itemId = item.id;
+	        if (itemId) {
+	          order.push(itemId);
+	        }
 	      });
+	      if (order.length) {
+	        this.setAttribute('aria-owns', order.join(' '));
+	      }
 	    }
 	  },
 
@@ -43112,7 +45358,8 @@ public class Application extends SpringBootServletInitializer {
 	    // Note: the delta can be positive or negative.
 	    if (deltaHeight !== 0) {
 	      this._physicalTop = this._physicalTop - deltaHeight;
-	      var scrollTop = this._scrollTop;
+	      // This may be called outside of a scrollHandler, so use last cached position
+	      var scrollTop = this._scrollPosition;
 	      // juking scroll position during interial scrolling on iOS is no bueno
 	      if (!IOS_TOUCH_SCROLLING && scrollTop > 0) {
 	        this._resetScrollPosition(scrollTop - deltaHeight);
@@ -43528,7 +45775,8 @@ public class Application extends SpringBootServletInitializer {
 	    if (!this._focusBackfillItem) {
 	      // Create a physical item.
 	      var inst = this.stamp(null);
-	      this._focusBackfillItem = inst.root.querySelector('*');
+	      this._focusBackfillItem =
+	          /** @type {!HTMLElement} */ (inst.root.querySelector('*'));
 	      this._itemsParent.appendChild(inst.root);
 	    }
 	    // Set the offcreen focused physical item.
@@ -43692,7 +45940,7 @@ public class Application extends SpringBootServletInitializer {
 	        .concat([this._offscreenFocusedItem, this._focusBackfillItem])
 	        .forEach(function(item) {
 	          if (item) {
-	            this.modelForElement(item).notifyPath(path, value, true);
+	            this.modelForElement(item).notifyPath(path, value);
 	          }
 	        }, this);
 	  },
@@ -43719,6 +45967,19 @@ public class Application extends SpringBootServletInitializer {
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
+	const $_documentContainer$v = document.createElement('template');
+
+	$_documentContainer$v.innerHTML = `<dom-module id="vaadin-combo-box-overlay-styles" theme-for="vaadin-combo-box-overlay">
+  <template>
+    <style>
+      :host {
+        width: var(--vaadin-combo-box-overlay-width, var(--_vaadin-combo-box-overlay-default-width, auto));
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$v.content);
 	/**
 	 * The overlay element.
 	 *
@@ -43729,7 +45990,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class ComboBoxOverlayElement extends OverlayElement {
@@ -43737,11 +45998,23 @@ public class Application extends SpringBootServletInitializer {
 	    return 'vaadin-combo-box-overlay';
 	  }
 
+	  connectedCallback() {
+	    super.connectedCallback();
+
+	    const dropdown = this.__dataHost;
+	    const comboBoxOverlay = dropdown.getRootNode().host;
+	    const comboBox = comboBoxOverlay && comboBoxOverlay.getRootNode().host;
+	    const hostDir = comboBox && comboBox.getAttribute('dir');
+	    if (hostDir) {
+	      this.setAttribute('dir', hostDir);
+	    }
+	  }
+
 	  ready() {
 	    super.ready();
 	    const loader = document.createElement('div');
 	    loader.setAttribute('part', 'loader');
-	    const content = this.shadowRoot.querySelector(['[part~="content"]']);
+	    const content = this.shadowRoot.querySelector('[part~="content"]');
 	    content.parentNode.insertBefore(loader, content);
 	  }
 	}
@@ -43751,7 +46024,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * Element for internal use only.
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class ComboBoxDropdownElement extends DisableUpgradeMixin(
@@ -43925,6 +46198,32 @@ public class Application extends SpringBootServletInitializer {
 	    return spaceBelow < 0.30;
 	  }
 
+	  _getCustomWidth() {
+	    return window.ShadyCSS ?
+	      window.ShadyCSS.getComputedStyleValue(this, '--vaadin-combo-box-overlay-width') :
+	      getComputedStyle(this).getPropertyValue('--vaadin-combo-box-overlay-width');
+	  }
+
+	  _setOverlayWidth() {
+	    const inputWidth = this.positionTarget.clientWidth + 'px';
+	    const customWidth = this._getCustomWidth();
+
+	    if (window.ShadyCSS && !window.ShadyCSS.nativeCss) {
+	      window.ShadyCSS.styleSubtree(this.$.overlay, {
+	        '--vaadin-combo-box-overlay-width': customWidth,
+	        '--_vaadin-combo-box-overlay-default-width': inputWidth
+	      });
+	    } else {
+	      this.$.overlay.style.setProperty('--_vaadin-combo-box-overlay-default-width', inputWidth);
+
+	      if (customWidth === '') {
+	        this.$.overlay.style.removeProperty('--vaadin-combo-box-overlay-width');
+	      } else {
+	        this.$.overlay.style.setProperty('--vaadin-combo-box-overlay-width', customWidth);
+	      }
+	    }
+	  }
+
 	  _setPosition(e) {
 	    if (this.hidden) {
 	      return;
@@ -43950,8 +46249,9 @@ public class Application extends SpringBootServletInitializer {
 	    this._translateY = Math.round(this._translateY * _devicePixelRatio) / _devicePixelRatio;
 	    this.$.overlay.style.transform = `translate3d(${this._translateX}px, ${this._translateY}px, 0)`;
 
-	    this.$.overlay.style.width = this.positionTarget.clientWidth + 'px';
 	    this.$.overlay.style.justifyContent = this.alignedAbove ? 'flex-end' : 'flex-start';
+
+	    this._setOverlayWidth();
 
 	    // TODO: fire only when position actually changes changes
 	    this.dispatchEvent(new CustomEvent('position-changed'));
@@ -43978,7 +46278,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * Element for internal use only.
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class ComboBoxDropdownWrapperElement extends (class extends PolymerElement {}) {
@@ -44188,12 +46488,10 @@ public class Application extends SpringBootServletInitializer {
 	  _maxOverlayHeight(targetRect) {
 	    const margin = 8;
 	    const minHeight = 116; // Height of two items in combo-box
-	    const bottom = Math.min(window.innerHeight, document.body.scrollHeight - document.body.scrollTop);
-
 	    if (this.$.dropdown.alignedAbove) {
 	      return Math.max(targetRect.top - margin + Math.min(document.body.scrollTop, 0), minHeight) + 'px';
 	    } else {
-	      return Math.max(bottom - targetRect.bottom - margin, minHeight) + 'px';
+	      return Math.max(document.documentElement.clientHeight - targetRect.bottom - margin, minHeight) + 'px';
 	    }
 	  }
 
@@ -44458,11 +46756,11 @@ public class Application extends SpringBootServletInitializer {
 	 *   </paper-input>
 	 * </vaadin-combo-box-light>
 	 * ```
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ComboBoxDataProviderMixin
-	 * @mixes Vaadin.ComboBoxMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ComboBoxDataProviderMixin
+	 * @mixes ComboBoxMixin
+	 * @mixes ThemableMixin
+	 * @mixes ThemePropertyMixin
 	 */
 	class ComboBoxLightElement extends
 	  ThemePropertyMixin(
@@ -44572,7 +46870,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(ComboBoxLightElement.is, ComboBoxLightElement);
 
-	const $_documentContainer$t = html`<dom-module id="lumo-combo-box" theme-for="vaadin-combo-box">
+	const $_documentContainer$w = html`<dom-module id="lumo-combo-box" theme-for="vaadin-combo-box">
   <template>
     <style include="lumo-field-button">
       :host {
@@ -44586,7 +46884,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$t.content);
+	document.head.appendChild($_documentContainer$w.content);
 
 	/**
 	@license
@@ -44748,13 +47046,13 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ComboBoxDataProviderMixin
-	 * @mixes Vaadin.ComboBoxMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ComboBoxDataProviderMixin
+	 * @mixes ComboBoxMixin
+	 * @mixes ThemableMixin
+	 * @mixes ThemePropertyMixin
 	 * @demo demo/index.html
 	 */
 	class ComboBoxElement extends
@@ -44810,7 +47108,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '5.0.6';
+	    return '5.2.0';
 	  }
 
 	  static get properties() {
@@ -44966,7 +47264,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(ComboBoxElement.is, ComboBoxElement);
 
-	const $_documentContainer$u = html`<dom-module id="lumo-number-field" theme-for="vaadin-number-field">
+	const $_documentContainer$x = html`<dom-module id="lumo-number-field" theme-for="vaadin-number-field">
   <template>
     <style include="lumo-field-button">
       :host {
@@ -44998,23 +47296,30 @@ public class Application extends SpringBootServletInitializer {
       [part="increase-button"]::before {
         margin-top: 0.2em;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="value"],
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input) {
+        --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent, #000 1.25em);
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$u.content);
+	document.head.appendChild($_documentContainer$x.content);
 
 	/**
 	@license
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$v = document.createElement('template');
+	const $_documentContainer$y = document.createElement('template');
 
-	$_documentContainer$v.innerHTML = `<dom-module id="vaadin-number-field-template">
+	$_documentContainer$y.innerHTML = `<dom-module id="vaadin-number-field-template">
   <template>
     <style>
-      :host([readonly]) {
+      :host([readonly]) [part\$="button"] {
         pointer-events: none;
       }
 
@@ -45045,6 +47350,36 @@ public class Application extends SpringBootServletInitializer {
         /* Older Firefox versions (v47.0) requires !important */
         -moz-appearance: textfield !important;
       }
+
+      :host([dir="rtl"]) [part="input-field"] {
+        direction: ltr;
+      }
+
+      :host([dir="rtl"]) [part="value"]::placeholder {
+        direction: rtl;
+      }
+
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input)::placeholder {
+        direction: rtl;
+      }
+
+      :host([dir="rtl"]) [part="value"]:-ms-input-placeholder,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input):-ms-input-placeholder {
+        direction: rtl;
+      }
+
+      :host([dir="rtl"]:not([has-controls])) [part="value"]::placeholder {
+        text-align: left;
+      }
+
+      :host([dir="rtl"]:not([has-controls])) [part="input-field"] ::slotted(input)::placeholder {
+        text-align: left;
+      }
+
+      :host([dir="rtl"]:not([has-controls])) [part="value"]:-ms-input-placeholder,
+      :host([dir="rtl"]:not([has-controls])) [part="input-field"] ::slotted(input):-ms-input-placeholder {
+        text-align: left;
+      }
     </style>
 
     <div disabled\$="[[!_allowed(-1, value, min, max, step)]]" part="decrease-button" on-click="_decreaseValue" on-touchend="_decreaseButtonTouchend" hidden\$="[[!hasControls]]">
@@ -45057,18 +47392,18 @@ public class Application extends SpringBootServletInitializer {
   
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$v.content);
+	document.head.appendChild($_documentContainer$y.content);
 	let memoizedTemplate;
 
 	/**
-	* `<vaadin-number-field>` is a Polymer 2 element for number field control in forms.
+	* `<vaadin-number-field>` is a Web Component for number field control in forms.
 	*
 	* ```html
 	* <vaadin-number-field label="Number">
 	* </vaadin-number-field>
 	* ```
 	*
-	* @memberof Vaadin
+	* @extends PolymerElement
 	* @demo demo/index.html
 	*/
 	class NumberFieldElement extends TextFieldElement {
@@ -45077,7 +47412,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.4.11';
+	    return '2.6.2';
 	  }
 
 	  static get properties() {
@@ -45096,7 +47431,8 @@ public class Application extends SpringBootServletInitializer {
 	      */
 	      min: {
 	        type: Number,
-	        reflectToAttribute: true
+	        reflectToAttribute: true,
+	        observer: '_minChanged'
 	      },
 
 	      /**
@@ -45113,24 +47449,17 @@ public class Application extends SpringBootServletInitializer {
 	       */
 	      step: {
 	        type: Number,
-	        reflectToAttribute: true,
-	        value: 1
+	        value: 1,
+	        observer: '_stepChanged'
 	      }
 
 	    };
-	  }
-
-	  static get observers() {
-	    return [
-	      '_stepOrMinChanged(step, min)'
-	    ];
 	  }
 
 	  ready() {
 	    super.ready();
 	    this.__previousValidInput = this.value || '';
 	    this.inputElement.type = 'number';
-	    this.inputElement.addEventListener('keydown', this.__onKeyDown.bind(this));
 	    this.inputElement.addEventListener('change', this.__onInputChange.bind(this));
 	  }
 
@@ -45168,6 +47497,25 @@ public class Application extends SpringBootServletInitializer {
 	    return memoizedTemplate;
 	  }
 
+	  _createConstraintsObserver() {
+	    // NOTE: do not call "super" but instead override the method to add extra arguments
+	    this._createMethodObserver('_constraintsChanged(required, minlength, maxlength, pattern, min, max, step)');
+	  }
+
+	  _constraintsChanged(required, minlength, maxlength, pattern, min, max, step) {
+	    if (!this.invalid) {
+	      return;
+	    }
+
+	    const isNumUnset = n => (!n && n !== 0);
+
+	    if (!isNumUnset(min) || !isNumUnset(max)) {
+	      this.validate();
+	    } else {
+	      super._constraintsChanged(required, minlength, maxlength, pattern);
+	    }
+	  }
+
 	  _decreaseValue() {
 	    this._incrementValue(-1);
 	  }
@@ -45177,7 +47525,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _incrementValue(incr) {
-	    if (this.disabled) {
+	    if (this.disabled || this.readonly) {
 	      return;
 	    }
 
@@ -45226,7 +47574,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _setValue(value) {
-	    this.value = this.inputElement.value = parseFloat(value);
+	    this.value = this.inputElement.value = String(parseFloat(value));
 	    this.dispatchEvent(new CustomEvent('change', {bubbles: true}));
 	  }
 
@@ -45282,8 +47630,21 @@ public class Application extends SpringBootServletInitializer {
 	    return !this.value || (!this.disabled && this._incrementIsInsideTheLimits(incr, value));
 	  }
 
-	  _maxChanged() {
-	    this.inputElement.max = this.max;
+	  _stepChanged(step) {
+	    // Avoid using initial value in validation
+	    this.__validateByStep = this.__stepChangedCalled || this.getAttribute('step') !== null;
+	    this.inputElement.step = this.__validateByStep ? step : 'any';
+
+	    this.__stepChangedCalled = true;
+	    this.setAttribute('step', step);
+	  }
+
+	  _minChanged(min) {
+	    this.inputElement.min = min;
+	  }
+
+	  _maxChanged(max) {
+	    this.inputElement.max = max;
 	  }
 
 	  _valueChanged(newVal, oldVal) {
@@ -45297,7 +47658,7 @@ public class Application extends SpringBootServletInitializer {
 	    super._valueChanged(this.value, oldVal);
 	  }
 
-	  __onKeyDown(e) {
+	  _onKeyDown(e) {
 	    if (e.keyCode == 38) {
 	      e.preventDefault();
 	      this._increaseValue();
@@ -45305,33 +47666,81 @@ public class Application extends SpringBootServletInitializer {
 	      e.preventDefault();
 	      this._decreaseValue();
 	    }
+	    super._onKeyDown(e);
 	  }
 
 	  __onInputChange() {
-	    this.checkValidity();
-	  }
-
-	  _stepOrMinChanged(step, min) {
-	    this.inputElement.step = step;
-	    this.inputElement.min = this.min;
+	    this.validate();
 	  }
 
 	  checkValidity() {
-	    // text-field mixin does not check against `min` and `max`
-	    if (this.min !== undefined || this.max !== undefined || this.step) {
-	      this.invalid = !this.inputElement.checkValidity();
+	    // text-field mixin does not check against `min`, `max` and `step`
+	    if (this.min !== undefined || this.max !== undefined || this.__validateByStep) {
+	      return this.inputElement.checkValidity();
 	    }
+
 	    return super.checkValidity();
 	  }
 	}
 
 	window.customElements.define(NumberFieldElement.is, NumberFieldElement);
 
+	const $_documentContainer$z = html`<dom-module id="lumo-email-field" theme-for="vaadin-email-field">
+  <template>
+    <style>
+      :not(*):placeholder-shown, /* to prevent broken styles on IE */
+      :host([dir="rtl"]) [part="value"]:placeholder-shown,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input:placeholder-shown) {
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
+      :host([dir="rtl"]) [part="value"],
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input) {
+        --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent, #000 1.25em);
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$z.content);
+
 	/**
 	@license
 	Copyright (c) 2018 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
+	const $_documentContainer$A = document.createElement('template');
+
+	$_documentContainer$A.innerHTML = `<dom-module id="vaadin-email-field-template">
+  <template>
+    <style>
+      :host([dir="rtl"]) [part="input-field"] {
+        direction: ltr;
+      }
+
+      :host([dir="rtl"]) [part="value"]::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input)::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="value"]:-ms-input-placeholder,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input):-ms-input-placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+    </style>
+  </template>
+  
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$A.content);
+	let memoizedTemplate$1;
+
 	/**
 	 * `<vaadin-email-field>` is a Web Component for email field control in forms.
 	 *
@@ -45346,7 +47755,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @demo demo/index.html
 	 */
 	class EmailFieldElement extends TextFieldElement {
@@ -45355,20 +47764,42 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.4.11';
+	    return '2.6.2';
+	  }
+
+	  static get template() {
+	    if (!memoizedTemplate$1) {
+	      // Clone the superclass template
+	      memoizedTemplate$1 = super.template.cloneNode(true);
+
+	      // Retrieve this element's dom-module template
+	      const thisTemplate = DomModule.import(this.is + '-template', 'template');
+	      const styles = thisTemplate.content.querySelector('style');
+
+	      // Add the and styles to the text-field template
+	      memoizedTemplate$1.content.appendChild(styles);
+	    }
+
+	    return memoizedTemplate$1;
 	  }
 
 	  ready() {
 	    super.ready();
 	    this.inputElement.type = 'email';
 	    this.inputElement.autocapitalize = 'off';
+	  }
+
+	  _createConstraintsObserver() {
+	    // NOTE: pattern needs to be set before constraints observer is initialized
 	    this.pattern = '^[a-zA-Z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$';
+
+	    super._createConstraintsObserver();
 	  }
 	}
 
 	customElements.define(EmailFieldElement.is, EmailFieldElement);
 
-	const $_documentContainer$w = html`<dom-module id="lumo-time-picker" theme-for="vaadin-time-picker">
+	const $_documentContainer$B = html`<dom-module id="lumo-time-picker" theme-for="vaadin-time-picker">
   <template>
     <style include="lumo-field-button">
       [part~="toggle-button"]::before {
@@ -45378,7 +47809,26 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$w.content);
+	document.head.appendChild($_documentContainer$B.content);
+
+	const $_documentContainer$C = html`<dom-module id="lumo-time-picker-text-field" theme-for="vaadin-time-picker-text-field">
+  <template>
+    <style>
+      :not(*):placeholder-shown, /* to prevent broken styles on IE */
+      :host([dir="rtl"]) [part="value"]:placeholder-shown,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input:placeholder-shown) {
+        --_lumo-text-field-overflow-mask-image: none;
+      }
+
+      :host([dir="rtl"]) [part="value"],
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input) {
+        --_lumo-text-field-overflow-mask-image: linear-gradient(to left, transparent, #000 1.25em);
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$C.content);
 
 	/**
 	@license
@@ -45386,6 +47836,35 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 
+	const $_documentContainer$D = document.createElement('template');
+
+	$_documentContainer$D.innerHTML = `<dom-module id="vaadin-time-picker-text-field-styles" theme-for="vaadin-time-picker-text-field">
+  <template>
+    <style>
+      :host([dir="rtl"]) [part="input-field"] {
+        direction: ltr;
+      }
+
+      :host([dir="rtl"]) [part="value"]::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input)::placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+
+      :host([dir="rtl"]) [part="value"]:-ms-input-placeholder,
+      :host([dir="rtl"]) [part="input-field"] ::slotted(input):-ms-input-placeholder {
+        direction: rtl;
+        text-align: left;
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$D.content);
 	/**
 	  * The text-field element.
 	  *
@@ -45396,7 +47875,7 @@ public class Application extends SpringBootServletInitializer {
 	  *
 	  * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	  *
-	  * @memberof Vaadin
+	  * @extends PolymerElement
 	  */
 	class TimePickerTextFieldElement extends TextFieldElement {
 	  static get is() {
@@ -45457,11 +47936,11 @@ public class Application extends SpringBootServletInitializer {
 	 * Note: the `theme` attribute value set on `<vaadin-time-picker>` is
 	 * propagated to the internal themable components listed above.
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes ThemePropertyMixin
 	 * @demo demo/index.html
 	 */
 	class TimePickerElement extends
@@ -45489,12 +47968,12 @@ public class Application extends SpringBootServletInitializer {
         min-width: 0;
       }
     </style>
-    <vaadin-combo-box-light allow-custom-value="" item-label-path="value" filtered-items="[[__dropdownItems]]" disabled="[[disabled]]" readonly="[[readonly]]" theme\$="[[theme]]">
+    <vaadin-combo-box-light allow-custom-value="" item-label-path="value" filtered-items="[[__dropdownItems]]" disabled="[[disabled]]" readonly="[[readonly]]" auto-open-disabled="[[autoOpenDisabled]]" dir="ltr" theme\$="[[theme]]">
       <template>
         [[item.label]]
       </template>
       <vaadin-time-picker-text-field class="input" name="[[name]]" invalid="[[invalid]]" autocomplete="off" label="[[label]]" required="[[required]]" disabled="[[disabled]]" prevent-invalid-input="[[preventInvalidInput]]" pattern="[[pattern]]" error-message="[[errorMessage]]" autofocus="[[autofocus]]" placeholder="[[placeholder]]" readonly="[[readonly]]" role="application" aria-live="assertive" min\$="[[min]]" max\$="[[max]]" aria-label\$="[[label]]" clear-button-visible="[[clearButtonVisible]]" i18n="[[i18n]]" theme\$="[[theme]]">
-        <span slot="suffix" part="toggle-button" role="button" aria-label\$="[[i18n.selector]]"></span>
+        <span slot="suffix" part="toggle-button" class="toggle-button" role="button" aria-label\$="[[i18n.selector]]"></span>
       </vaadin-time-picker-text-field>
     </vaadin-combo-box-light>
 `;
@@ -45504,7 +47983,7 @@ public class Application extends SpringBootServletInitializer {
 	    return 'vaadin-time-picker';
 	  }
 	  static get version() {
-	    return '2.0.2';
+	    return '2.2.1';
 	  }
 
 	  static get properties() {
@@ -45589,7 +48068,8 @@ public class Application extends SpringBootServletInitializer {
 	       */
 	      readonly: {
 	        type: Boolean,
-	        value: false
+	        value: false,
+	        reflectToAttribute: true
 	      },
 
 	      /**
@@ -45655,6 +48135,11 @@ public class Application extends SpringBootServletInitializer {
 	        type: Boolean,
 	        value: false
 	      },
+
+	      /**
+	       * Set true to prevent the overlay from opening automatically.
+	       */
+	      autoOpenDisabled: Boolean,
 
 	      __dropdownItems: {
 	        type: Array
@@ -45742,10 +48227,17 @@ public class Application extends SpringBootServletInitializer {
 	  ready() {
 	    super.ready();
 
+	    // In order to have synchronized invalid property, we need to use the same validate logic.
+	    this.__inputElement.validate = () => {};
+
 	    // Not using declarative because we receive an event before text-element shadow is ready,
 	    // thus querySelector in textField.focusElement raises an undefined exception on validate
 	    this.__dropdownElement.addEventListener('value-changed', e => this.__onInputChange(e));
 	    this.__inputElement.addEventListener('keydown', this.__onKeyDown.bind(this));
+
+	    // Validation listeners
+	    this.__dropdownElement.addEventListener('change', e => this.validate());
+	    this.__inputElement.addEventListener('blur', e => this.validate());
 
 	    this.__dropdownElement.addEventListener('change', e => {
 	      // `vaadin-combo-box-light` forwards 'change' event from text-field.
@@ -45887,6 +48379,11 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  __adjustValue(minSec, maxSec, minTimeObj, maxTimeObj) {
+	    // Do not change the value if it is empty
+	    if (!this.__memoValue) {
+	      return;
+	    }
+
 	    const valSec = this.__getSec(this.__memoValue);
 
 	    if (valSec < minSec) {
@@ -45922,8 +48419,6 @@ public class Application extends SpringBootServletInitializer {
 	    } else {
 	      this.value = '';
 	    }
-
-	    this.validate();
 	  }
 
 	  __updateValue(obj) {
@@ -45972,9 +48467,12 @@ public class Application extends SpringBootServletInitializer {
 	    return TimePickerElement.properties.i18n.value().parseTime(text);
 	  }
 
+	  _getInputElement() {
+	    return this.shadowRoot.querySelector('vaadin-time-picker-text-field');
+	  }
+
 	  get __inputElement() {
-	    return this.__memoInput ||
-	      (this.__memoInput = this.shadowRoot.querySelector('vaadin-time-picker-text-field'));
+	    return this.__memoInput || (this.__memoInput = this._getInputElement());
 	  }
 
 	  get __dropdownElement() {
@@ -46020,7 +48518,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(TimePickerElement.is, TimePickerElement);
 
-	const $_documentContainer$x = html`<dom-module id="lumo-password-field" theme-for="vaadin-password-field">
+	const $_documentContainer$E = html`<dom-module id="lumo-password-field" theme-for="vaadin-password-field">
   <template>
     <style>
       [part="reveal-button"]::before {
@@ -46044,16 +48542,16 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$x.content);
+	document.head.appendChild($_documentContainer$E.content);
 
 	/**
 	@license
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$y = document.createElement('template');
+	const $_documentContainer$F = document.createElement('template');
 
-	$_documentContainer$y.innerHTML = `<custom-style>
+	$_documentContainer$F.innerHTML = `<custom-style>
   <style>
     @font-face {
       font-family: 'vaadin-password-field-icons';
@@ -46081,8 +48579,8 @@ public class Application extends SpringBootServletInitializer {
   
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$y.content);
-	let memoizedTemplate$1;
+	document.head.appendChild($_documentContainer$F.content);
+	let memoizedTemplate$2;
 
 	/**
 	 * `<vaadin-password-field>` is a Web Component for password field control in forms.
@@ -46110,7 +48608,7 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @demo demo/index.html
 	 */
 	class PasswordFieldElement extends TextFieldElement {
@@ -46119,7 +48617,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.4.11';
+	    return '2.6.2';
 	  }
 
 	  static get properties() {
@@ -46146,9 +48644,9 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get template() {
-	    if (!memoizedTemplate$1) {
+	    if (!memoizedTemplate$2) {
 	      // Clone the superclass template
-	      memoizedTemplate$1 = super.template.cloneNode(true);
+	      memoizedTemplate$2 = super.template.cloneNode(true);
 
 	      // Retrieve this element's dom-module template
 	      const thisTemplate = DomModule.import(this.is + '-template', 'template');
@@ -46156,12 +48654,12 @@ public class Application extends SpringBootServletInitializer {
 	      const styles = thisTemplate.content.querySelector('style');
 
 	      // Append reveal-button and styles to the text-field template
-	      const inputField = memoizedTemplate$1.content.querySelector('[part="input-field"]');
+	      const inputField = memoizedTemplate$2.content.querySelector('[part="input-field"]');
 	      inputField.appendChild(revealButton);
-	      memoizedTemplate$1.content.appendChild(styles);
+	      memoizedTemplate$2.content.appendChild(styles);
 	    }
 
-	    return memoizedTemplate$1;
+	    return memoizedTemplate$2;
 	  }
 
 	  ready() {
@@ -46220,7 +48718,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(PasswordFieldElement.is, PasswordFieldElement);
 
-	const $_documentContainer$z = html`<dom-module id="lumo-text-area" theme-for="vaadin-text-area">
+	const $_documentContainer$G = html`<dom-module id="lumo-text-area" theme-for="vaadin-text-area">
   <template>
     <style include="lumo-text-field">
       [part="input-field"],
@@ -46280,7 +48778,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$z.content);
+	document.head.appendChild($_documentContainer$G.content);
 
 	/**
 	@license
@@ -46334,9 +48832,9 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.TextFieldMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes TextFieldMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class TextAreaElement extends ElementMixin$1(TextFieldMixin(ThemableMixin(PolymerElement))) {
@@ -46408,7 +48906,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.4.11';
+	    return '2.6.2';
 	  }
 
 	  static get observers() {
@@ -46477,7 +48975,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(TextAreaElement.is, TextAreaElement);
 
-	const $_documentContainer$A = html`<dom-module id="lumo-context-menu-overlay" theme-for="vaadin-context-menu-overlay">
+	const $_documentContainer$H = html`<dom-module id="lumo-context-menu-overlay" theme-for="vaadin-context-menu-overlay">
   <template>
     <style include="lumo-menu-overlay">
       :host([phone]) {
@@ -46541,6 +49039,17 @@ public class Application extends SpringBootServletInitializer {
         background-color: var(--lumo-primary-color-10pct);
       }
 
+      /* RTL styles */
+      :host([dir="rtl"])[part="items"] ::slotted(.vaadin-menu-item) {
+        padding-left: calc(var(--lumo-space-l) + var(--lumo-border-radius) / 4);
+        padding-right: var(--_lumo-list-box-item-padding-left, calc(var(--lumo-border-radius) / 4));
+      }
+
+      :host([dir="rtl"].vaadin-menu-list-box) [part="items"] ::slotted(.vaadin-menu-item) {
+        padding-left: calc(var(--lumo-space-l) + var(--lumo-border-radius) / 4);
+        padding-right: calc(var(--lumo-border-radius) / 4);
+      }
+
       /* Focused item */
 
       @media (pointer: coarse) {
@@ -46553,6 +49062,12 @@ public class Application extends SpringBootServletInitializer {
 </dom-module><dom-module id="lumo-context-menu-item" theme-for="vaadin-context-menu-item">
   <template>
     <style>
+      :host {
+        user-select: none;
+        -ms-user-select: none;
+        -webkit-user-select: none;
+      }
+
       :host(.vaadin-menu-item[menu-item-checked])::before {
         opacity: 1;
       }
@@ -46562,6 +49077,9 @@ public class Application extends SpringBootServletInitializer {
         font-size: var(--lumo-icon-size-xs);
         content: var(--lumo-icons-angle-right);
         color: var(--lumo-tertiary-text-color);
+      }
+
+      :host(:not([dir="rtl"]).vaadin-menu-item.vaadin-context-menu-parent-item)::after {
         margin-right: calc(var(--lumo-space-m) * -1);
         padding-left: var(--lumo-space-m);
       }
@@ -46569,13 +49087,21 @@ public class Application extends SpringBootServletInitializer {
       :host([expanded]) {
         background-color: var(--lumo-primary-color-10pct);
       }
+
+      /* RTL styles */
+      :host([dir="rtl"].vaadin-menu-item.vaadin-context-menu-parent-item)::after {
+        content: var(--lumo-icons-angle-left);
+        margin-left: calc(var(--lumo-space-m) * -1);
+        padding-right: var(--lumo-space-m);
+      }
+
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$A.content);
+	document.head.appendChild($_documentContainer$H.content);
 
-	const $_documentContainer$B = html`<dom-module id="lumo-list-box" theme-for="vaadin-list-box">
+	const $_documentContainer$I = html`<dom-module id="lumo-list-box" theme-for="vaadin-list-box">
   <template>
     <style>
       :host {
@@ -46644,11 +49170,18 @@ public class Application extends SpringBootServletInitializer {
         margin: var(--lumo-space-s) var(--lumo-border-radius);
         background-color: var(--lumo-contrast-10pct);
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="items"] ::slotted(vaadin-item) {
+        padding-left: calc(var(--lumo-space-l) + var(--lumo-border-radius) / 4);
+        padding-right: var(--_lumo-list-box-item-padding-left, calc(var(--lumo-border-radius) / 4));
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$B.content);
+	document.head.appendChild($_documentContainer$I.content);
 
 	/**
 	@license
@@ -46672,7 +49205,8 @@ public class Application extends SpringBootServletInitializer {
 	      },
 
 	      /**
-	       * The index of the item selected in the items array
+	       * The index of the item selected in the items array.
+	       * Note: Not updated when used in `multiple` selection mode.
 	       */
 	      selected: {
 	        type: Number,
@@ -46719,7 +49253,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get observers() {
-	    return ['_enhanceItems(items, orientation, selected)'];
+	    return ['_enhanceItems(items, orientation, selected, disabled)'];
 	  }
 
 	  ready() {
@@ -46732,20 +49266,22 @@ public class Application extends SpringBootServletInitializer {
 	    });
 	  }
 
-	  _enhanceItems(items, orientation, selected) {
-	    if (items) {
-	      this.setAttribute('aria-orientation', orientation || 'vertical');
-	      this.items.forEach(item => {
-	        orientation ? item.setAttribute('orientation', orientation) : item.removeAttribute('orientation');
-	        item.updateStyles();
-	      });
+	  _enhanceItems(items, orientation, selected, disabled) {
+	    if (!disabled) {
+	      if (items) {
+	        this.setAttribute('aria-orientation', orientation || 'vertical');
+	        this.items.forEach(item => {
+	          orientation ? item.setAttribute('orientation', orientation) : item.removeAttribute('orientation');
+	          item.updateStyles();
+	        });
 
-	      this._setFocusable(selected);
+	        this._setFocusable(selected);
 
-	      const itemToSelect = items[selected];
-	      items.forEach(item => item.selected = item === itemToSelect);
-	      if (itemToSelect && !itemToSelect.disabled) {
-	        this._scrollToItem(selected);
+	        const itemToSelect = items[selected];
+	        items.forEach(item => item.selected = item === itemToSelect);
+	        if (itemToSelect && !itemToSelect.disabled) {
+	          this._scrollToItem(selected);
+	        }
 	      }
 	    }
 	  }
@@ -46759,7 +49295,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _onClick(event) {
-	    if (event.metaKey || event.shiftKey || event.ctrlKey) {
+	    if (event.metaKey || event.shiftKey || event.ctrlKey || event.defaultPrevented) {
 	      return;
 	    }
 
@@ -46778,7 +49314,7 @@ public class Application extends SpringBootServletInitializer {
 	    );
 	    this._searchBuf += key.toLowerCase();
 	    const increment = 1;
-	    const condition = item => !item.disabled &&
+	    const condition = item => !(item.disabled || this._isItemHidden(item)) &&
 	      item.textContent.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().indexOf(this._searchBuf) === 0;
 
 	    if (!this.items.some(item => item.textContent.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().indexOf(this._searchBuf) === 0)) {
@@ -46787,6 +49323,10 @@ public class Application extends SpringBootServletInitializer {
 
 	    const idx = this._searchBuf.length === 1 ? currentIdx + 1 : currentIdx;
 	    return this._getAvailableIndex(idx, increment, condition);
+	  }
+
+	  get _isRTL() {
+	    return !this._vertical && this.getAttribute('dir') === 'rtl';
 	  }
 
 	  _onKeydown(event) {
@@ -46807,15 +49347,17 @@ public class Application extends SpringBootServletInitializer {
 	      return;
 	    }
 
-	    const condition = item => !item.disabled;
+	    const condition = item => !(item.disabled || this._isItemHidden(item));
 	    let idx, increment;
 
+	    const dirIncrement = this._isRTL ? -1 : 1;
+
 	    if (this._vertical && key === 'Up' || !this._vertical && key === 'Left') {
-	      increment = -1;
-	      idx = currentIdx - 1;
+	      increment = -dirIncrement;
+	      idx = currentIdx - dirIncrement;
 	    } else if (this._vertical && key === 'Down' || !this._vertical && key === 'Right') {
-	      increment = 1;
-	      idx = currentIdx + 1;
+	      increment = dirIncrement;
+	      idx = currentIdx + dirIncrement;
 	    } else if (key === 'Home') {
 	      increment = 1;
 	      idx = 0;
@@ -46841,11 +49383,16 @@ public class Application extends SpringBootServletInitializer {
 	      }
 
 	      const item = this.items[idx];
+
 	      if (condition(item)) {
 	        return idx;
 	      }
 	    }
 	    return -1;
+	  }
+
+	  _isItemHidden(item) {
+	    return getComputedStyle(item).display === 'none';
 	  }
 
 	  _setFocusable(idx) {
@@ -46881,15 +49428,19 @@ public class Application extends SpringBootServletInitializer {
 	      return;
 	    }
 
-	    const props = this._vertical ? ['top', 'bottom'] : ['left', 'right'];
+	    const props = this._vertical ? ['top', 'bottom'] :
+	      this._isRTL ? ['right', 'left'] : ['left', 'right'];
+
 	    const scrollerRect = this._scrollerElement.getBoundingClientRect();
 	    const nextItemRect = (this.items[idx + 1] || item).getBoundingClientRect();
 	    const prevItemRect = (this.items[idx - 1] || item).getBoundingClientRect();
 
 	    let scrollDistance = 0;
-	    if (nextItemRect[props[1]] >= scrollerRect[props[1]]) {
+	    if (!this._isRTL && nextItemRect[props[1]] >= scrollerRect[props[1]] ||
+	      this._isRTL && nextItemRect[props[1]] <= scrollerRect[props[1]]) {
 	      scrollDistance = nextItemRect[props[1]] - scrollerRect[props[1]];
-	    } else if (prevItemRect[props[0]] <= scrollerRect[props[0]]) {
+	    } else if (!this._isRTL && prevItemRect[props[0]] <= scrollerRect[props[0]] ||
+	      this._isRTL && prevItemRect[props[0]] >= scrollerRect[props[0]]) {
 	      scrollDistance = prevItemRect[props[0]] - scrollerRect[props[0]];
 	    }
 
@@ -46902,8 +49453,137 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _scroll(pixels) {
-	    this._scrollerElement['scroll' + (this._vertical ? 'Top' : 'Left')] += pixels;
+	    if (this._vertical) {
+	      this._scrollerElement['scrollTop'] += pixels;
+	    } else {
+	      const scrollType = DirHelper.detectScrollType();
+	      const scrollLeft = DirHelper.getNormalizedScrollLeft(scrollType,
+	        this.getAttribute('dir') || 'ltr', this._scrollerElement) + pixels;
+	      DirHelper.setNormalizedScrollLeft(scrollType,
+	        this.getAttribute('dir') || 'ltr', this._scrollerElement, scrollLeft);
+	    }
 	  }
+
+	  /**
+	   * Fired when the selection is changed.
+	   * Not fired when used in `multiple` selection mode.
+	   *
+	   * @event selected-changed
+	   * @param {Object} detail
+	   * @param {Object} detail.value the index of the item selected in the items array.
+	   */
+	};
+
+	/**
+	@license
+	Copyright (c) 2019 Vaadin Ltd.
+	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
+	*/
+
+	/**
+	 * A mixin for `nav` elements, facilitating multiple selection of childNodes.
+	 *
+	 * @polymerMixin
+	 * @mixes ListMixin
+	 */
+	const MultiSelectListMixin = superClass => class VaadinMultiSelectListMixin extends ListMixin(superClass) {
+	  static get properties() {
+	    return {
+	      /**
+	       * Specifies that multiple options can be selected at once.
+	       */
+	      multiple: {
+	        type: Boolean,
+	        value: false,
+	        reflectToAttribute: true,
+	        observer: '_multipleChanged'
+	      },
+
+	      /**
+	       * Array of indexes of the items selected in the items array
+	       * Note: Not updated when used in single selection mode.
+	       */
+	      selectedValues: {
+	        type: Array,
+	        notify: true,
+	        value: function() {
+	          return [];
+	        }
+	      }
+	    };
+	  }
+
+	  static get observers() {
+	    return [
+	      `_enhanceMultipleItems(items, multiple, selected, selectedValues, selectedValues.*)`
+	    ];
+	  }
+
+	  ready() {
+	    // Should be attached before click listener in list-mixin
+	    this.addEventListener('click', e => this._onMultipleClick(e));
+
+	    super.ready();
+	  }
+
+	  _enhanceMultipleItems(items, multiple, selected, selectedValues) {
+	    if (!items || !multiple) {
+	      return;
+	    }
+
+	    if (selectedValues) {
+	      const selectedItems = selectedValues.map(selectedId => items[selectedId]);
+	      items.forEach(item => item.selected = selectedItems.indexOf(item) !== -1);
+	    }
+
+	    this._scrollToLastSelectedItem();
+	  }
+
+	  /** @private */
+	  _scrollToLastSelectedItem() {
+	    const lastSelectedItem = this.selectedValues.slice(-1)[0];
+	    if (lastSelectedItem && !lastSelectedItem.disabled) {
+	      this._scrollToItem(lastSelectedItem);
+	    }
+	  }
+
+	  _onMultipleClick(event) {
+	    const item = this._filterItems(event.composedPath())[0];
+	    const idx = item && !item.disabled ? this.items.indexOf(item) : -1;
+	    if (idx < 0 || !this.multiple) {
+	      return;
+	    }
+
+	    event.preventDefault();
+	    if (this.selectedValues.indexOf(idx) !== -1) {
+	      this.selectedValues = this.selectedValues.filter(v => v !== idx);
+	    } else {
+	      this.selectedValues = this.selectedValues.concat(idx);
+	    }
+	  }
+
+	  _multipleChanged(value, oldValue) {
+	    // Changing from multiple to single selection, clear selection.
+	    if (!value && oldValue) {
+	      this.selectedValues = [];
+	      this.items.forEach(item => item.selected = false);
+	    }
+
+	    // Changing from single to multiple selection, add selected to selectedValues.
+	    if (value && !oldValue && this.selected !== undefined) {
+	      this.push('selectedValues', this.selected);
+	      this.selected = undefined;
+	    }
+	  }
+
+	  /**
+	   * Fired when the selection is changed.
+	   * Not fired in single selection mode.
+	   *
+	   * @event selected-values-changed
+	   * @param {Object} detail
+	   * @param {Object} detail.value the array of indexes of the items selected in the items array.
+	   */
 	};
 
 	/**
@@ -46933,12 +49613,12 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ListMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes MultiSelectListMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
-	class ListBoxElement extends ElementMixin$1(ListMixin(ThemableMixin(PolymerElement))) {
+	class ListBoxElement extends ElementMixin$1(MultiSelectListMixin(ThemableMixin(PolymerElement))) {
 	  static get template() {
 	    return html`
     <style>
@@ -46968,7 +49648,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.1.1';
+	    return '1.3.0';
 	  }
 
 	  static get properties() {
@@ -46992,10 +49672,19 @@ public class Application extends SpringBootServletInitializer {
 	  ready() {
 	    super.ready();
 	    this.setAttribute('role', 'list');
+
+	    setTimeout(this._checkImport.bind(this), 2000);
 	  }
 
 	  get _scrollerElement() {
 	    return this.shadowRoot.querySelector('[part="items"]');
+	  }
+
+	  _checkImport() {
+	    var item = this.querySelector('vaadin-item');
+	    if (item && !(item instanceof PolymerElement)) {
+	      console.warn(`Make sure you have imported the vaadin-item element.`);
+	    }
 	  }
 	}
 
@@ -47019,7 +49708,8 @@ public class Application extends SpringBootServletInitializer {
 
 	  info: {
 	    sourceEvent: null,
-	    _ios: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+	    _ios: (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream)
+	      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 	  },
 
 	  reset: function() {
@@ -47108,7 +49798,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * Element for internal use only.
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class DeviceDetectorElement extends (class extends PolymerElement {}) {
@@ -47172,8 +49862,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * The vaadin-context-menu-item element.
 	 *
-	 * @memberof Vaadin
-	 * @extends Vaadin.ItemElement
+	 * @extends PolymerElement
 	 */
 	class ContextMenuItemElement extends ItemElement {
 	  static get is() {
@@ -47184,8 +49873,7 @@ public class Application extends SpringBootServletInitializer {
 	/**
 	 * The vaadin-context-menu-list-box element.
 	 *
-	 * @memberof Vaadin
-	 * @extends Vaadin.ListBoxElement
+	 * @extends PolymerElement
 	 */
 	class ContextMenuListBoxElement extends ListBoxElement {
 	  static get is() {
@@ -47283,6 +49971,10 @@ public class Application extends SpringBootServletInitializer {
 	    document.documentElement.removeEventListener('click', this.__itemsOutsideClickListener);
 	  }
 
+	  get __isRTL() {
+	    return this.getAttribute('dir') === 'rtl';
+	  }
+
 	  __forwardFocus() {
 	    const overlay = this.$.overlay;
 	    const child = overlay.getFirstChild();
@@ -47360,12 +50052,12 @@ public class Application extends SpringBootServletInitializer {
 	        component = document.createElement(item.component || 'vaadin-context-menu-item');
 	      }
 
-	      if (component.localName === 'vaadin-context-menu-item') {
+	      if (component instanceof ItemElement) {
 	        component.setAttribute('role', 'menuitem');
+	        component.classList.add('vaadin-menu-item');
 	      } else if (component.localName === 'hr') {
 	        component.setAttribute('role', 'separator');
 	      }
-	      component.classList.add('vaadin-menu-item');
 	      this.theme && component.setAttribute('theme', this.theme);
 
 	      component._item = item;
@@ -47451,7 +50143,8 @@ public class Application extends SpringBootServletInitializer {
 	      menu.$.overlay.$.backdrop.addEventListener('click', () => menu.close());
 
 	      menu.$.overlay.addEventListener('keydown', e => {
-	        if (e.keyCode === 37) {
+	        const isRTL = this.__isRTL;
+	        if ((!isRTL && e.keyCode === 37) || (isRTL && e.keyCode === 39)) {
 	          menu.close();
 	          menu.listenOn.focus();
 	        } else if (e.keyCode === 27) {
@@ -47490,8 +50183,15 @@ public class Application extends SpringBootServletInitializer {
 	      };
 
 	      menu.$.overlay.addEventListener('mouseover', openSubMenu);
-	      menu.$.overlay.addEventListener('keydown', e =>
-	        (e.keyCode === 39 || e.keyCode === 13 || e.keyCode === 32) && openSubMenu(e));
+	      menu.$.overlay.addEventListener('keydown', e => {
+	        const isRTL = this.__isRTL;
+	        const shouldOpenSubMenu = (!isRTL && e.keyCode === 39)
+	            || (isRTL && e.keyCode === 37)
+	            || e.keyCode === 13
+	            || e.keyCode === 32;
+
+	        shouldOpenSubMenu && openSubMenu(e);
+	      });
 	    } else {
 	      const listBox = root.querySelector('vaadin-context-menu-list-box');
 	      if (this.theme) {
@@ -47509,9 +50209,9 @@ public class Application extends SpringBootServletInitializer {
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$C = document.createElement('template');
+	const $_documentContainer$J = document.createElement('template');
 
-	$_documentContainer$C.innerHTML = `<dom-module id="vaadin-context-menu-overlay-styles" theme-for="vaadin-context-menu-overlay">
+	$_documentContainer$J.innerHTML = `<dom-module id="vaadin-context-menu-overlay-styles" theme-for="vaadin-context-menu-overlay">
   <template>
     <style>
       :host {
@@ -47519,7 +50219,8 @@ public class Application extends SpringBootServletInitializer {
         justify-content: flex-start;
       }
 
-      :host([right-aligned]) {
+      :host([right-aligned]),
+      :host([end-aligned]) {
         align-items: flex-end;
       }
 
@@ -47534,7 +50235,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$C.content);
+	document.head.appendChild($_documentContainer$J.content);
 	/**
 	 * The overlay element.
 	 *
@@ -47543,9 +50244,12 @@ public class Application extends SpringBootServletInitializer {
 	 * See [`<vaadin-overlay>` documentation](https://github.com/vaadin/vaadin-overlay/blob/master/src/vaadin-overlay.html)
 	 * for `<vaadin-context-menu-overlay>` parts.
 	 *
+	 * #### Deprecated
+	 * `right-aligned` is deprecated in favor of `end-aligned`
+	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class ContextMenuOverlayElement extends OverlayElement {
@@ -47622,8 +50326,10 @@ public class Application extends SpringBootServletInitializer {
 
 	    return {
 	      xMax: overlayRect.right - contentRect.width,
+	      xMin: overlayRect.left + contentRect.width,
 	      yMax,
 	      left: overlayRect.left,
+	      right: overlayRect.right,
 	      top: overlayRect.top,
 	      width: contentRect.width
 	    };
@@ -47847,11 +50553,11 @@ public class Application extends SpringBootServletInitializer {
 	 * In case of using nested menu items, the `theme` attribute is also propagated
 	 * to internal `vaadin-context-menu-list-box` and `vaadin-context-menu-item`'s.
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemePropertyMixin
-	 * @mixes Vaadin.ContextMenu.ItemsMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ThemePropertyMixin
+	 * @mixes ContextMenu.ItemsMixin
+	 * @mixes GestureEventListeners
 	 * @demo demo/index.html
 	 */
 	class ContextMenuElement extends
@@ -47885,7 +50591,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '4.3.12';
+	    return '4.4.0';
 	  }
 
 	  static get properties() {
@@ -47997,6 +50703,7 @@ public class Application extends SpringBootServletInitializer {
 	    super.disconnectedCallback();
 
 	    window.removeEventListener('scroll', this.__boundOnScroll, true);
+	    this.close();
 	  }
 
 	  ready() {
@@ -48013,6 +50720,7 @@ public class Application extends SpringBootServletInitializer {
 	  // Runs before overlay is fully rendered
 	  _onOverlayOpened(e) {
 	    this._setOpened(e.detail.value);
+	    this.__alignOverlayPosition();
 	  }
 
 	  // Runs after overlay is fully rendered
@@ -48028,6 +50736,8 @@ public class Application extends SpringBootServletInitializer {
 
 	      this._oldListenOn.style.webkitTouchCallout = '';
 	      this._oldListenOn.style.webkitUserSelect = '';
+	      this._oldListenOn.style.msUserSelect = '';
+	      this._oldListenOn.style.userSelect = '';
 
 	      this._oldListenOn = null;
 	      this._oldOpenOn = null;
@@ -48036,13 +50746,22 @@ public class Application extends SpringBootServletInitializer {
 	    if (listenOn && openOn) {
 	      this._listen(listenOn, openOn, this._boundOpen);
 
-	      // note: these styles don't seem to work in Firefox on iOS.
-	      listenOn.style.webkitTouchCallout = 'none';
-	      listenOn.style.webkitUserSelect = 'none';
-
 	      this._oldListenOn = listenOn;
 	      this._oldOpenOn = openOn;
 	    }
+	  }
+
+	  _setListenOnUserSelect(value) {
+	    // note: these styles don't seem to work in Firefox on iOS.
+	    this.listenOn.style.webkitTouchCallout = value;
+	    this.listenOn.style.webkitUserSelect = value; // Chrome, Safari, Firefox
+	    this.listenOn.style.msUserSelect = value; // IE 10+
+	    this.listenOn.style.userSelect = value;
+
+	    // note: because user-selection is disabled on the overlay
+	    // before opening the menu the text could be already selected
+	    // so we need to clear that selection
+	    document.getSelection().removeAllRanges();
 	  }
 
 	  _closeOnChanged(closeOn, oldCloseOn) {
@@ -48076,8 +50795,10 @@ public class Application extends SpringBootServletInitializer {
 	        this._instance = this.$.overlay._instance;
 	      }
 	      document.documentElement.addEventListener('contextmenu', this._boundOnGlobalContextMenu, true);
+	      this._setListenOnUserSelect('none');
 	    } else {
 	      document.documentElement.removeEventListener('contextmenu', this._boundOnGlobalContextMenu, true);
+	      this._setListenOnUserSelect('');
 	    }
 
 	    // Has to be set after instance has been created
@@ -48209,13 +50930,13 @@ public class Application extends SpringBootServletInitializer {
 
 	    // Reset all properties before measuring
 	    ['top', 'right', 'bottom', 'left'].forEach(prop => style.removeProperty(prop));
-	    ['right-aligned', 'bottom-aligned'].forEach(attr => overlay.removeAttribute(attr));
+	    ['right-aligned', 'end-aligned', 'bottom-aligned'].forEach(attr => overlay.removeAttribute(attr));
 
 	    // Maximum x and y values are imposed by content size and overlay limits.
-	    const {xMax, yMax, left, top, width} = overlay.getBoundaries();
+	    const {xMax, xMin, yMax, left, right, top, width} = overlay.getBoundaries();
 	    // Reuse saved x and y event values, in order to this method be used async
 	    // in the `vaadin-overlay-change` which guarantees that overlay is ready
-	    const x = this.__x || left;
+	    let x = this.__x || (!this.__isRTL ? left : right);
 	    const y = this.__y || top;
 
 	    // Select one overlay corner and move to the event x/y position.
@@ -48226,32 +50947,63 @@ public class Application extends SpringBootServletInitializer {
 	    // Align to the parent menu overlay, if any.
 	    const parent = overlay.parentOverlay;
 	    let alignedToParent = false;
+	    let parentContentRect;
 	    if (parent) {
-	      const parentContentRect = parent.$.overlay.getBoundingClientRect();
-	      if (parent.hasAttribute('right-aligned')) {
+	      parentContentRect = parent.$.overlay.getBoundingClientRect();
+	      if (parent.hasAttribute('right-aligned') || parent.hasAttribute('end-aligned')) {
 	        const parentStyle = getComputedStyle(parent);
-
 	        const getPadding = (el, direction) => {
 	          return parseFloat(getComputedStyle(el.$.content)['padding' + direction]);
 	        };
-	        const right = parseFloat(parentStyle.right) + parentContentRect.width;
+	        const dimensionToSet = parseFloat(parentStyle[this.__isRTL ? 'left' : 'right']) + parentContentRect.width;
 	        const padding = getPadding(parent, 'Left') + getPadding(overlay, 'Right');
 
-	        // Preserve right-aligned, if possible.
-	        if ((wdthVport - (right - padding)) > width) {
-	          overlay.setAttribute('right-aligned', '');
-	          style.right = right - padding + 'px';
+	        // Preserve end-aligned, if possible.
+	        if ((wdthVport - (dimensionToSet - padding)) > width) {
+	          this._setEndAligned(overlay);
+	          style[this.__isRTL ? 'left' : 'right'] = dimensionToSet + 'px';
 	          alignedToParent = true;
 	        }
+	      } else if (x < parentContentRect.x) {
+	        // Check if sub menu opens on the left side and the parent menu is not right aligned.
+	        // If so, use actual width of the submenu content instead of the parent menu content.
+	        x = x - (width - parentContentRect.width);
 	      }
 	    }
 
 	    if (!alignedToParent) {
-	      if (x < wdthVport / 2 || x < xMax) {
-	        style.left = x + 'px';
+	      if (!this.__isRTL) {
+	        // Sub-menu is displayed in the right side of root menu
+	        if ((x < wdthVport / 2 || x < xMax) && !parent) {
+	          style.left = x + 'px';
+	        } else if ((parent && (wdthVport - parentContentRect.width - parentContentRect.left
+	          >= parentContentRect.width))) { // Sub-menu is displayed in the right side of root menu If it is nested menu
+	          style.left = parentContentRect.left + parentContentRect.width + 'px';
+	        } else if (parent) { // Sub-menu is displayed in the left side of root menu If it is nested menu
+	          style.right = 'auto';
+	          style.left = Math.max(overlay.getBoundingClientRect().left,
+	            parentContentRect.left - overlay.getBoundingClientRect().width) + 'px';
+	          this._setEndAligned(overlay);
+	        } else { // Sub-menu is displayed in the left side of root menu
+	          style.right = Math.max(0, (wdthVport - x)) + 'px';
+	          this._setEndAligned(overlay);
+	        }
 	      } else {
-	        style.right = Math.max(0, (wdthVport - x)) + 'px';
-	        overlay.setAttribute('right-aligned', '');
+	        // Sub-menu is displayed in the left side of root menu
+	        if ((x > wdthVport / 2 || x > xMin) && !parent) {
+	          style.right = Math.max(0, (wdthVport - x)) + 'px';
+	        } else if (parent && (parentContentRect.left >= parentContentRect.width)) {
+	          // Sub-menu is displayed in the left side of root menu If it is nested menu
+	          style.right = (wdthVport - parentContentRect.right + parentContentRect.width) + 'px';
+	        } else if (parent) { // Sub-menu is displayed in the right side of root menu If it is nested menu
+	          style.right = 'auto';
+	          style.left = Math.max(overlay.getBoundingClientRect().left - overlay.getBoundingClientRect().width,
+	            parentContentRect.right) + 'px';
+	          this._setEndAligned(overlay);
+	        } else { // Sub-menu is displayed in the left side of root menu
+	          style.left = x + 'px';
+	          this._setEndAligned(overlay);
+	        }
 	      }
 	    }
 	    if (y < hghtVport / 2 || y < yMax) {
@@ -48259,6 +51011,13 @@ public class Application extends SpringBootServletInitializer {
 	    } else {
 	      style.bottom = Math.max(0, (hghtVport - y)) + 'px';
 	      overlay.setAttribute('bottom-aligned', '');
+	    }
+	  }
+
+	  _setEndAligned(element) {
+	    element.setAttribute('end-aligned', '');
+	    if (!this.__isRTL) {
+	      element.setAttribute('right-aligned', '');
 	    }
 	  }
 
@@ -48320,7 +51079,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(ContextMenuElement.is, ContextMenuElement);
 
-	const $_documentContainer$D = html`<dom-module id="lumo-tab" theme-for="vaadin-tab">
+	const $_documentContainer$K = html`<dom-module id="lumo-tab" theme-for="vaadin-tab">
   <template>
     <style>
       :host {
@@ -48463,11 +51222,11 @@ public class Application extends SpringBootServletInitializer {
         box-sizing: border-box !important;
       }
 
-      :host ::slotted(iron-icon:first-child) {
+      :host(:not([dir="rtl"])) ::slotted(iron-icon:first-child) {
         margin-left: 0;
       }
 
-      :host ::slotted(iron-icon:last-child) {
+      :host(:not([dir="rtl"])) ::slotted(iron-icon:last-child) {
         margin-right: 0;
       }
 
@@ -48506,11 +51265,45 @@ public class Application extends SpringBootServletInitializer {
         box-shadow: inset 0 0 0 2px var(--lumo-primary-color-50pct);
         border-radius: var(--lumo-border-radius);
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"])::before,
+      :host([dir="rtl"])::after {
+        left: auto;
+        right: 50%;
+        transform: translateX(50%) scale(0);
+      }
+
+      :host([dir="rtl"][selected]:not([orientation="vertical"]))::before,
+      :host([dir="rtl"][selected]:not([orientation="vertical"]))::after {
+        transform: translateX(50%) scale(1);
+      }
+
+      :host([dir="rtl"]) ::slotted(iron-icon:first-child) {
+        margin-right: 0;
+      }
+
+      :host([dir="rtl"]) ::slotted(iron-icon:last-child) {
+        margin-left: 0;
+      }
+
+      :host([orientation="vertical"][dir="rtl"]) {
+        transform-origin: 100% 50%;
+      }
+
+      :host([dir="rtl"][orientation="vertical"])::before,
+      :host([dir="rtl"][orientation="vertical"])::after {
+        left: auto;
+        right: 0;
+        border-radius: var(--lumo-border-radius) 0 0 var(--lumo-border-radius);
+        transform-origin: 0% 50%;
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$D.content);
+	document.head.appendChild($_documentContainer$K.content);
 
 	/**
 	@license
@@ -48539,10 +51332,10 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ItemMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ThemableMixin
+	 * @mixes ItemMixin
 	 */
 	class TabElement extends ElementMixin$1(ThemableMixin(ItemMixin(PolymerElement))) {
 	  static get template() {
@@ -48556,7 +51349,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '3.0.4';
+	    return '3.1.0';
 	  }
 
 	  ready() {
@@ -48580,7 +51373,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(TabElement.is, TabElement);
 
-	const $_documentContainer$E = html`<dom-module id="lumo-tabs" theme-for="vaadin-tabs">
+	const $_documentContainer$L = html`<dom-module id="lumo-tabs" theme-for="vaadin-tabs">
   <template>
     <style>
       :host {
@@ -48631,7 +51424,7 @@ public class Application extends SpringBootServletInitializer {
         color: inherit;
       }
 
-      [part="forward-button"] {
+      :host(:not([dir="rtl"])) [part="forward-button"] {
         right: 0;
       }
 
@@ -48758,11 +51551,61 @@ public class Application extends SpringBootServletInitializer {
       :host([theme~="equal-width-tabs"]) [part="tabs"] ::slotted(vaadin-tab) {
         flex: 1 0 0%;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="forward-button"]::after {
+        content: var(--lumo-icons-angle-left);
+      }
+
+      :host([dir="rtl"]) [part="back-button"]::after {
+        content: var(--lumo-icons-angle-right);
+      }
+
+      :host([orientation="vertical"][dir="rtl"]) {
+        box-shadow: 1px 0 0 0 var(--lumo-contrast-10pct);
+      }
+
+      :host([dir="rtl"]) [part="forward-button"] {
+        left: 0;
+      }
+
+      :host([dir="rtl"]) [part="tabs"] ::slotted(:not(vaadin-tab)) {
+        margin-left: 0;
+        margin-right: var(--lumo-space-m);
+      }
+
+      /* Both ends overflowing */
+      :host([dir="rtl"][overflow~="start"][overflow~="end"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, transparent 2em, #000 4em, #000 calc(100% - 4em), transparent calc(100% - 2em));
+      }
+
+      /* End overflowing */
+      :host([dir="rtl"][overflow~="end"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, #000 calc(100% - 4em), transparent calc(100% - 2em));
+      }
+
+      /* Start overflowing */
+      :host([dir="rtl"][overflow~="start"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, transparent 2em, #000 4em);
+      }
+
+      :host([dir="rtl"][theme~="hide-scroll-buttons"][overflow~="start"][overflow~="end"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, transparent, #000 2em, #000 calc(100% - 2em), transparent 100%);
+      }
+
+      :host([dir="rtl"][theme~="hide-scroll-buttons"][overflow~="end"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, #000 calc(100% - 2em), transparent 100%);
+      }
+
+      :host([dir="rtl"][theme~="hide-scroll-buttons"][overflow~="start"]:not([orientation="vertical"])) [part="tabs"] {
+        --_lumo-tabs-overflow-mask-image: linear-gradient(-90deg, transparent, #000 2em);
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$E.content);
+	document.head.appendChild($_documentContainer$L.content);
 
 	/**
 	@license
@@ -48802,10 +51645,10 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ListMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ListMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class TabsElement extends
@@ -48882,6 +51725,16 @@ public class Application extends SpringBootServletInitializer {
       :host([orientation="vertical"]) [part="forward-button"] {
         display: none;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="back-button"]::after {
+        content: '▶';
+      }
+
+      :host([dir="rtl"]) [part="forward-button"]::after {
+        content: '◀';
+      }
     </style>
     <div on-click="_scrollBack" part="back-button"></div>
 
@@ -48898,7 +51751,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '3.0.4';
+	    return '3.1.0';
 	  }
 
 	  static get properties() {
@@ -48938,11 +51791,11 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _scrollForward() {
-	    this._scroll(this._scrollOffset);
+	    this._scroll(-this.__direction * this._scrollOffset);
 	  }
 
 	  _scrollBack() {
-	    this._scroll(-1 * this._scrollOffset);
+	    this._scroll(this.__direction * this._scrollOffset);
 	  }
 
 	  get _scrollOffset() {
@@ -48953,14 +51806,25 @@ public class Application extends SpringBootServletInitializer {
 	    return this.$.scroll;
 	  }
 
+	  get __direction() {
+	    return !this._vertical && this.getAttribute('dir') === 'rtl' ? 1 : -1;
+	  }
+
 	  _updateOverflow() {
-	    const scrollPosition = this._vertical ? this._scrollerElement.scrollTop : this._scrollerElement.scrollLeft;
+	    const scrollPosition = this._vertical ? this._scrollerElement.scrollTop : this.__getNormalizedScrollLeft(this._scrollerElement);
 	    let scrollSize = this._vertical ? this._scrollerElement.scrollHeight : this._scrollerElement.scrollWidth;
 	    // In Edge we need to adjust the size in 1 pixel
 	    scrollSize -= 1;
 
 	    let overflow = scrollPosition > 0 ? 'start' : '';
 	    overflow += scrollPosition + this._scrollOffset < scrollSize ? ' end' : '';
+
+	    if (this.__direction == 1) {
+	      overflow = overflow.replace(/start|end/gi, matched => {
+	        return matched === 'start' ? 'end' : 'start';
+	      });
+	    }
+
 	    overflow ? this.setAttribute('overflow', overflow.trim()) : this.removeAttribute('overflow');
 
 	    this._repaintShadowNodesHack();
@@ -48984,15 +51848,15 @@ public class Application extends SpringBootServletInitializer {
 
 	class Material extends HTMLElement {
 	  static get version() {
-	    return '1.2.3';
+	    return '1.3.2';
 	  }
 	}
 
 	customElements.define('vaadin-material-styles', Material);
 
-	const $_documentContainer$F = document.createElement('template');
+	const $_documentContainer$M = document.createElement('template');
 
-	$_documentContainer$F.innerHTML = `<dom-module id="lumo-ordered-layout">
+	$_documentContainer$M.innerHTML = `<dom-module id="lumo-ordered-layout">
   <template>
     <style>
       :host([theme~="margin"]) {
@@ -49006,30 +51870,28 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$F.content);
+	document.head.appendChild($_documentContainer$M.content);
 
-	const $_documentContainer$G = document.createElement('template');
-
-	$_documentContainer$G.innerHTML = `<dom-module id="lumo-horizontal-layout" theme-for="vaadin-horizontal-layout">
+	const $_documentContainer$N = html`<dom-module id="lumo-horizontal-layout" theme-for="vaadin-horizontal-layout">
   <template>
     <style include="lumo-ordered-layout">
-      :host([theme~="spacing-xs"]) ::slotted(*) {
+      :host([theme~="spacing-xs"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: var(--lumo-space-xs);
       }
 
-      :host([theme~="spacing-s"]) ::slotted(*) {
+      :host([theme~="spacing-s"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: var(--lumo-space-s);
       }
 
-      :host([theme~="spacing"]) ::slotted(*) {
+      :host([theme~="spacing"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: var(--lumo-space-m);
       }
 
-      :host([theme~="spacing-l"]) ::slotted(*) {
+      :host([theme~="spacing-l"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: var(--lumo-space-l);
       }
 
-      :host([theme~="spacing-xl"]) ::slotted(*) {
+      :host([theme~="spacing-xl"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: var(--lumo-space-xl);
       }
 
@@ -49037,35 +51899,83 @@ public class Application extends SpringBootServletInitializer {
         Compensate for the first item margin, so that there is no gap around
         the layout itself.
        */
-      :host([theme~="spacing-xs"])::before {
+      :host([theme~="spacing-xs"])::before,
+      :host([theme~="spacing-s"])::before,
+      :host([theme~="spacing"])::before,
+      :host([theme~="spacing-l"])::before,
+      :host([theme~="spacing-xl"])::before {
         content: "";
+      }
+
+      :host([theme~="spacing-xs"]:not([dir="rtl"]))::before {
         margin-left: calc(var(--lumo-space-xs) * -1);
       }
 
-      :host([theme~="spacing-s"])::before {
-        content: "";
+      :host([theme~="spacing-s"]:not([dir="rtl"]))::before {
         margin-left: calc(var(--lumo-space-s) * -1);
       }
 
-      :host([theme~="spacing"])::before {
-        content: "";
+      :host([theme~="spacing"]:not([dir="rtl"]))::before {
         margin-left: calc(var(--lumo-space-m) * -1);
       }
 
-      :host([theme~="spacing-l"])::before {
-        content: "";
+      :host([theme~="spacing-l"]:not([dir="rtl"]))::before {
         margin-left: calc(var(--lumo-space-l) * -1);
       }
 
-      :host([theme~="spacing-xl"])::before {
-        content: "";
+      :host([theme~="spacing-xl"]:not([dir="rtl"]))::before {
         margin-left: calc(var(--lumo-space-xl) * -1);
+      }
+
+      /* RTL styles */
+      :host([dir="rtl"][theme~="spacing-xs"]) ::slotted(*) {
+        margin-right: var(--lumo-space-xs);
+      }
+
+      :host([dir="rtl"][theme~="spacing-s"]) ::slotted(*) {
+        margin-right: var(--lumo-space-s);
+      }
+
+      :host([dir="rtl"][theme~="spacing"]) ::slotted(*) {
+        margin-right: var(--lumo-space-m);
+      }
+
+      :host([dir="rtl"][theme~="spacing-l"]) ::slotted(*) {
+        margin-right: var(--lumo-space-l);
+      }
+
+      :host([dir="rtl"][theme~="spacing-xl"]) ::slotted(*) {
+        margin-right: var(--lumo-space-xl);
+      }
+
+      /*
+        Compensate for the first item margin, so that there is no gap around
+        the layout itself.
+       */
+      :host([dir="rtl"][theme~="spacing-xs"])::before {
+        margin-right: calc(var(--lumo-space-xs) * -1);
+      }
+
+      :host([dir="rtl"][theme~="spacing-s"])::before {
+        margin-right: calc(var(--lumo-space-s) * -1);
+      }
+
+      :host([dir="rtl"][theme~="spacing"])::before {
+        margin-right: calc(var(--lumo-space-m) * -1);
+      }
+
+      :host([dir="rtl"][theme~="spacing-l"])::before {
+        margin-right: calc(var(--lumo-space-l) * -1);
+      }
+
+      :host([dir="rtl"][theme~="spacing-xl"])::before {
+        margin-right: calc(var(--lumo-space-xl) * -1);
       }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$G.content);
+	document.head.appendChild($_documentContainer$N.content);
 
 	/**
 	@license
@@ -49092,8 +52002,8 @@ public class Application extends SpringBootServletInitializer {
 	 * `theme="padding"` | Applies the default amount of CSS padding for the host element (specified by the theme)
 	 * `theme="spacing"` | Applies the default amount of CSS margin between items (specified by the theme)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class HorizontalLayoutElement extends ElementMixin$1(ThemableMixin(PolymerElement)) {
@@ -49118,8 +52028,12 @@ public class Application extends SpringBootServletInitializer {
         padding: 1em;
       }
 
-      :host([theme~="spacing"]) ::slotted(*) {
+      :host([theme~="spacing"]:not([dir="rtl"])) ::slotted(*) {
         margin-left: 1em;
+      }
+
+      :host([theme~="spacing"][dir="rtl"]) ::slotted(*) {
+        margin-right: 1em;
       }
 
       /*
@@ -49128,7 +52042,14 @@ public class Application extends SpringBootServletInitializer {
        */
       :host([theme~="spacing"])::before {
         content: "";
+      }
+
+      :host([theme~="spacing"]:not([dir="rtl"]))::before {
         margin-left: -1em;
+      }
+
+      :host([theme~="spacing"][dir="rtl"])::before {
+        margin-right: -1em;
       }
     </style>
 
@@ -49141,15 +52062,13 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.1.0';
+	    return '1.3.0';
 	  }
 	}
 
 	customElements.define(HorizontalLayoutElement.is, HorizontalLayoutElement);
 
-	const $_documentContainer$H = document.createElement('template');
-
-	$_documentContainer$H.innerHTML = `<dom-module id="lumo-vertical-layout" theme-for="vaadin-vertical-layout">
+	const $_documentContainer$O = html`<dom-module id="lumo-vertical-layout" theme-for="vaadin-vertical-layout">
   <template>
     <style include="lumo-ordered-layout">
       :host([theme~="spacing-xs"]) ::slotted(*) {
@@ -49204,7 +52123,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$H.content);
+	document.head.appendChild($_documentContainer$O.content);
 
 	/**
 	@license
@@ -49231,8 +52150,8 @@ public class Application extends SpringBootServletInitializer {
 	 * `theme="padding"` | Applies the default amount of CSS padding for the host element (specified by the theme)
 	 * `theme="spacing"` | Applies the default amount of CSS margin between items (specified by the theme)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class VerticalLayoutElement extends ElementMixin$1(ThemableMixin(PolymerElement)) {
@@ -49282,13 +52201,13 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.1.0';
+	    return '1.3.0';
 	  }
 	}
 
 	customElements.define(VerticalLayoutElement.is, VerticalLayoutElement);
 
-	const $_documentContainer$I = html`<dom-module id="lumo-form-layout" theme-for="vaadin-form-layout">
+	const $_documentContainer$P = html`<dom-module id="lumo-form-layout" theme-for="vaadin-form-layout">
   <template>
     <style>
       :host {
@@ -49298,7 +52217,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$I.content);
+	document.head.appendChild($_documentContainer$P.content);
 
 	/**
 	@license
@@ -49395,9 +52314,9 @@ public class Application extends SpringBootServletInitializer {
 	 * ---|---|---
 	 * `--vaadin-form-layout-column-spacing` | Length of the spacing between columns | `2em`
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class FormLayoutElement extends
@@ -49459,7 +52378,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.1.6';
+	    return '2.2.0';
 	  }
 
 	  static get properties() {
@@ -49589,7 +52508,9 @@ public class Application extends SpringBootServletInitializer {
 
 	    this.__mutationObserver = new MutationObserver(mutationRecord => {
 	      mutationRecord.forEach(mutation => {
-	        if (mutation.type === 'attributes' && mutation.attributeName === 'colspan') {
+	        if (mutation.type === 'attributes'
+	          && ((mutation.attributeName === 'colspan')
+	          || (mutation.attributeName === 'hidden'))) {
 	          this._invokeUpdateStyles();
 	        }
 	      });
@@ -49824,7 +52745,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(FormLayoutElement.is, FormLayoutElement);
 
-	const $_documentContainer$J = html`<dom-module id="lumo-form-item" theme-for="vaadin-form-item">
+	const $_documentContainer$Q = html`<dom-module id="lumo-form-item" theme-for="vaadin-form-item">
   <template>
     <style>
       :host {
@@ -49847,7 +52768,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$J.content);
+	document.head.appendChild($_documentContainer$Q.content);
 
 	/**
 	@license
@@ -49956,8 +52877,8 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class FormItemElement extends ThemableMixin(PolymerElement) {
@@ -49980,6 +52901,10 @@ public class Application extends SpringBootServletInitializer {
       :host([label-position="top"]) {
         flex-direction: column;
         align-items: stretch;
+      }
+
+      :host([hidden]) {
+        display: none !important;
       }
 
       #label {
@@ -50045,9 +52970,9 @@ public class Application extends SpringBootServletInitializer {
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$K = document.createElement('template');
+	const $_documentContainer$R = document.createElement('template');
 
-	$_documentContainer$K.innerHTML = `<dom-module id="vaadin-select-overlay-styles" theme-for="vaadin-select-overlay">
+	$_documentContainer$R.innerHTML = `<dom-module id="vaadin-select-overlay-styles" theme-for="vaadin-select-overlay">
   <template>
     <style>
       :host {
@@ -50058,7 +52983,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$K.content);
+	document.head.appendChild($_documentContainer$R.content);
 	/**
 	  * The overlay element.
 	  *
@@ -50069,8 +52994,7 @@ public class Application extends SpringBootServletInitializer {
 	  *
 	  * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	  *
-	  * @memberof Vaadin
-	  * @extends Vaadin.OverlayElement
+	  * @extends PolymerElement
 	  */
 	class SelectOverlayElement extends OverlayElement {
 	  static get is() {
@@ -50085,7 +53009,7 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 
-	let memoizedTemplate$2;
+	let memoizedTemplate$3;
 	/**
 	  * The text-field element.
 	  *
@@ -50096,8 +53020,7 @@ public class Application extends SpringBootServletInitializer {
 	  *
 	  * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	  *
-	  * @memberof Vaadin
-	  * @extends Vaadin.TextFieldElement
+	  * @extends PolymerElement
 	  */
 	class SelectTextFieldElement extends TextFieldElement {
 	  static get is() {
@@ -50110,21 +53033,21 @@ public class Application extends SpringBootServletInitializer {
 	      return super.template;
 	    }
 
-	    if (!memoizedTemplate$2) {
+	    if (!memoizedTemplate$3) {
 	      // Clone the superclass template
-	      memoizedTemplate$2 = super.template.cloneNode(true);
+	      memoizedTemplate$3 = super.template.cloneNode(true);
 
 	      // Create a slot for the value element
 	      const slot = document.createElement('slot');
 	      slot.setAttribute('name', 'value');
 
 	      // Insert the slot before the text-field
-	      const input = memoizedTemplate$2.content.querySelector('input');
+	      const input = memoizedTemplate$3.content.querySelector('input');
 
 	      input.parentElement.replaceChild(slot, input);
 	      slot.appendChild(input);
 	    }
-	    return memoizedTemplate$2;
+	    return memoizedTemplate$3;
 	  }
 
 	  get focusElement() {
@@ -50143,9 +53066,9 @@ public class Application extends SpringBootServletInitializer {
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$L = document.createElement('template');
+	const $_documentContainer$S = document.createElement('template');
 
-	$_documentContainer$L.innerHTML = `<custom-style>
+	$_documentContainer$S.innerHTML = `<custom-style>
   <style>
     @font-face {
       font-family: "vaadin-select-icons";
@@ -50156,7 +53079,7 @@ public class Application extends SpringBootServletInitializer {
   </style>
 </custom-style>`;
 
-	document.head.appendChild($_documentContainer$L.content);
+	document.head.appendChild($_documentContainer$S.content);
 	/**
 	 *
 	 * `<vaadin-select>` is a Web Component for selecting values from a list of items. The content of the
@@ -50251,11 +53174,11 @@ public class Application extends SpringBootServletInitializer {
 	 * Note: the `theme` attribute value set on `<vaadin-select>` is
 	 * propagated to the internal themable components listed above.
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes ThemePropertyMixin
 	 * @demo demo/index.html
 	 */
 	class SelectElement extends
@@ -50305,7 +53228,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.1.5';
+	    return '2.2.0';
 	  }
 
 	  static get properties() {
@@ -50681,6 +53604,7 @@ public class Application extends SpringBootServletInitializer {
 	    labelItem._sourceItem = selected;
 
 	    labelItem.removeAttribute('tabindex');
+	    labelItem.removeAttribute('role');
 
 	    this._valueElement.appendChild(labelItem);
 
@@ -50752,7 +53676,13 @@ public class Application extends SpringBootServletInitializer {
 	    const viewportHeight = Math.min(window.innerHeight, document.documentElement.clientHeight);
 	    const bottomAlign = inputRect.top > (viewportHeight - inputRect.height) / 2;
 
-	    this._overlayElement.style.left = inputRect.left + 'px';
+	    const isRtl = this.getAttribute('dir') === 'rtl';
+	    if (isRtl) {
+	      this._overlayElement.style.right = document.documentElement.clientWidth - inputRect.right + 'px';
+	    } else {
+	      this._overlayElement.style.left = inputRect.left + 'px';
+	    }
+
 	    if (bottomAlign) {
 	      this._overlayElement.setAttribute('bottom-aligned', '');
 	      this._overlayElement.style.removeProperty('top');
@@ -50784,9 +53714,9 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(SelectElement.is, SelectElement);
 
-	const $_documentContainer$M = document.createElement('template');
+	const $_documentContainer$T = document.createElement('template');
 
-	$_documentContainer$M.innerHTML = `<custom-style>
+	$_documentContainer$T.innerHTML = `<custom-style>
   <style>
     @font-face {
       font-family: 'vaadin-upload-icons';
@@ -50797,7 +53727,7 @@ public class Application extends SpringBootServletInitializer {
   </style>
 </custom-style>`;
 
-	document.head.appendChild($_documentContainer$M.content);
+	document.head.appendChild($_documentContainer$T.content);
 
 	/**
 	@license
@@ -50839,8 +53769,8 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class UploadFileElement extends ThemableMixin(PolymerElement) {
@@ -50983,7 +53913,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(UploadFileElement.is, UploadFileElement);
 
-	const $_documentContainer$N = html`<dom-module id="lumo-upload" theme-for="vaadin-upload">
+	const $_documentContainer$U = html`<dom-module id="lumo-upload" theme-for="vaadin-upload">
   <template>
     <style>
       :host {
@@ -51154,7 +54084,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$N.content);
+	document.head.appendChild($_documentContainer$U.content);
 
 	/**
 	@license
@@ -51193,8 +54123,8 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @demo demo/index.html
 	 */
 	class UploadElement extends ElementMixin$1(ThemableMixin(PolymerElement)) {
@@ -51249,7 +54179,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '4.2.2';
+	    return '4.3.0';
 	  }
 
 	  static get properties() {
@@ -51956,7 +54886,7 @@ public class Application extends SpringBootServletInitializer {
 	  * @event file-reject
 	  * @param {Object} detail
 	  * @param {Object} detail.file the file added
-	  * @param {Object} detail.error the cause
+	  * @param {string} detail.error the cause
 	  */
 
 	  /**
@@ -52058,7 +54988,7 @@ public class Application extends SpringBootServletInitializer {
 
 	customElements.define(UploadElement.is, UploadElement);
 
-	const $_documentContainer$O = html`<dom-module id="lumo-dialog" theme-for="vaadin-dialog-overlay">
+	const $_documentContainer$V = html`<dom-module id="lumo-dialog" theme-for="vaadin-dialog-overlay">
   <template>
     <style include="lumo-overlay">
       /* Optical centering */
@@ -52120,16 +55050,312 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$O.content);
+	document.head.appendChild($_documentContainer$V.content);
+
+	const TOUCH_DEVICE$1 = (() => {
+	  try {
+	    document.createEvent('TouchEvent');
+	    return true;
+	  } catch (e) {
+	    return false;
+	  }
+	})();
+
+	/**
+	 * @polymerMixin
+	 */
+	const DialogDraggableMixin = (superClass) =>
+	  class VaadinDialogDraggableMixin extends superClass {
+	    static get properties() {
+	      return {
+	        _touchDevice: {
+	          type: Boolean,
+	          value: TOUCH_DEVICE$1
+	        }
+	      };
+	    }
+
+	    ready() {
+	      super.ready();
+	      this._originalBounds = {};
+	      this._originalMouseCoords = {};
+	      this._startDrag = this._startDrag.bind(this);
+	      this._drag = this._drag.bind(this);
+	      this._stopDrag = this._stopDrag.bind(this);
+	      this.$.overlay.$.overlay.addEventListener('mousedown', this._startDrag);
+	      this.$.overlay.$.overlay.addEventListener('touchstart', this._startDrag);
+	    }
+
+	    _startDrag(e) {
+	      // Don't initiate when there's more than 1 touch (pinch zoom)
+	      if (e.type === 'touchstart' && e.touches.length > 1) {
+	        return;
+	      }
+
+	      if (this.draggable && (e.button === 0 || e.touches)) {
+	        const resizerContainer = this.$.overlay.$.resizerContainer;
+	        const isResizerContainer = e.target === resizerContainer;
+	        const isResizerContainerScrollbar = e.offsetX > resizerContainer.clientWidth || e.offsetY > resizerContainer.clientHeight;
+	        const isContentPart = e.target === this.$.overlay.$.content;
+	        const isDraggable = e.target.classList.contains('draggable');
+	        if ((isResizerContainer && !isResizerContainerScrollbar) || isContentPart || isDraggable) {
+	          !isDraggable && e.preventDefault();
+	          this._originalBounds = this._getOverlayBounds();
+	          const event = this.__getMouseOrFirstTouchEvent(e);
+	          this._originalMouseCoords = {top: event.pageY, left: event.pageX};
+	          window.addEventListener('mouseup', this._stopDrag);
+	          window.addEventListener('touchend', this._stopDrag);
+	          window.addEventListener('mousemove', this._drag);
+	          window.addEventListener('touchmove', this._drag);
+	          if (this.$.overlay.$.overlay.style.position !== 'absolute') {
+	            this._setBounds(this._originalBounds);
+	          }
+	        }
+	      }
+	    }
+
+	    _drag(e) {
+	      const event = this.__getMouseOrFirstTouchEvent(e);
+	      if (this._eventInWindow(event)) {
+	        const top = this._originalBounds.top + (event.pageY - this._originalMouseCoords.top);
+	        const left = this._originalBounds.left + (event.pageX - this._originalMouseCoords.left);
+	        this._setBounds({top, left});
+	      }
+	    }
+
+	    _stopDrag() {
+	      window.removeEventListener('mouseup', this._stopDrag);
+	      window.removeEventListener('touchend', this._stopDrag);
+	      window.removeEventListener('mousemove', this._drag);
+	      window.removeEventListener('touchmove', this._drag);
+	    }
+	  };
+
+	const $_documentContainer$W = document.createElement('template');
+
+	$_documentContainer$W.innerHTML = `<dom-module id="vaadin-dialog-resizable-overlay-styles" theme-for="vaadin-dialog-overlay">
+  <template>
+    <style>
+      [part='overlay'] {
+        position: relative;
+        overflow: visible;
+        max-height: 100%;
+        display: flex;
+      }
+
+      [part='content'] {
+        box-sizing: border-box;
+        height: 100%;
+      }
+
+      .resizer-container {
+        overflow: auto;
+        flex-grow: 1;
+      }
+
+      [part='overlay'][style] .resizer-container {
+        min-height: 100%;
+        width: 100%;
+      }
+
+      :host(:not([resizable])) .resizer {
+        display: none;
+      }
+
+      .resizer {
+        position: absolute;
+        height: 16px;
+        width: 16px;
+      }
+
+      .resizer.edge {
+        height: 8px;
+        width: 8px;
+        top: -4px;
+        right: -4px;
+        bottom: -4px;
+        left: -4px;
+      }
+
+      .resizer.edge.n {
+        width: auto;
+        bottom: auto;
+        cursor: ns-resize;
+      }
+
+      .resizer.ne {
+        top: -4px;
+        right: -4px;
+        cursor: nesw-resize;
+      }
+
+      .resizer.edge.e {
+        height: auto;
+        left: auto;
+        cursor: ew-resize;
+      }
+
+      .resizer.se {
+        bottom: -4px;
+        right: -4px;
+        cursor: nwse-resize;
+      }
+
+      .resizer.edge.s {
+        width: auto;
+        top: auto;
+        cursor: ns-resize;
+      }
+
+      .resizer.sw {
+        bottom: -4px;
+        left: -4px;
+        cursor: nesw-resize;
+      }
+
+      .resizer.edge.w {
+        height: auto;
+        right: auto;
+        cursor: ew-resize;
+      }
+
+      .resizer.nw {
+        top: -4px;
+        left: -4px;
+        cursor: nwse-resize;
+      }
+
+      /* IE11 -only CSS */
+      _:-ms-fullscreen,
+      [part='overlay'] {
+        max-height: none;
+      }
+    </style>
+  </template>
+</dom-module>`;
+
+	document.head.appendChild($_documentContainer$W.content);
+
+	/**
+	 * @polymerMixin
+	 */
+	const DialogResizableMixin = (superClass) =>
+	  class VaadinDialogResizableMixin extends superClass {
+	    ready() {
+	      super.ready();
+	      this._originalBounds = {};
+	      this._originalMouseCoords = {};
+	      this._resizeListeners = {start: {}, resize: {}, stop: {}};
+	      this._addResizeListeners();
+	    }
+
+	    _addResizeListeners() {
+	      // Note: edge controls added before corners
+	      ['n', 'e', 's', 'w', 'nw', 'ne', 'se', 'sw'].forEach((direction) => {
+	        const resizer = document.createElement('div');
+	        this._resizeListeners.start[direction] = (e) => this._startResize(e, direction);
+	        this._resizeListeners.resize[direction] = (e) => this._resize(e, direction);
+	        this._resizeListeners.stop[direction] = () => this._stopResize(direction);
+	        if (direction.length === 1) {
+	          resizer.classList.add('edge');
+	        }
+	        resizer.classList.add('resizer');
+	        resizer.classList.add(direction);
+	        resizer.addEventListener('mousedown', this._resizeListeners.start[direction]);
+	        resizer.addEventListener('touchstart', this._resizeListeners.start[direction]);
+	        this.$.overlay.$.resizerContainer.appendChild(resizer);
+	      });
+	    }
+
+	    _startResize(e, direction) {
+	      // Don't initiate when there's more than 1 touch (pinch zoom)
+	      if (e.type === 'touchstart' && e.touches.length > 1) {
+	        return;
+	      }
+
+	      if (e.button === 0 || e.touches) {
+	        e.preventDefault();
+	        this._originalBounds = this._getOverlayBounds();
+	        const event = this.__getMouseOrFirstTouchEvent(e);
+	        this._originalMouseCoords = {top: event.pageY, left: event.pageX};
+	        window.addEventListener('mousemove', this._resizeListeners.resize[direction]);
+	        window.addEventListener('touchmove', this._resizeListeners.resize[direction]);
+	        window.addEventListener('mouseup', this._resizeListeners.stop[direction]);
+	        window.addEventListener('touchend', this._resizeListeners.stop[direction]);
+	        if (this.$.overlay.$.overlay.style.position !== 'absolute') {
+	          this._setBounds(this._originalBounds);
+	        }
+	      }
+	    }
+
+	    _resize(e, resizer) {
+	      const event = this.__getMouseOrFirstTouchEvent(e);
+	      if (this._eventInWindow(event)) {
+	        const minimumSize = 40;
+	        resizer.split('').forEach((direction) => {
+	          switch (direction) {
+	            case 'n': {
+	              const height = this._originalBounds.height - (event.pageY - this._originalMouseCoords.top);
+	              const top = this._originalBounds.top + (event.pageY - this._originalMouseCoords.top);
+	              if (height > minimumSize) {
+	                this._setBounds({top, height});
+	              }
+	              break;
+	            }
+	            case 'e': {
+	              const width = this._originalBounds.width + (event.pageX - this._originalMouseCoords.left);
+	              if (width > minimumSize) {
+	                this._setBounds({width});
+	              }
+	              break;
+	            }
+	            case 's': {
+	              const height = this._originalBounds.height + (event.pageY - this._originalMouseCoords.top);
+	              if (height > minimumSize) {
+	                this._setBounds({height});
+	              }
+	              break;
+	            }
+	            case 'w': {
+	              const width = this._originalBounds.width - (event.pageX - this._originalMouseCoords.left);
+	              const left = this._originalBounds.left + (event.pageX - this._originalMouseCoords.left);
+	              if (width > minimumSize) {
+	                this._setBounds({left, width});
+	              }
+	              break;
+	            }
+	          }
+	        });
+	        this.$.overlay.notifyResize();
+	      }
+	    }
+
+	    _stopResize(direction) {
+	      window.removeEventListener('mousemove', this._resizeListeners.resize[direction]);
+	      window.removeEventListener('touchmove', this._resizeListeners.resize[direction]);
+	      window.removeEventListener('mouseup', this._resizeListeners.stop[direction]);
+	      window.removeEventListener('touchend', this._resizeListeners.stop[direction]);
+	      this.dispatchEvent(new CustomEvent('resize', {detail: this._getResizeDimensions()}));
+	    }
+
+	    _getResizeDimensions() {
+	      const {width, height} = getComputedStyle(this.$.overlay.$.overlay);
+	      const content = this.$.overlay.$.content;
+	      content.setAttribute('style', 'position: absolute; top: 0; right: 0; bottom: 0; left: 0; box-sizing: content-box; height: auto;');
+	      const {width: contentWidth, height: contentHeight} = getComputedStyle(content);
+	      content.removeAttribute('style');
+	      return {width, height, contentWidth, contentHeight};
+	    }
+	  };
 
 	/**
 	@license
 	Copyright (c) 2017 Vaadin Ltd.
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
-	const $_documentContainer$P = document.createElement('template');
+	const $_documentContainer$X = document.createElement('template');
 
-	$_documentContainer$P.innerHTML = `<dom-module id="vaadin-dialog-overlay-styles" theme-for="vaadin-dialog-overlay">
+	$_documentContainer$X.innerHTML = `<dom-module id="vaadin-dialog-overlay-styles" theme-for="vaadin-dialog-overlay">
   <template>
     <style>
       /*
@@ -52143,7 +55369,8 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$P.content);
+	document.head.appendChild($_documentContainer$X.content);
+	let memoizedTemplate$4;
 
 	/**
 	 * The overlay element.
@@ -52153,12 +55380,34 @@ public class Application extends SpringBootServletInitializer {
 	 * See [`<vaadin-overlay>` documentation](https://github.com/vaadin/vaadin-overlay/blob/master/src/vaadin-overlay.html)
 	 * for `<vaadin-dialog-overlay>` parts.
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
-	class DialogOverlayElement extends OverlayElement {
+	class DialogOverlayElement extends mixinBehaviors(IronResizableBehavior, OverlayElement) {
 	  static get is() {
 	    return 'vaadin-dialog-overlay';
+	  }
+
+	  static get template() {
+	    if (!memoizedTemplate$4) {
+	      memoizedTemplate$4 = super.template.cloneNode(true);
+	      const contentPart = memoizedTemplate$4.content.querySelector('[part="content"]');
+	      const overlayPart = memoizedTemplate$4.content.querySelector('[part="overlay"]');
+	      const resizerContainer = document.createElement('div');
+	      resizerContainer.id = 'resizerContainer';
+	      resizerContainer.classList.add('resizer-container');
+	      resizerContainer.appendChild(contentPart);
+	      overlayPart.appendChild(resizerContainer);
+	    }
+	    return memoizedTemplate$4;
+	  }
+
+	  static get properties() {
+	    return {
+	      modeless: Boolean,
+
+	      withBackdrop: Boolean
+	    };
 	  }
 	}
 
@@ -52219,12 +55468,17 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ThemePropertyMixin
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ThemePropertyMixin
 	 * @demo demo/index.html
 	 */
-	class DialogElement extends ThemePropertyMixin(ElementMixin$1(PolymerElement)) {
+	class DialogElement extends
+	  ThemePropertyMixin(
+	    ElementMixin$1(
+	      DialogDraggableMixin(
+	        DialogResizableMixin(
+	          PolymerElement)))) {
 	  static get template() {
 	    return html`
     <style>
@@ -52233,7 +55487,7 @@ public class Application extends SpringBootServletInitializer {
       }
     </style>
 
-    <vaadin-dialog-overlay id="overlay" on-opened-changed="_onOverlayOpened" with-backdrop="" theme\$="[[theme]]" focus-trap="">
+    <vaadin-dialog-overlay id="overlay" on-opened-changed="_onOverlayOpened" on-mousedown="_bringOverlayToFront" on-touchstart="_bringOverlayToFront" theme\$="[[theme]]" modeless="[[modeless]]" with-backdrop="[[!modeless]]" resizable\$="[[resizable]]" focus-trap="">
     </vaadin-dialog-overlay>
 `;
 	  }
@@ -52243,7 +55497,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '2.2.1';
+	    return '2.4.3';
 	  }
 
 	  static get properties() {
@@ -52298,6 +55552,36 @@ public class Application extends SpringBootServletInitializer {
 	       * - `dialog` The reference to the `<vaadin-dialog>` element.
 	       */
 	      renderer: Function,
+
+	      /**
+	       * Set to true to remove backdrop and allow click events on background elements.
+	       */
+	      modeless: {
+	        type: Boolean,
+	        value: false
+	      },
+
+	      /**
+	       * Set to true to enable repositioning the dialog by clicking and dragging.
+	       *
+	       * By default, only the overlay area can be used to drag the element. But,
+	       * a child element can be marked as a draggable area by adding a
+	       * "`draggable`" class to it.
+	       */
+	      draggable: {
+	        type: Boolean,
+	        value: false,
+	        reflectToAttribute: true
+	      },
+
+	      /**
+	       * Set to true to enable resizing the dialog by dragging the corners and edges.
+	       */
+	      resizable: {
+	        type: Boolean,
+	        value: false,
+	        reflectToAttribute: true
+	      },
 
 	      _oldTemplate: Object,
 
@@ -52400,11 +55684,54 @@ public class Application extends SpringBootServletInitializer {
 	      e.preventDefault();
 	    }
 	  }
+
+	  _setBounds(bounds) {
+	    const overlay = this.$.overlay.$.overlay;
+	    const parsedBounds = Object.assign({}, bounds);
+
+	    if (overlay.style.position !== 'absolute') {
+	      overlay.style.position = 'absolute';
+	      overlay.style.maxWidth = 'none';
+	    }
+
+	    for (const arg in parsedBounds) {
+	      if (typeof parsedBounds[arg] === 'number') {
+	        parsedBounds[arg] = `${parsedBounds[arg]}px`;
+	      }
+	    }
+
+	    Object.assign(overlay.style, parsedBounds);
+	  }
+
+	  _bringOverlayToFront() {
+	    if (this.modeless) {
+	      this.$.overlay.bringToFront();
+	    }
+	  }
+
+	  _getOverlayBounds() {
+	    const overlay = this.$.overlay.$.overlay;
+	    const overlayBounds = overlay.getBoundingClientRect();
+	    const containerBounds = this.$.overlay.getBoundingClientRect();
+	    const top = overlayBounds.top - containerBounds.top;
+	    const left = overlayBounds.left - containerBounds.left;
+	    const width = overlayBounds.width;
+	    const height = overlayBounds.height;
+	    return {top, left, width, height};
+	  }
+
+	  _eventInWindow(e) {
+	    return e.clientX >= 0 && e.clientX <= window.innerWidth && e.clientY >= 0 && e.clientY <= window.innerHeight;
+	  }
+
+	  __getMouseOrFirstTouchEvent(e) {
+	    return e.touches ? e.touches[0] : e;
+	  }
 	}
 
 	customElements.define(DialogElement.is, DialogElement);
 
-	const $_documentContainer$Q = html`<dom-module id="lumo-radio-button" theme-for="vaadin-radio-button">
+	const $_documentContainer$Y = html`<dom-module id="lumo-radio-button" theme-for="vaadin-radio-button">
   <template>
     <style>
       :host {
@@ -52520,11 +55847,17 @@ public class Application extends SpringBootServletInitializer {
       [part="radio"] {
         line-height: 1;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part="label"]:not([empty]) {
+        margin: 0.1875em 0.375em 0.1875em 0.875em;
+      }
     </style>
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$Q.content);
+	document.head.appendChild($_documentContainer$Y.content);
 
 	/**
 	@license
@@ -52559,11 +55892,11 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ElementMixin
-	 * @mixes Vaadin.ControlStateMixin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Polymer.GestureEventListeners
+	 * @extends PolymerElement
+	 * @mixes ElementMixin
+	 * @mixes ControlStateMixin
+	 * @mixes ThemableMixin
+	 * @mixes GestureEventListeners
 	 * @element vaadin-radio-button
 	 * @demo demo/index.html
 	 */
@@ -52595,6 +55928,7 @@ public class Application extends SpringBootServletInitializer {
         position: absolute;
         top: 0;
         left: 0;
+        right: 0;
         width: 100%;
         height: 100%;
         opacity: 0;
@@ -52609,7 +55943,7 @@ public class Application extends SpringBootServletInitializer {
 
     <label>
       <span part="radio">
-        <input type="radio" checked="{{checked::change}}" disabled\$="[[disabled]]" role="presentation" on-change="_onChange" tabindex="-1">
+        <input type="radio" checked="[[checked]]" disabled\$="[[disabled]]" role="presentation" on-change="_onChange" tabindex="-1">
       </span>
 
       <span part="label">
@@ -52624,7 +55958,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '1.2.3';
+	    return '1.3.0';
 	  }
 
 	  static get properties() {
@@ -52737,7 +56071,11 @@ public class Application extends SpringBootServletInitializer {
 	      this.removeAttribute('active');
 
 	      if (!this.checked && !this.disabled) {
-	        this.checked = true;
+	        // If you change this block, please test manually that radio-button and
+	        // radio-group still works ok on iOS 12/13 and up as it may cause
+	        // an issue that is not possible to test programmatically.
+	        // See: https://github.com/vaadin/vaadin-radio-button/issues/140
+	        this.click();
 	      }
 	    });
 
@@ -52763,7 +56101,13 @@ public class Application extends SpringBootServletInitializer {
 	   * @protected
 	   */
 	  click() {
-	    this.shadowRoot.querySelector('input').click();
+	    // If you change this block, please test manually that radio-button and
+	    // radio-group still works ok on iOS 12/13 and up as it may cause
+	    // an issue that is not possible to test programmatically.
+	    // See: https://github.com/vaadin/vaadin-radio-button/issues/140
+	    if (!this.disabled) {
+	      this.shadowRoot.querySelector('input').dispatchEvent(new MouseEvent('click'));
+	    }
 	  }
 
 	  /** @protected */
@@ -52772,6 +56116,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _onChange(e) {
+	    this.checked = e.target.checked;
 	    // In the Shadow DOM, the `change` event is not leaked into the
 	    // ancestor tree, so we must do this manually.
 	    const changeEvent = new CustomEvent('change', {
@@ -52783,17 +56128,17 @@ public class Application extends SpringBootServletInitializer {
 	    });
 	    this.dispatchEvent(changeEvent);
 	  }
-	}
 
-	/**
-	 * Fired when the user toggles the radio button.
-	 *
-	 * @event change
-	 */
+	  /**
+	   * Fired when the user toggles the radio button.
+	   *
+	   * @event change
+	   */
+	}
 
 	customElements.define(RadioButtonElement.is, RadioButtonElement);
 
-	const $_documentContainer$R = html`<dom-module id="lumo-radio-group" theme-for="vaadin-radio-group">
+	const $_documentContainer$Z = html`<dom-module id="lumo-radio-group" theme-for="vaadin-radio-group">
   <template>
     <style include="lumo-required-field">
       :host {
@@ -52840,7 +56185,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$R.content);
+	document.head.appendChild($_documentContainer$Z.content);
 
 	/**
 	@license
@@ -52880,12 +56225,12 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
 	 * @element vaadin-radio-group
 	 * @demo demo/index.html
 	 */
-	class RadioGroupElement extends ThemableMixin(PolymerElement) {
+	class RadioGroupElement extends ThemableMixin(DirMixin(PolymerElement)) {
 	  static get template() {
 	    return html`
     <style>
@@ -53094,17 +56439,19 @@ public class Application extends SpringBootServletInitializer {
 	    this.addEventListener('keydown', e => {
 	      // if e.target is vaadin-radio-group then assign to checkedRadioButton currently checked radio button
 	      var checkedRadioButton = (e.target == this) ? this._checkedButton : e.target;
+	      const horizontalRTL = this.getAttribute('dir') === 'rtl'
+	        && this.theme !== 'vertical';
 
 	      // LEFT, UP - select previous radio button
 	      if (e.keyCode === 37 || e.keyCode === 38) {
 	        e.preventDefault();
-	        this._selectPreviousButton(checkedRadioButton);
+	        this._selectIncButton(horizontalRTL, checkedRadioButton);
 	      }
 
 	      // RIGHT, DOWN - select next radio button
 	      if (e.keyCode === 39 || e.keyCode === 40) {
 	        e.preventDefault();
-	        this._selectNextButton(checkedRadioButton);
+	        this._selectIncButton(!horizontalRTL, checkedRadioButton);
 	      }
 	    });
 
@@ -53116,6 +56463,14 @@ public class Application extends SpringBootServletInitializer {
 	      e.composed && this.validate();
 	      this._setFocused(false);
 	    });
+	  }
+
+	  _selectIncButton(next, checkedRadioButton) {
+	    if (next) {
+	      this._selectNextButton(checkedRadioButton);
+	    } else {
+	      this._selectPreviousButton(checkedRadioButton);
+	    }
 	  }
 
 	  _selectButton(element, setFocusRing) {
@@ -53174,6 +56529,10 @@ public class Application extends SpringBootServletInitializer {
 
 	    this._checkedButton = button;
 
+	    if (this._checkedButton) {
+	      this.value = this._checkedButton.value;
+	    }
+
 	    this._radioButtons.forEach(button => {
 	      if (button === this._checkedButton) {
 	        if (fireChangeEvent) {
@@ -53185,10 +56544,6 @@ public class Application extends SpringBootServletInitializer {
 	        button.checked = false;
 	      }
 	    });
-
-	    if (this._checkedButton) {
-	      this.value = this._checkedButton.value;
-	    }
 
 	    this.validate();
 	    this.readonly && this._updateDisableButtons();
@@ -54344,9 +57699,9 @@ public class Application extends SpringBootServletInitializer {
 
 	});
 
-	const $_documentContainer$S = document.createElement('template');
+	const $_documentContainer$_ = document.createElement('template');
 
-	$_documentContainer$S.innerHTML = `<iron-iconset-svg name="vaadin" size="16">
+	$_documentContainer$_.innerHTML = `<iron-iconset-svg name="vaadin" size="16">
 <svg><defs>
 <g id="abacus"><path d="M0 0v16h16v-16h-16zM14 2v3h-0.1c-0.2-0.6-0.8-1-1.4-1s-1.2 0.4-1.4 1h-3.2c-0.2-0.6-0.7-1-1.4-1s-1.2 0.4-1.4 1h-0.2c-0.2-0.6-0.7-1-1.4-1s-1.2 0.4-1.4 1h-0.1v-3h12zM13.9 10c-0.2-0.6-0.8-1-1.4-1s-1.2 0.4-1.4 1h-0.2c-0.2-0.6-0.8-1-1.4-1s-1.2 0.4-1.4 1h-3.2c-0.2-0.6-0.7-1-1.4-1s-1.2 0.4-1.4 1h-0.1v-4h0.1c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h0.2c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h3.2c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h0.1l-0.1 4zM2 14v-3h0.1c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h3.2c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h0.2c0.2 0.6 0.8 1 1.4 1s1.2-0.4 1.4-1h0.1v3h-12z"></path></g>
 <g id="absolute-position"><path d="M0 0v16h16v-16h-16zM15 15h-14v-6h3v1l3-2-3-2v1h-3v-6h6v3h-1l2 3 2-3h-1v-3h6v14z"></path></g>
@@ -54987,9 +58342,9 @@ public class Application extends SpringBootServletInitializer {
 </defs></svg>
 </iron-iconset-svg>`;
 
-	document.head.appendChild($_documentContainer$S.content);
+	document.head.appendChild($_documentContainer$_.content);
 
-	const $_documentContainer$T = html`<dom-module id="lumo-grid" theme-for="vaadin-grid">
+	const $_documentContainer$$ = html`<dom-module id="lumo-grid" theme-for="vaadin-grid">
   <template>
     <style>
       :host {
@@ -55316,6 +58671,30 @@ public class Application extends SpringBootServletInitializer {
       :host([theme~="wrap-cell-content"]) [part~="cell"] ::slotted(vaadin-grid-cell-content) {
         white-space: normal;
       }
+
+      /* RTL specific styles */
+
+      :host([dir="rtl"]) [part~="row"][dragstart] [part~="cell"][last-column] {
+        border-radius: var(--lumo-border-radius-s) 0 0 var(--lumo-border-radius-s);
+      }
+
+      :host([dir="rtl"]) [part~="row"][dragstart] [part~="cell"][first-column] {
+        border-radius: 0 var(--lumo-border-radius-s) var(--lumo-border-radius-s) 0;
+      }
+
+      :host([dir="rtl"][theme~="column-borders"]) [part~="cell"]:not([last-column]):not([part~="details-cell"]) {
+        border-right: none;
+        border-left: var(--_lumo-grid-border-width) solid var(--_lumo-grid-secondary-border-color);
+      }
+
+      :host([dir="rtl"]) [last-frozen] {
+        border-right: none;
+        border-left: var(--_lumo-grid-border-width) solid transparent;
+      }
+
+      :host([dir="rtl"][overflow~="right"]) [part~="cell"][last-frozen]:not([part~="details-cell"]) {
+        border-left-color: var(--_lumo-grid-border-color);
+      }
     </style>
   </template>
 </dom-module><dom-module theme-for="vaadin-checkbox" id="vaadin-grid-select-all-checkbox-lumo">
@@ -55328,7 +58707,7 @@ public class Application extends SpringBootServletInitializer {
   </template>
 </dom-module>`;
 
-	document.head.appendChild($_documentContainer$T.content);
+	document.head.appendChild($_documentContainer$$.content);
 
 	/**
 	@license
@@ -56339,7 +59718,7 @@ public class Application extends SpringBootServletInitializer {
 	            estimatedMissingRowCount = Math.max(0, this._effectiveSize - this._physicalCount);
 	          }
 
-	          if (this._physicalSize && estimatedMissingRowCount > 0) {
+	          if (this._physicalSize && estimatedMissingRowCount > 0 && this._optPhysicalSize !== Infinity) {
 	            super._increasePoolIfNeeded(estimatedMissingRowCount);
 	            // Ensure the rows are in order after increasing pool
 	            this.__reorderChildNodes();
@@ -56909,7 +60288,9 @@ public class Application extends SpringBootServletInitializer {
 	        var style = window.getComputedStyle(targetCell);
 	        var minWidth = 10 + parseInt(style.paddingLeft) + parseInt(style.paddingRight) + parseInt(style.borderLeftWidth)
 	          + parseInt(style.borderRightWidth) + parseInt(style.marginLeft) + parseInt(style.marginRight);
-	        column.width = Math.max(minWidth, targetCell.offsetWidth + e.detail.x - targetCell.getBoundingClientRect().right) + 'px';
+	        const maxWidth = targetCell.offsetWidth + (this.__isRTL ? targetCell.getBoundingClientRect().left - e.detail.x :
+	          e.detail.x - targetCell.getBoundingClientRect().right);
+	        column.width = Math.max(minWidth, maxWidth) + 'px';
 	        column.flexGrow = 0;
 	      }
 	      // Fix width and flex-grow for all preceding columns
@@ -56927,6 +60308,9 @@ public class Application extends SpringBootServletInitializer {
 
 	      if (e.detail.state === 'end') {
 	        this._toggleAttribute('column-resizing', false, this.$.scroller);
+	        this.dispatchEvent(new CustomEvent('column-resize', {
+	          detail: {resizedColumn: column}
+	        }));
 	      }
 
 	      // Notify resize
@@ -56934,6 +60318,13 @@ public class Application extends SpringBootServletInitializer {
 	    }
 	  }
 
+	  /**
+	  * Fired when a column in the grid is resized by the user.
+	  *
+	  * @event column-resize
+	  * @param {Object} detail
+	  * @param {Object} detail.resizedColumn the column that was resized
+	  */
 	};
 
 	/**
@@ -57087,6 +60478,7 @@ public class Application extends SpringBootServletInitializer {
 	  static get observers() {
 	    return [
 	      '_sizeChanged(size)',
+	      '_itemIdPathChanged(itemIdPath)',
 	      '_expandedItemsChanged(expandedItems.*)'
 	    ];
 	  }
@@ -57096,12 +60488,6 @@ public class Application extends SpringBootServletInitializer {
 	    this._cache.size += delta;
 	    this._cache.effectiveSize += delta;
 	    this._effectiveSize = this._cache.effectiveSize;
-	  }
-
-	  _updateRowItem(item, el) {
-	    el.children.forEach(cell => {
-	      cell._instance && (cell._instance.item = item);
-	    });
 	  }
 
 	  _getItem(index, el) {
@@ -57125,25 +60511,6 @@ public class Application extends SpringBootServletInitializer {
 
 	  }
 
-	  _pagesForPhysicalItems() {
-	    // TODO: potentially heavy operation to run first visible index,
-	    // reconsider if performance issues occur on data binding / scrolling.
-	    // TODO: _vidxOffset shouldn't be read from here.
-	    const firstVisiblePage = this._getPageForIndex(this._firstVisibleIndex + this._vidxOffset);
-
-	    return [firstVisiblePage].concat(
-	      this._physicalItems
-	        .filter(row => row.index)
-	        .items(row => this._getPageForIndex(row.index))
-	    ).reduce((prev, curr) => {
-	      if (prev.indexOf(curr) === -1) {
-	        prev.push(curr);
-	      }
-
-	      return prev;
-	    }, []);
-	  }
-
 	  _expandedInstanceChangedCallback(inst, value) {
 	    if (inst.item === undefined) {
 	      return;
@@ -57164,13 +60531,27 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _isExpanded(item) {
-	    return this.expandedItems && this._getItemIndexInArray(item, this.expandedItems) > -1;
+	    return this.__expandedKeys.has(this.getItemId(item));
 	  }
 
 	  _expandedItemsChanged(e) {
+	    this.__cacheExpandedKeys();
 	    this._cache.updateSize();
 	    this._effectiveSize = this._cache.effectiveSize;
 	    this._assignModels();
+	  }
+
+	  _itemIdPathChanged(e) {
+	    this.__cacheExpandedKeys();
+	  }
+
+	  __cacheExpandedKeys() {
+	    if (this.expandedItems) {
+	      this.__expandedKeys = new Set();
+	      this.expandedItems.forEach(item => {
+	        this.__expandedKeys.add(this.getItemId(item));
+	      });
+	    }
 	  }
 
 	  /**
@@ -57227,11 +60608,13 @@ public class Application extends SpringBootServletInitializer {
 	          }
 	        }
 
+	        const currentItems = Array.from(this.$.items.children).map(row => row._item);
+
 	        // Populate the cache with new items
 	        items.forEach((item, itemsIndex) => {
 	          const itemIndex = page * this.pageSize + itemsIndex;
 	          cache.items[itemIndex] = item;
-	          if (this._isExpanded(item)) {
+	          if (this._isExpanded(item) && currentItems.indexOf(item) > -1) {
 	            // Force synchronous data request for expanded item sub-cache
 	            cache.ensureSubCacheForScaledIndex(itemIndex);
 	          }
@@ -57241,26 +60624,23 @@ public class Application extends SpringBootServletInitializer {
 
 	        delete cache.pendingRequests[page];
 
-	        if (!this._cache.isLoading()) {
-	          // All active requests have finished, update the effective size and rows
-	          this._setLoading(false);
-	          this._cache.updateSize();
-	          this._effectiveSize = this._cache.effectiveSize;
+	        this._setLoading(false);
+	        this._cache.updateSize();
+	        this._effectiveSize = this._cache.effectiveSize;
 
-	          Array.from(this.$.items.children)
-	            .filter(row => !row.hidden)
-	            .forEach(row => {
-	              const cachedItem = this._cache.getItemForIndex(row.index);
-	              if (cachedItem) {
-	                this._toggleAttribute('loading', false, row);
-	                this._updateItem(row, cachedItem);
-	              }
-	            });
+	        Array.from(this.$.items.children)
+	          .filter(row => !row.hidden)
+	          .forEach(row => {
+	            const cachedItem = this._cache.getItemForIndex(row.index);
+	            if (cachedItem) {
+	              this._toggleAttribute('loading', false, row);
+	              this._updateItem(row, cachedItem);
+	            }
+	          });
 
-	          this._increasePoolIfNeeded(0);
-	        }
+	        this._increasePoolIfNeeded(0);
 
-	        this.__setInitialColumnWidths();
+	        this.__itemsReceived();
 	      });
 	    }
 	  }
@@ -57287,12 +60667,6 @@ public class Application extends SpringBootServletInitializer {
 
 	    if (!this._effectiveSize) {
 	      this._loadPage(0, this._cache);
-	    }
-	  }
-
-	  _flushItemsDebouncer() {
-	    if (this._debouncerLoad) {
-	      this._debouncerLoad.flush();
 	    }
 	  }
 
@@ -57616,7 +60990,7 @@ public class Application extends SpringBootServletInitializer {
 	 * `vaadin-grid-templatizer` is a helper element for the `vaadin-grid` that is preparing and
 	 * stamping instances of cells and columns templates
 	 *
-	 * @memberof Vaadin
+	 * @extends PolymerElement
 	 * @private
 	 */
 	class GridTemplatizer extends (class extends PolymerElement {}) {
@@ -58010,7 +61384,8 @@ public class Application extends SpringBootServletInitializer {
 
 	  static get observers() {
 	    return [
-	      '_scrollHeightUpdated(_estScrollHeight)'
+	      '_scrollHeightUpdated(_estScrollHeight)',
+	      '_scrollViewportHeightUpdated(_viewportHeight)'
 	    ];
 	  }
 
@@ -58021,6 +61396,28 @@ public class Application extends SpringBootServletInitializer {
 
 	  get _scrollTop() {
 	    return this.$.table.scrollTop;
+	  }
+
+	  constructor() {
+	    super();
+	    this._scrollLineHeight = this._getScrollLineHeight();
+	  }
+
+	  /**
+	   * @returns {Number|undefined} - The browser's default font-size in pixels
+	   */
+	  _getScrollLineHeight() {
+	    const el = document.createElement('div');
+	    el.style.fontSize = 'initial';
+	    el.style.display = 'none';
+	    document.body.appendChild(el);
+	    const fontSize = window.getComputedStyle(el).fontSize;
+	    document.body.removeChild(el);
+	    return fontSize ? window.parseInt(fontSize) : undefined;
+	  }
+
+	  _scrollViewportHeightUpdated(_viewportHeight) {
+	    this._scrollPageHeight = _viewportHeight - this.$.header.clientHeight - this.$.footer.clientHeight - this._scrollLineHeight;
 	  }
 
 	  ready() {
@@ -58050,17 +61447,31 @@ public class Application extends SpringBootServletInitializer {
 	    this.$.items.addEventListener('focusout', () => this._rowWithFocusedElement = undefined);
 	  }
 
+	  /**
+	   * Scroll to a specific row index in the virtual list. Note that the row index is
+	   * not always the same for any particular item. For example, sorting/filtering/expanding
+	   * or collapsing hierarchical items can affect the row index related to an item.
+	   *
+	   * @param {number} index Row index to scroll to
+	   */
+	  scrollToIndex(index) {
+	    this._accessIronListAPI(() => super.scrollToIndex(index));
+	  }
+
 	  _onWheel(e) {
 	    if (e.ctrlKey || this._hasScrolledAncestor(e.target, e.deltaX, e.deltaY)) {
 	      return;
 	    }
 
-	    var table = this.$.table;
+	    const table = this.$.table;
 
-	    var deltaY = e.deltaY;
-	    if (e.deltaMode === 1) {
-	      // Mode 1 == scrolling by lines instead of pixels
-	      deltaY *= this._physicalAverage;
+	    let deltaY = e.deltaY;
+	    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+	      // Scrolling by "lines of text" instead of pixels
+	      deltaY *= this._scrollLineHeight;
+	    } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+	      // Scrolling by "pages" instead of pixels
+	      deltaY *= this._scrollPageHeight;
 	    }
 
 	    if (this._wheelAnimationFrame) {
@@ -58259,10 +61670,20 @@ public class Application extends SpringBootServletInitializer {
 	          cell.style.transform = '';
 	        });
 	        this._frozenCells = Array.prototype.slice.call(this.$.table.querySelectorAll('[frozen]'));
+	        this._updateScrollerMeasurements();
 	        this._translateStationaryElements();
 	      }
 	    );
 	    this._updateLastFrozen();
+	  }
+
+	  _updateScrollerMeasurements() {
+	    if (this._frozenCells.length > 0 && this.__isRTL) {
+	      this.__scrollerMetrics = {
+	        scrollWidth: this.$.outerscroller.scrollWidth,
+	        clientWidth: this.$.outerscroller.clientWidth
+	      };
+	    }
 	  }
 
 	  _updateLastFrozen() {
@@ -58295,9 +61716,15 @@ public class Application extends SpringBootServletInitializer {
 	      this.$.footer.style.transform = this.$.header.style.transform = this._getTranslate(0, this._scrollTop);
 	    }
 
-	    var frozenCellTransform = this._getTranslate(this._scrollLeft, 0);
-	    for (var i = 0; i < this._frozenCells.length; i++) {
-	      this._frozenCells[i].style.transform = frozenCellTransform;
+	    if (this._frozenCells.length > 0) {
+	      const x = this.__isRTL ?
+	        this.__getNormalizedScrollLeft(this.$.table) + this.__scrollerMetrics.clientWidth -
+	        this.__scrollerMetrics.scrollWidth
+	        : this._scrollLeft;
+	      var frozenCellTransform = this._getTranslate(x, 0);
+	      for (var i = 0; i < this._frozenCells.length; i++) {
+	        this._frozenCells[i].style.transform = frozenCellTransform;
+	      }
 	    }
 	  }
 
@@ -59043,6 +62470,8 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    this.addEventListener('keydown', this._onKeyDown);
+	    this.addEventListener('keyup', this._onKeyUp);
+
 	    this.addEventListener('focusin', this._onFocusIn);
 	    this.addEventListener('focusout', this._onFocusOut);
 
@@ -59138,10 +62567,10 @@ public class Application extends SpringBootServletInitializer {
 	    let dx = 0, dy = 0;
 	    switch (key) {
 	      case 'ArrowRight':
-	        dx = 1;
+	        dx = this.__isRTL ? -1 : 1;
 	        break;
 	      case 'ArrowLeft':
-	        dx = -1;
+	        dx = this.__isRTL ? 1 : -1;
 	        break;
 	      case 'Home':
 	        dx = -Infinity;
@@ -59228,15 +62657,15 @@ public class Application extends SpringBootServletInitializer {
 	      if (isRowDetails) {
 	        this._focusedColumnOrder = 0;
 	      } else {
-	        this._focusedColumnOrder = this._getColumns(activeRowGroup, rowIndex)[columnIndex]._order;
+	        this._focusedColumnOrder = this._getColumns(activeRowGroup, rowIndex).filter(c => !c.hidden)[columnIndex]._order;
 	      }
 	    }
 
 	    // Find orderedColumnIndex — the index of order closest matching the
 	    // original _focusedColumnOrder in the sorted array of orders
 	    // of the visible columns on the destination row.
-	    const dstColumns = this._getColumns(activeRowGroup, dstRowIndex);
-	    const dstSortedColumnOrders = dstColumns.filter(c => !c.hidden).map(c => c._order)
+	    const dstColumns = this._getColumns(activeRowGroup, dstRowIndex).filter(c => !c.hidden);
+	    const dstSortedColumnOrders = dstColumns.map(c => c._order)
 	      .sort((b, a) => (b - a));
 	    const maxOrderedColumnIndex = dstSortedColumnOrders.length - 1;
 	    const orderedColumnIndex = dstSortedColumnOrders.indexOf(
@@ -59410,14 +62839,26 @@ public class Application extends SpringBootServletInitializer {
 	    e.preventDefault();
 
 	    const cell = e.composedPath()[0];
+	    if (!cell._content || !cell._content.firstElementChild) {
+	      this.dispatchEvent(new CustomEvent('cell-activate', {detail: {
+	        model: this.__getRowModel(cell.parentElement)
+	      }}));
+	    }
+	  }
+
+	  /** @private */
+	  _onKeyUp(e) {
+	    if (!/^( |SpaceBar)$/.test(e.key)) {
+	      return;
+	    }
+
+	    e.preventDefault();
+
+	    const cell = e.composedPath()[0];
 	    if (cell._content && cell._content.firstElementChild) {
 	      const wasNavigating = this.hasAttribute('navigating');
 	      cell._content.firstElementChild.click();
 	      this._toggleAttribute('navigating', wasNavigating, this);
-	    } else {
-	      this.dispatchEvent(new CustomEvent('cell-activate', {detail: {
-	        model: this.__getRowModel(cell.parentElement)
-	      }}));
 	    }
 	  }
 
@@ -59831,6 +63272,8 @@ public class Application extends SpringBootServletInitializer {
 	      return;
 	    }
 
+	    // Reset all column orders
+	    columnTree[0].forEach((column, index) => column._order = 0);
 	    // Set order numbers to top-level columns
 	    columnTree[0].forEach((column, index) => column._order = (index + 1) * this._orderBaseScope);
 	  }
@@ -60138,10 +63581,10 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _renderHeaderAndFooter() {
-	    if (this.headerRenderer) {
+	    if (this.headerRenderer && this._headerCell) {
 	      this.__runRenderer(this.headerRenderer, this._headerCell);
 	    }
-	    if (this.footerRenderer) {
+	    if (this.footerRenderer && this._footerCell) {
 	      this.__runRenderer(this.footerRenderer, this._footerCell);
 	    }
 	  }
@@ -60374,9 +63817,24 @@ public class Application extends SpringBootServletInitializer {
 	      this.parentElement._columnPropChanged('hidden', hidden);
 	    }
 
-	    this._allCells.forEach(cell => this._toggleAttribute('hidden', hidden, cell));
-
 	    if (!!hidden !== !!this._previousHidden && this._grid) {
+	      if (hidden === true) {
+	        this._allCells.forEach(cell => {
+	          if (cell._content.parentNode) {
+	            cell._content.parentNode.removeChild(cell._content);
+	          }
+	        });
+	      }
+	      this._grid._debouncerHiddenChanged = Debouncer.debounce(
+	        this._grid._debouncerHiddenChanged,
+	        animationFrame,
+	        () => {
+	          if (this._grid && this._grid._renderColumnTree) {
+	            this._grid._renderColumnTree(this._grid._columnTree);
+	          }
+	        }
+	      );
+
 	      this._grid._updateLastFrozen && this._grid._updateLastFrozen();
 	      this._grid.notifyResize && this._grid.notifyResize();
 	      this._grid._resetKeyboardNavigation && this._grid._resetKeyboardNavigation();
@@ -60394,10 +63852,10 @@ public class Application extends SpringBootServletInitializer {
 	 * to configure the `<vaadin-grid-column>`.
 	 * ```
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.Grid.ColumnBaseMixin
+	 * @extends PolymerElement
+	 * @mixes Grid.ColumnBaseMixin
 	 */
-	class GridColumnElement extends ColumnBaseMixin(PolymerElement) {
+	class GridColumnElement extends ColumnBaseMixin(DirMixin(PolymerElement)) {
 	  static get is() {
 	    return 'vaadin-grid-column';
 	  }
@@ -60887,6 +64345,28 @@ public class Application extends SpringBootServletInitializer {
       width: 100%;
       will-change: transform;
     }
+
+    /* RTL specific styles */
+
+    :host([dir="rtl"]) [part~="reorder-ghost"] {
+      left: auto;
+      right: 0;
+    }
+
+    :host([dir="rtl"]) [part~="resize-handle"] {
+      left: 0;
+      right: auto;
+    }
+
+    :host([dir="rtl"]) [part~="resize-handle"]::before {
+      transform: translateX(50%);
+    }
+
+    :host([dir="rtl"]) [last-column] [part~="resize-handle"]::before,
+    :host([dir="rtl"]) [last-frozen] [part~="resize-handle"]::before {
+      left: 0;
+      right: auto;
+    }
   </style>
 `);
 
@@ -60909,6 +64389,10 @@ public class Application extends SpringBootServletInitializer {
     [ios][scrolling] #outerscroller {
       z-index: 0;
     }
+
+    [ios] [frozen] {
+      will-change: auto;
+    }
   `;
 	  VaadinGridStyles.querySelector('template').content.appendChild(scrollingStyles);
 	}
@@ -60921,7 +64405,7 @@ public class Application extends SpringBootServletInitializer {
 	This program is available under Apache License Version 2.0, available at https://vaadin.com/license/
 	*/
 
-	const TOUCH_DEVICE$1 = (() => {
+	const TOUCH_DEVICE$2 = (() => {
 	  try {
 	    document.createEvent('TouchEvent');
 	    return true;
@@ -61144,24 +64628,24 @@ public class Application extends SpringBootServletInitializer {
 	 *
 	 * See [ThemableMixin – how to apply styles for shadow parts](https://github.com/vaadin/vaadin-themable-mixin/wiki)
 	 *
-	 * @memberof Vaadin
-	 * @mixes Vaadin.ThemableMixin
-	 * @mixes Vaadin.Grid.A11yMixin
-	 * @mixes Vaadin.Grid.ActiveItemMixin
-	 * @mixes Vaadin.Grid.ArrayDataProviderMixin
-	 * @mixes Vaadin.Grid.ColumnResizingMixin
-	 * @mixes Vaadin.Grid.DataProviderMixin
-	 * @mixes Vaadin.Grid.DynamicColumnsMixin
-	 * @mixes Vaadin.Grid.FilterMixin
-	 * @mixes Vaadin.Grid.RowDetailsMixin
-	 * @mixes Vaadin.Grid.ScrollMixin
-	 * @mixes Vaadin.Grid.SelectionMixin
-	 * @mixes Vaadin.Grid.SortMixin
-	 * @mixes Vaadin.Grid.KeyboardNavigationMixin
-	 * @mixes Vaadin.Grid.ColumnReorderingMixin
-	 * @mixes Vaadin.Grid.EventContextMixin
-	 * @mixes Vaadin.Grid.StylingMixin
-	 * @mixes Vaadin.Grid.DragAndDropMixin
+	 * @extends PolymerElement
+	 * @mixes ThemableMixin
+	 * @mixes Grid.A11yMixin
+	 * @mixes Grid.ActiveItemMixin
+	 * @mixes Grid.ArrayDataProviderMixin
+	 * @mixes Grid.ColumnResizingMixin
+	 * @mixes Grid.DataProviderMixin
+	 * @mixes Grid.DynamicColumnsMixin
+	 * @mixes Grid.FilterMixin
+	 * @mixes Grid.RowDetailsMixin
+	 * @mixes Grid.ScrollMixin
+	 * @mixes Grid.SelectionMixin
+	 * @mixes Grid.SortMixin
+	 * @mixes Grid.KeyboardNavigationMixin
+	 * @mixes Grid.ColumnReorderingMixin
+	 * @mixes Grid.EventContextMixin
+	 * @mixes Grid.StylingMixin
+	 * @mixes Grid.DragAndDropMixin
 	 * @demo demo/index.html
 	 */
 	class GridElement extends
@@ -61215,7 +64699,7 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  static get version() {
-	    return '5.4.8';
+	    return '5.6.6';
 	  }
 
 	  static get observers() {
@@ -61241,7 +64725,8 @@ public class Application extends SpringBootServletInitializer {
 
 	      _ios: {
 	        type: Boolean,
-	        value: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+	        value: (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream)
+	          || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 	      },
 
 	      _edge: {
@@ -61266,17 +64751,24 @@ public class Application extends SpringBootServletInitializer {
 
 	      _touchDevice: {
 	        type: Boolean,
-	        value: TOUCH_DEVICE$1
+	        value: TOUCH_DEVICE$2
 	      },
 
 	      /**
-	       * If true, the grid's height is defined by the number of its rows.
+	       * If true, the grid's height is defined by its rows.
+	       *
+	       * Effectively, this disables the grid's virtual scrolling so that all the rows are rendered in the DOM at once.
+	       * If the grid has a large number of items, using the feature is discouraged to avoid performance issues.
 	       */
 	      heightByRows: {
 	        type: Boolean,
 	        value: false,
 	        reflectToAttribute: true,
 	        observer: '_heightByRowsChanged'
+	      },
+	      _recalculateColumnWidthOnceLoadingFinished: {
+	        type: Boolean,
+	        value: true
 	      }
 	    };
 	  }
@@ -61286,13 +64778,28 @@ public class Application extends SpringBootServletInitializer {
 	    this.addEventListener('animationend', this._onAnimationEnd);
 	  }
 
+	  connectedCallback() {
+	    super.connectedCallback();
+	    this.recalculateColumnWidths();
+	  }
+
+	  attributeChangedCallback(name, oldValue, newValue) {
+	    super.attributeChangedCallback(name, oldValue, newValue);
+	    if (name === 'dir') {
+	      this.__isRTL = newValue === 'rtl';
+	      this._updateScrollerMeasurements();
+	    }
+	  }
+
 	  __hasRowsWithClientHeight() {
 	    return !!Array.from(this.$.items.children).filter(row => row.clientHeight).length;
 	  }
 
-	  __setInitialColumnWidths() {
-	    if (!this._initialColumnWidthsSet && this.__hasRowsWithClientHeight()) {
-	      this._initialColumnWidthsSet = true;
+	  __itemsReceived() {
+	    if (this._recalculateColumnWidthOnceLoadingFinished
+	      && !this._cache.isLoading()
+	      && this.__hasRowsWithClientHeight()) {
+	      this._recalculateColumnWidthOnceLoadingFinished = false;
 	      this.recalculateColumnWidths();
 	    }
 	  }
@@ -61316,7 +64823,8 @@ public class Application extends SpringBootServletInitializer {
 	      col._currentWidth = 0;
 	      // Note: _allCells only contains cells which are currently rendered in DOM
 	      col._allCells.forEach(c => {
-	        const cellWidth = Math.ceil(c.getBoundingClientRect().width);
+	        // Add 1px buffer to the offset width to avoid too narrow columns (sub-pixel rendering)
+	        const cellWidth = c.offsetWidth + 1;
 	        col._currentWidth = Math.max(col._currentWidth, cellWidth);
 	      });
 	    });
@@ -61336,8 +64844,13 @@ public class Application extends SpringBootServletInitializer {
 	    if (!this._columnTree) {
 	      return; // No columns
 	    }
-	    const cols = this._getColumns().filter(col => !col.hidden && col.autoWidth);
-	    this._recalculateColumnWidths(cols);
+	    if (this._cache.isLoading()) {
+	      this._recalculateColumnWidthOnceLoadingFinished = true;
+	    } else {
+	      const cols = this._getColumns().filter(col => !col.hidden && col.autoWidth);
+	      this._recalculateColumnWidths(cols);
+
+	    }
 	  }
 
 	  _createScrollerRows(count) {
@@ -61424,66 +64937,68 @@ public class Application extends SpringBootServletInitializer {
 	    if (row.id !== 'outersizer' && row.id !== 'fixedsizer') {
 	      row.hidden = true;
 	    }
-	    columns.forEach((column, index) => {
-	      let cell;
+	    columns
+	      .filter(column => !column.hidden)
+	      .forEach((column, index, cols) => {
+	        let cell;
 
-	      if (section === 'body') {
+	        if (section === 'body') {
 	        // Body
-	        column._cells = column._cells || [];
-	        cell = column._cells.filter(cell => cell._vacant)[0];
-	        if (!cell) {
-	          cell = this._createCell('td');
-	          column._cells.push(cell);
-	        }
-	        cell.setAttribute('part', 'cell body-cell');
-	        row.appendChild(cell);
+	          column._cells = column._cells || [];
+	          cell = column._cells.filter(cell => cell._vacant)[0];
+	          if (!cell) {
+	            cell = this._createCell('td');
+	            column._cells.push(cell);
+	          }
+	          cell.setAttribute('part', 'cell body-cell');
+	          row.appendChild(cell);
 
-	        if (index === columns.length - 1 && (this._rowDetailsTemplate || this.rowDetailsRenderer)) {
+	          if (index === cols.length - 1 && (this._rowDetailsTemplate || this.rowDetailsRenderer)) {
 	          // Add details cell as last cell to body rows
-	          this._detailsCells = this._detailsCells || [];
-	          const detailsCell = this._detailsCells.filter(cell => cell._vacant)[0] || this._createCell('td');
-	          if (this._detailsCells.indexOf(detailsCell) === -1) {
-	            this._detailsCells.push(detailsCell);
+	            this._detailsCells = this._detailsCells || [];
+	            const detailsCell = this._detailsCells.filter(cell => cell._vacant)[0] || this._createCell('td');
+	            if (this._detailsCells.indexOf(detailsCell) === -1) {
+	              this._detailsCells.push(detailsCell);
+	            }
+	            if (!detailsCell._content.parentElement) {
+	              contentsFragment.appendChild(detailsCell._content);
+	            }
+	            this._configureDetailsCell(detailsCell);
+	            row.appendChild(detailsCell);
+	            this._a11ySetRowDetailsCell(row, detailsCell);
+	            detailsCell._vacant = false;
 	          }
-	          if (!detailsCell._content.parentElement) {
-	            contentsFragment.appendChild(detailsCell._content);
-	          }
-	          this._configureDetailsCell(detailsCell);
-	          row.appendChild(detailsCell);
-	          this._a11ySetRowDetailsCell(row, detailsCell);
-	          detailsCell._vacant = false;
-	        }
 
-	        if (column.notifyPath && !noNotify) {
-	          column.notifyPath('_cells.*', column._cells);
-	        }
-	      } else {
-	        // Header & footer
-	        const tagName = section === 'header' ? 'th' : 'td';
-	        if (isColumnRow || column.localName === 'vaadin-grid-column-group') {
-	          cell = column[`_${section}Cell`] || this._createCell(tagName);
-	          cell._column = column;
-	          row.appendChild(cell);
-	          column[`_${section}Cell`] = cell;
+	          if (column.notifyPath && !noNotify) {
+	            column.notifyPath('_cells.*', column._cells);
+	          }
 	        } else {
-	          column._emptyCells = column._emptyCells || [];
-	          cell = column._emptyCells.filter(cell => cell._vacant)[0] || this._createCell(tagName);
-	          cell._column = column;
-	          row.appendChild(cell);
-	          if (column._emptyCells.indexOf(cell) === -1) {
-	            column._emptyCells.push(cell);
+	        // Header & footer
+	          const tagName = section === 'header' ? 'th' : 'td';
+	          if (isColumnRow || column.localName === 'vaadin-grid-column-group') {
+	            cell = column[`_${section}Cell`] || this._createCell(tagName);
+	            cell._column = column;
+	            row.appendChild(cell);
+	            column[`_${section}Cell`] = cell;
+	          } else {
+	            column._emptyCells = column._emptyCells || [];
+	            cell = column._emptyCells.filter(cell => cell._vacant)[0] || this._createCell(tagName);
+	            cell._column = column;
+	            row.appendChild(cell);
+	            if (column._emptyCells.indexOf(cell) === -1) {
+	              column._emptyCells.push(cell);
+	            }
 	          }
+	          cell.setAttribute('part', `cell ${section}-cell`);
+	          this.__updateHeaderFooterRowVisibility(row);
 	        }
-	        cell.setAttribute('part', `cell ${section}-cell`);
-	        this.__updateHeaderFooterRowVisibility(row);
-	      }
 
-	      if (!cell._content.parentElement) {
-	        contentsFragment.appendChild(cell._content);
-	      }
-	      cell._vacant = false;
-	      cell._column = column;
-	    });
+	        if (!cell._content.parentElement) {
+	          contentsFragment.appendChild(cell._content);
+	        }
+	        cell._vacant = false;
+	        cell._column = column;
+	      });
 
 	    // Might be empty if only cache was used
 	    this.appendChild(contentsFragment);
@@ -61547,7 +65062,12 @@ public class Application extends SpringBootServletInitializer {
 	  }
 
 	  _columnTreeChanged(columnTree, splices) {
-	    Array.from(this.$.items.children).forEach(row => this._updateRow(row, columnTree[columnTree.length - 1]));
+	    this._renderColumnTree(columnTree);
+	    this.recalculateColumnWidths();
+	  }
+
+	  _renderColumnTree(columnTree) {
+	    Array.from(this.$.items.children).forEach((row) => this._updateRow(row, columnTree[columnTree.length - 1], null, false, true));
 
 	    while (this.$.header.children.length < columnTree.length) {
 	      const headerRow = document.createElement('tr');
@@ -61572,7 +65092,7 @@ public class Application extends SpringBootServletInitializer {
 	      .forEach((footerRow, index) => this._updateRow(footerRow, columnTree[columnTree.length - 1 - index], 'footer', index === 0));
 
 	    // Sizer rows
-	    this._updateRow(this.$.outersizer, columnTree[columnTree.length - 1]);
+	    this._updateRow(this.$.outersizer, columnTree[columnTree.length - 1], null, false, true);
 	    this._updateRow(this.$.fixedsizer, columnTree[columnTree.length - 1]);
 
 	    this._resizeHandler();
@@ -61622,6 +65142,7 @@ public class Application extends SpringBootServletInitializer {
 	  _resizeHandler() {
 	    this._updateDetailsCellHeights();
 	    this._accessIronListAPI(super._resizeHandler, true);
+	    this._updateScrollerMeasurements();
 	    this._updateHeaderFooterMetrics();
 	  }
 
@@ -61647,7 +65168,7 @@ public class Application extends SpringBootServletInitializer {
 	      this._updateHeaderFooterMetrics();
 	      e.stopPropagation();
 	      this.notifyResize();
-	      this.__setInitialColumnWidths();
+	      this.__itemsReceived();
 	    }
 	  }
 
@@ -62237,1211 +65758,999 @@ public class Application extends SpringBootServletInitializer {
 	  settings: { packageName: "unide.app", exportFormat: "Java" },
 	};
 
-	/*global String*/
-	/*global atob*/
-	String.prototype.startsWith = (String.prototype.startsWith || function(needle)   { return (this.indexOf(needle) === 0); });
-	String.prototype.padStart   = (String.prototype.padStart   || function(len, pad) { let str = this; while(str.length < len) { str = pad + str; } return str; });
+	var classCallCheck = function (instance, Constructor) {
+	  if (!(instance instanceof Constructor)) {
+	    throw new TypeError("Cannot call a class as a function");
+	  }
+	};
 
+	var createClass = function () {
+	  function defineProperties(target, props) {
+	    for (var i = 0; i < props.length; i++) {
+	      var descriptor = props[i];
+	      descriptor.enumerable = descriptor.enumerable || false;
+	      descriptor.configurable = true;
+	      if ("value" in descriptor) descriptor.writable = true;
+	      Object.defineProperty(target, descriptor.key, descriptor);
+	    }
+	  }
 
-	/*
-		Code golfing:
-		This is a compacted list of all 148 CSS color names (from https://github.com/bahamas10/css-color-names/blob/master/css-color-names.json).
-		Every seven characters in this array is a name and its RGB value.
+	  return function (Constructor, protoProps, staticProps) {
+	    if (protoProps) defineProperties(Constructor.prototype, protoProps);
+	    if (staticProps) defineProperties(Constructor, staticProps);
+	    return Constructor;
+	  };
+	}();
 
-			//3 chars name hash (rudimentary, but just enough to separate all unique colors),
-			//based on https://stackoverflow.com/a/15710692/1869660
-			hash = [].reduce.call(name.replace('ey','ay'), (h, c) => (h << 2) + c.charCodeAt(0), 0)
-								.toString(36).slice(-3);
+	var slicedToArray = function () {
+	  function sliceIterator(arr, i) {
+	    var _arr = [];
+	    var _n = true;
+	    var _d = false;
+	    var _e = undefined;
 
-			//4 chars base64 color value. Split the hex into [R, G, B], cast to bytes and base64-encode the byte array:
-			hex64 = btoa( hex.match(/../g).map(x => String.fromCharCode(parseInt(x, 16))).join('') );
+	    try {
+	      for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) {
+	        _arr.push(_s.value);
 
-	const colorNames = '735AACA770//Xub218Pj/mo5+uvX6mdAP//gtpf//Ur258P//q1d9fXcxop/+TEq9zAAAAqfg/+vN6m1AAD/ngoiiviqt6pSoqzyo3riHxvdX56grk1f/8Aax10mkeqts/39QxbtZJXttkb//jcyxm3BQ86rmAP//wl5AACLwqqAIuL3y8uIYLwv1qampniqAGQAns5vbdrmohiwCLw5uVWsvsdd/4wAsegmTLMqagiwAAsqi6ZZ6uz6j7yPxtzSD2Lxk3L09PudbAM7RwsolADT0kz/xSTfuhAL//vfhaWlpyuxHpD/43rsiIiwn9//rw39uIosi9bp/wD/6w73Nzc9s5+Pj/6v8/9cA3b42qUg6vxgICArmaAIAAtdfrf8vf9n8P/wek3/2m0xnczVxc3bvSwCCsdt///wrvp8OaMs5i5ub6iyk//D1e8ifPwAoui//rNpyxrdjmw9c8ICAq4i4P//mx9+vrSq8t09PTx1ukO6Qqlv/7bBuuy/6B690uILKqpfdh876sd9d4iZnehsMTe0dv///g71lAP8A4nmMs0ys9u+vDmg9d/wD/4pmgAAAcurZs2qzllAADN4lkulXT6txk3Db66qPLNxozre2juokuAPqalj3SNHMgdkxxWF60pGRlwxfl9f/6hr5/+Thx6q/+S1m85/96tutd/fXmszxgIAAe4ma44j8rl/6UAmu0/0UA8so2nDWji87uiqumqmPuY9xbr+7u4rs23CTsb8/+/V95a/9q577xzYU/78z/8DL7b53aDdsu1sODmb11gACAy5nZjOZ1so/wAAlvevI+Pn09QWnhm7ui0UT94q+oBy7ei9KRg5aqLotXad5oFItasmwMDAaihh87r9fdalrN9p9cICQ7gz//r6k5uAP9/4qhRoK01te0rSM7cwAICA91x2L/Yclr/2NHcw1QODQd6w7oLuua09d6zudh////t359fX1enn//8Ao0ims0y';
-	let  colorNamesDeser;
-	*/
-	//https://github.com/bahamas10/css-color-names/blob/master/css-color-names.json
-	const colorNames = { aliceblue:'#f0f8ff', antiquewhite:'#faebd7', aqua:'#00ffff', aquamarine:'#7fffd4', azure:'#f0ffff', beige:'#f5f5dc', bisque:'#ffe4c4', black:'#000000', blanchedalmond:'#ffebcd', blue:'#0000ff', blueviolet:'#8a2be2', brown:'#a52a2a', burlywood:'#deb887', cadetblue:'#5f9ea0', chartreuse:'#7fff00', chocolate:'#d2691e', coral:'#ff7f50', cornflowerblue:'#6495ed', cornsilk:'#fff8dc', crimson:'#dc143c', cyan:'#00ffff', darkblue:'#00008b', darkcyan:'#008b8b', darkgoldenrod:'#b8860b', darkgray:'#a9a9a9', darkgreen:'#006400', darkgrey:'#a9a9a9', darkkhaki:'#bdb76b', darkmagenta:'#8b008b', darkolivegreen:'#556b2f', darkorange:'#ff8c00', darkorchid:'#9932cc', darkred:'#8b0000', darksalmon:'#e9967a', darkseagreen:'#8fbc8f', darkslateblue:'#483d8b', darkslategray:'#2f4f4f', darkslategrey:'#2f4f4f', darkturquoise:'#00ced1', darkviolet:'#9400d3', deeppink:'#ff1493', deepskyblue:'#00bfff', dimgray:'#696969', dimgrey:'#696969', dodgerblue:'#1e90ff', firebrick:'#b22222', floralwhite:'#fffaf0', forestgreen:'#228b22', fuchsia:'#ff00ff', gainsboro:'#dcdcdc', ghostwhite:'#f8f8ff', gold:'#ffd700', goldenrod:'#daa520', gray:'#808080', green:'#008000', greenyellow:'#adff2f', grey:'#808080', honeydew:'#f0fff0', hotpink:'#ff69b4', indianred:'#cd5c5c', indigo:'#4b0082', ivory:'#fffff0', khaki:'#f0e68c', lavender:'#e6e6fa', lavenderblush:'#fff0f5', lawngreen:'#7cfc00', lemonchiffon:'#fffacd', lightblue:'#add8e6', lightcoral:'#f08080', lightcyan:'#e0ffff', lightgoldenrodyellow:'#fafad2', lightgray:'#d3d3d3', lightgreen:'#90ee90', lightgrey:'#d3d3d3', lightpink:'#ffb6c1', lightsalmon:'#ffa07a', lightseagreen:'#20b2aa', lightskyblue:'#87cefa', lightslategray:'#778899', lightslategrey:'#778899', lightsteelblue:'#b0c4de', lightyellow:'#ffffe0', lime:'#00ff00', limegreen:'#32cd32', linen:'#faf0e6', magenta:'#ff00ff', maroon:'#800000', mediumaquamarine:'#66cdaa', mediumblue:'#0000cd', mediumorchid:'#ba55d3', mediumpurple:'#9370db', mediumseagreen:'#3cb371', mediumslateblue:'#7b68ee', mediumspringgreen:'#00fa9a', mediumturquoise:'#48d1cc', mediumvioletred:'#c71585', midnightblue:'#191970', mintcream:'#f5fffa', mistyrose:'#ffe4e1', moccasin:'#ffe4b5', navajowhite:'#ffdead', navy:'#000080', oldlace:'#fdf5e6', olive:'#808000', olivedrab:'#6b8e23', orange:'#ffa500', orangered:'#ff4500', orchid:'#da70d6', palegoldenrod:'#eee8aa', palegreen:'#98fb98', paleturquoise:'#afeeee', palevioletred:'#db7093', papayawhip:'#ffefd5', peachpuff:'#ffdab9', peru:'#cd853f', pink:'#ffc0cb', plum:'#dda0dd', powderblue:'#b0e0e6', purple:'#800080', rebeccapurple:'#663399', red:'#ff0000', rosybrown:'#bc8f8f', royalblue:'#4169e1', saddlebrown:'#8b4513', salmon:'#fa8072', sandybrown:'#f4a460', seagreen:'#2e8b57', seashell:'#fff5ee', sienna:'#a0522d', silver:'#c0c0c0', skyblue:'#87ceeb', slateblue:'#6a5acd', slategray:'#708090', slategrey:'#708090', snow:'#fffafa', springgreen:'#00ff7f', steelblue:'#4682b4', tan:'#d2b48c', teal:'#008080', thistle:'#d8bfd8', tomato:'#ff6347', turquoise:'#40e0d0', violet:'#ee82ee', wheat:'#f5deb3', white:'#ffffff', whitesmoke:'#f5f5f5', yellow:'#ffff00', yellowgreen:'#9acd32' };
+	        if (i && _arr.length === i) break;
+	      }
+	    } catch (err) {
+	      _d = true;
+	      _e = err;
+	    } finally {
+	      try {
+	        if (!_n && _i["return"]) _i["return"]();
+	      } finally {
+	        if (_d) throw _e;
+	      }
+	    }
 
+	    return _arr;
+	  }
 
-	function printNum(num, decs = 1) {
-		const str = (decs > 0) ? num.toFixed(decs).replace(/0+$/, '').replace(/\.$/, '')
-		                       : num.toString();
-		return str || '0';
+	  return function (arr, i) {
+	    if (Array.isArray(arr)) {
+	      return arr;
+	    } else if (Symbol.iterator in Object(arr)) {
+	      return sliceIterator(arr, i);
+	    } else {
+	      throw new TypeError("Invalid attempt to destructure non-iterable instance");
+	    }
+	  };
+	}();
+
+	String.prototype.startsWith = String.prototype.startsWith || function (needle) {
+	    return this.indexOf(needle) === 0;
+	};
+	String.prototype.padStart = String.prototype.padStart || function (len, pad) {
+	    var str = this;while (str.length < len) {
+	        str = pad + str;
+	    }return str;
+	};
+
+	var colorNames = { cb: '0f8ff', tqw: 'aebd7', q: '-ffff', qmrn: '7fffd4', zr: '0ffff', bg: '5f5dc', bsq: 'e4c4', bck: '---', nch: 'ebcd', b: '--ff', bvt: '8a2be2', brwn: 'a52a2a', brw: 'deb887', ctb: '5f9ea0', hrt: '7fff-', chcT: 'd2691e', cr: '7f50', rnw: '6495ed', crns: '8dc', crms: 'dc143c', cn: '-ffff', Db: '--8b', Dcn: '-8b8b', Dgnr: 'b8860b', Dgr: 'a9a9a9', Dgrn: '-64-', Dkhk: 'bdb76b', Dmgn: '8b-8b', Dvgr: '556b2f', Drng: '8c-', Drch: '9932cc', Dr: '8b--', Dsmn: 'e9967a', Dsgr: '8fbc8f', DsTb: '483d8b', DsTg: '2f4f4f', Dtrq: '-ced1', Dvt: '94-d3', ppnk: '1493', pskb: '-bfff', mgr: '696969', grb: '1e90ff', rbrc: 'b22222', rwht: 'af0', stg: '228b22', chs: '-ff', gnsb: 'dcdcdc', st: '8f8ff', g: 'd7-', gnr: 'daa520', gr: '808080', grn: '-8-0', grnw: 'adff2f', hnw: '0fff0', htpn: '69b4', nnr: 'cd5c5c', ng: '4b-82', vr: '0', khk: '0e68c', vnr: 'e6e6fa', nrb: '0f5', wngr: '7cfc-', mnch: 'acd', Lb: 'add8e6', Lcr: '08080', Lcn: 'e0ffff', Lgnr: 'afad2', Lgr: 'd3d3d3', Lgrn: '90ee90', Lpnk: 'b6c1', Lsmn: 'a07a', Lsgr: '20b2aa', Lskb: '87cefa', LsTg: '778899', Lstb: 'b0c4de', Lw: 'e0', m: '-ff-', mgrn: '32cd32', nn: 'af0e6', mgnt: '-ff', mrn: '8--0', mqm: '66cdaa', mmb: '--cd', mmrc: 'ba55d3', mmpr: '9370db', msg: '3cb371', mmsT: '7b68ee', '': '-fa9a', mtr: '48d1cc', mmvt: 'c71585', mnLb: '191970', ntc: '5fffa', mstr: 'e4e1', mccs: 'e4b5', vjw: 'dead', nv: '--80', c: 'df5e6', v: '808-0', vrb: '6b8e23', rng: 'a5-', rngr: '45-', rch: 'da70d6', pgnr: 'eee8aa', pgrn: '98fb98', ptrq: 'afeeee', pvtr: 'db7093', ppwh: 'efd5', pchp: 'dab9', pr: 'cd853f', pnk: 'c0cb', pm: 'dda0dd', pwrb: 'b0e0e6', prp: '8-080', cc: '663399', r: '--', sbr: 'bc8f8f', rb: '4169e1', sbrw: '8b4513', smn: 'a8072', nbr: '4a460', sgrn: '2e8b57', ssh: '5ee', snn: 'a0522d', svr: 'c0c0c0', skb: '87ceeb', sTb: '6a5acd', sTgr: '708090', snw: 'afa', n: '-ff7f', stb: '4682b4', tn: 'd2b48c', t: '-8080', thst: 'd8bfd8', tmT: '6347', trqs: '40e0d0', vt: 'ee82ee', whT: '5deb3', wht: '', hts: '5f5f5', w: '-', wgrn: '9acd32' };
+
+	function printNum(num) {
+	    var decs = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 1;
+
+	    var str = decs > 0 ? num.toFixed(decs).replace(/0+$/, '').replace(/\.$/, '') : num.toString();
+	    return str || '0';
 	}
 
-
-	class Color {
-
-		constructor(r, g, b, a) {
-
-	        const that = this;
-			function parseString(input) {
-
-				//HSL string. Examples:
-				//	hsl(120, 60%,  50%) or 
-				//	hsla(240, 100%, 50%, .7)
-				if( input.startsWith('hsl') ) {
-					let [h, s, l, a] = input.match(/([\-\d\.e]+)/g).map(Number);
-					if(a === undefined) { a = 1; }
-
-					h /= 360;
-					s /= 100;
-					l /= 100;
-					that.hsla = [h, s, l, a];
-				}
-
-				//RGB string. Examples:
-				//	rgb(51, 170, 51)
-				//	rgba(51, 170, 51, .7)
-				else if( input.startsWith('rgb') ) {
-					let [r, g, b, a] = input.match(/([\-\d\.e]+)/g).map(Number);
-					if(a === undefined) { a = 1; }
-					
-					that.rgba = [r, g, b, a];
-				}
-
-				//Hex string or color name:
-				else {
-					if( input.startsWith('#') ) {
-						that.rgba = Color.hexToRgb(input);
-					}
-					else {
-						that.rgba = Color.nameToRgb(input) || Color.hexToRgb(input);
-					}
-				}
-			}
-			
-			
-			if( r === undefined ) ;
-
-			//Single input - RGB(A) array
-			else if( Array.isArray(r) ) {
-				this.rgba = r;
-			}
-
-			//Single input - CSS string
-			else if( b === undefined ) {
-				const color = r && ('' + r);
-				if(color) {
-					parseString(color.toLowerCase());
-				}
-			}
-
-			else {
-				this.rgba = [r, g, b, (a === undefined) ? 1 : a];
-			}
-		}
+	var Color = function () {
+	    function Color(r, g, b, a) {
+	        classCallCheck(this, Color);
 
 
-		/* RGBA representation */
+	        var that = this;
+	        function parseString(input) {
 
-		get rgba() {
-			if(this._rgba) { return this._rgba; }
-			if(!this._hsla) { throw new Error('No color is set'); }
-			
-			return (this._rgba = Color.hslToRgb(this._hsla));
-		}
-		set rgba(rgb) {
-			if(rgb.length === 3) { rgb[3] = 1; }
-			
-			this._rgba = rgb;
-			this._hsla = null;
-		}
+	            if (input.startsWith('hsl')) {
+	                var _input$match$map = input.match(/([\-\d\.e]+)/g).map(Number),
+	                    _input$match$map2 = slicedToArray(_input$match$map, 4),
+	                    h = _input$match$map2[0],
+	                    s = _input$match$map2[1],
+	                    l = _input$match$map2[2],
+	                    _a = _input$match$map2[3];
 
-		printRGB(alpha) {
-			const rgb = alpha ? this.rgba : this.rgba.slice(0, 3),
-				  vals = rgb.map((x, i) => printNum(x, (i === 3) ? 3 : 0));
+	                if (_a === undefined) {
+	                    _a = 1;
+	                }
 
-			return alpha ? `rgba(${ vals })` : `rgb(${ vals })`;
-		}
-		get rgbString()  { return this.printRGB(); }
-		get rgbaString() { return this.printRGB(true); }
+	                h /= 360;
+	                s /= 100;
+	                l /= 100;
+	                that.hsla = [h, s, l, _a];
+	            } else if (input.startsWith('rgb')) {
+	                var _input$match$map3 = input.match(/([\-\d\.e]+)/g).map(Number),
+	                    _input$match$map4 = slicedToArray(_input$match$map3, 4),
+	                    _r = _input$match$map4[0],
+	                    _g = _input$match$map4[1],
+	                    _b = _input$match$map4[2],
+	                    _a2 = _input$match$map4[3];
 
+	                if (_a2 === undefined) {
+	                    _a2 = 1;
+	                }
 
-		/* HSLA representation */
-
-		get hsla() {
-			if(this._hsla) { return this._hsla; }
-			if(!this._rgba) { throw new Error('No color is set'); }
-			
-			return (this._hsla = Color.rgbToHsl(this._rgba));
-		}
-		set hsla(hsl) {
-			if(hsl.length === 3) { hsl[3] = 1; }
-			
-			this._hsla = hsl;
-			this._rgba = null;
-		}
-
-		printHSL(alpha) {
-			const mults = [360, 100, 100, 1],
-				  suff =  ['', '%', '%', ''];
-
-			const hsl = alpha ? this.hsla : this.hsla.slice(0, 3),
-				  //in printNum(), use enough decimals to represent all RGB colors:
-				  //https://gist.github.com/mjackson/5311256#gistcomment-2336011
-				  vals = hsl.map((x, i) => printNum(x * mults[i], (i === 3) ? 3 : 1) + suff[i]);
-			
-			return alpha ? `hsla(${ vals })` : `hsl(${ vals })`;
-		}
-		get hslString()  { return this.printHSL(); }
-		get hslaString() { return this.printHSL(true); }
-
-
-		/* HEX representation */
-
-		get hex() {
-			const rgb = this.rgba,
-				  hex = rgb.map((x, i) => (i < 3) ? x.toString(16) 
-												  : Math.round(x * 255).toString(16));
-
-			return '#' + hex.map(x => x.padStart(2, '0')).join('');
-		}
-		set hex(hex) {
-			this.rgba = Color.hexToRgb(hex);
-		}
-
-		printHex(alpha) {
-			const hex = this.hex;
-			return alpha ? hex : hex.substring(0, 7);
-		}
-
-
-		/* Conversion utils */
-
-
-		/**
-		 * Splits a HEX string into its RGB(A) components
-		 */
-	    static hexToRgb(input) {
-	    	//Normalize all hex codes (3/4/6/8 digits) to 8 digits RGBA
-			const hex = (input.startsWith('#') ? input.slice(1) : input)
-				.replace(/^(\w{3})$/,          '$1F')                   //987      -> 987F
-				.replace(/^(\w)(\w)(\w)(\w)$/, '$1$1$2$2$3$3$4$4')      //9876     -> 99887766
-				.replace(/^(\w{6})$/,          '$1FF');                 //987654   -> 987654FF
-
-			if(!hex.match(/^([0-9a-fA-F]{8})$/)) { throw new Error('Unknown hex color; ' + input); }
-
-			const rgba = hex
-				.match(/^(\w\w)(\w\w)(\w\w)(\w\w)$/).slice(1)  //98765432 -> 98 76 54 32
-				.map(x => parseInt(x, 16));                    //Hex to decimal
-
-			rgba[3] = rgba[3]/255;
-			return rgba;
-	    }
-
-
-		/**
-		 * Gets the RGB value from a CSS color name
-		 */
-		static nameToRgb(input) {
-			/* See comments on colorNames
-
-			if(!colorNamesDeser) {
-			    colorNamesDeser = {};
-			    colorNames.match(/.{7}/g).forEach(x =>
-					colorNamesDeser[x.slice(0, 3)] = atob(x.slice(-4)).split('').map(b => b.charCodeAt(0))
-			    );
-			}
-			const hash = [].reduce.call(input.replace('ey', 'ay'), (h, c) => (h << 2) + c.charCodeAt(0), 0)
-									.toString(36).slice(-3);
-
-			return colorNamesDeser[hash];
-			*/
-			const hex = colorNames[input];
-			if(hex) {
-				return Color.hexToRgb(hex);
-			}
-		}
-
-
-		/**
-		 * https://gist.github.com/mjackson/5311256
-		 * 
-		 * Converts an RGB color value to HSL. Conversion formula
-		 * adapted from http://en.wikipedia.org/wiki/HSL_color_space.
-		 * Assumes r, g, and b are contained in the set [0, 255] and
-		 * returns h, s, and l in the set [0, 1].
-		 */
-	    static rgbToHsl([r, g, b, a]) {
-
-	        r /= 255;
-	        g /= 255;
-	        b /= 255;
-
-	        const max = Math.max(r, g, b),
-	        	  min = Math.min(r, g, b);
-	        let h,
-	        	s,
-	        	l = (max + min) / 2;
-
-	        if(max === min){
-		        h = s = 0; // achromatic
-		    }
-		    else {
-		        const d = max - min;
-		        s = (l > 0.5) ? d / (2 - max - min) 
-		        			  : d / (max + min);
-		        switch(max) {
-		            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-		            case g: h = (b - r) / d + 2; break;
-		            case b: h = (r - g) / d + 4; break;
-		        }
-		        
-		        h /= 6;
-		    }
-		    
-	        return [h, s, l, a];
-	    }
-
-
-		/**
-		 * https://gist.github.com/mjackson/5311256
-		 * 
-		 * Converts an HSL color value to RGB. Conversion formula
-		 * adapted from http://en.wikipedia.org/wiki/HSL_color_space.
-		 * Assumes h, s, and l are contained in the set [0, 1] and
-		 * returns r, g, and b in the set [0, 255].
-		 */
-	    static hslToRgb([h, s, l, a]) {
-
-			let r, g, b;
-			
-			if (s === 0) {
-				r = g = b = l; // achromatic
-			}
-			else {
-				const hue2rgb = function(p, q, t) {
-					if (t < 0) t += 1;
-					if (t > 1) t -= 1;
-					if (t < 1/6) return p + (q - p) * 6 * t;
-					if (t < 1/2) return q;
-					if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-					return p;
-				};
-			
-				const q = (l < 0.5) ? l * (1 + s) 
-									: l + s - (l * s),
-					  p = (2 * l) - q;
-				
-				r = hue2rgb(p, q, h + 1/3);
-				g = hue2rgb(p, q, h);
-				b = hue2rgb(p, q, h - 1/3);
-			}
-			
-			const rgba = [r * 255, g * 255, b * 255].map(Math.round);
-			rgba[3] = a;
-			
-			return rgba;
-	    }
-
-	}
-
-	const root$1 = window;
-
-
-	function dragTracker(options) {
-	    /*global Element*/
-	    
-	    //Element.closest polyfill:
-	    //https://developer.mozilla.org/en-US/docs/Web/API/Element/closest
-	    const ep = Element.prototype;
-	    if (!ep.matches)
-	         ep.matches = ep.msMatchesSelector || ep.webkitMatchesSelector;
-	    if (!ep.closest)
-	         ep.closest = function(s) {
-	            var node = this;
-	            do {
-	                if(node.matches(s)) return node;
-	                //https://github.com/Financial-Times/polyfill-service/issues/1279
-	                node = (node.tagName === 'svg') ? node.parentNode : node.parentElement;
-	            } while(node); 
-
-	            return null;
-	        };
-
-
-	    options = options || {};
-	    const container = options.container || document.documentElement,
-	          selector = options.selector,
-
-	          callback = options.callback || console.log,
-	          callbackStart = options.callbackDragStart,
-	          callbackEnd = options.callbackDragEnd,
-	          //dragTracker may not play well with additional click events on the same container,
-	          //so we include the opportunity to register clicks as well:
-	          callbackClick = options.callbackClick,
-	          propagate = options.propagateEvents,
-
-	          roundCoords = (options.roundCoords !== false),
-	          dragOutside = (options.dragOutside !== false),
-	          //handleOffset: "center", true (default), false
-	          handleOffset = options.handleOffset || (options.handleOffset !== false)
-	    ;
-	    //Whether callback coordinates should be the dragged element's center instead of the top-left corner
-	    let offsetToCenter = null;
-	    switch(handleOffset) {
-	        case 'center':
-	            offsetToCenter = true; break;
-	        case 'topleft':
-	        case 'top-left':
-	            offsetToCenter = false; break;
-	    }
-
-
-	    let dragState;
-	    
-	    function getMousePos(e, elm, offset, stayWithin) {
-	        let x = e.clientX,
-	            y = e.clientY;
-
-	        function respectBounds(value, min, max) {
-	            return Math.max(min, Math.min(value, max));
-	        }
-
-	        if(elm) {
-	            const bounds = elm.getBoundingClientRect();
-	            x -= bounds.left;
-	            y -= bounds.top;
-
-	            if(offset) {
-	                x -= offset[0];
-	                y -= offset[1];
-	            }
-	            if(stayWithin) {
-	                x = respectBounds(x, 0, bounds.width);
-	                y = respectBounds(y, 0, bounds.height);
-	            }
-
-	            //Adjust the mouseOffset on the dragged element
-	            //if the element is positioned by its center:
-	            if(elm !== container) {
-	                const center = (offsetToCenter !== null)
-	                    ? offsetToCenter
-	                    //SVG circles and ellipses are positioned by their center (cx/cy), not the top-left corner:
-	                    : (elm.nodeName === 'circle') || (elm.nodeName === 'ellipse');
-
-	                if(center) {
-	                    x -= bounds.width/2;
-	                    y -= bounds.height/2;
+	                that.rgba = [_r, _g, _b, _a2];
+	            } else {
+	                if (input.startsWith('#')) {
+	                    that.rgba = Color.hexToRgb(input);
+	                } else {
+	                    that.rgba = Color.nameToRgb(input) || Color.hexToRgb(input);
 	                }
 	            }
 	        }
-	        return (roundCoords ? [Math.round(x), Math.round(y)] : [x, y]);
-	    }
-	    
-	    function stopEvent(e) {
-	        e.preventDefault();
-	        if(!propagate) {
-	            e.stopPropagation();
-	        }
-	    }
 
-	    function onDown(e) {
-	        let target;
-	        if(selector) {
-	            target = (selector instanceof Element)
-	                            ? (selector.contains(e.target) ? selector : null)
-	                            : e.target.closest(selector);
-	        }
-	        else {
-	            //No specific targets, just register dragging within the container. Create a dummy object so 'dragged' isn't falsy:
-	            target = {};
-	        }
-
-	        if(target) {
-	            stopEvent(e);
-	            
-	            const mouseOffset = (selector && handleOffset) ? getMousePos(e, target) : [0, 0],
-	                  startPos = getMousePos(e, container, mouseOffset);
-	            dragState = {
-	                target,
-	                mouseOffset,
-	                startPos,
-	                actuallyDragged: false,
-	            };
-
-	            if(callbackStart) {
-	                callbackStart(target, startPos);
+	        if (r === undefined) ; else if (Array.isArray(r)) {
+	            this.rgba = r;
+	        } else if (b === undefined) {
+	            var color = r && '' + r;
+	            if (color) {
+	                parseString(color.toLowerCase());
 	            }
+	        } else {
+	            this.rgba = [r, g, b, a === undefined ? 1 : a];
 	        }
 	    }
 
-	    function onMove(e) {
-	        if(!dragState) { return; }
-	        stopEvent(e);
+	    createClass(Color, [{
+	        key: 'printRGB',
+	        value: function printRGB(alpha) {
+	            var rgb = alpha ? this.rgba : this.rgba.slice(0, 3),
+	                vals = rgb.map(function (x, i) {
+	                return printNum(x, i === 3 ? 3 : 0);
+	            });
 
-	        const start = dragState.startPos,
-	              pos = getMousePos(e, container, dragState.mouseOffset, !dragOutside);
+	            return alpha ? 'rgba(' + vals + ')' : 'rgb(' + vals + ')';
+	        }
+	    }, {
+	        key: 'printHSL',
+	        value: function printHSL(alpha) {
+	            var mults = [360, 100, 100, 1],
+	                suff = ['', '%', '%', ''];
 
-	        //"touchmove" events can be fired even if the touched coordinate hasn't changed:
-	        //  dragState.actuallyDragged = true;
-	        dragState.actuallyDragged = dragState.actuallyDragged || (start[0] !== pos[0]) || (start[1] !== pos[1]);
+	            var hsl = alpha ? this.hsla : this.hsla.slice(0, 3),
+	                vals = hsl.map(function (x, i) {
+	                return printNum(x * mults[i], i === 3 ? 3 : 1) + suff[i];
+	            });
 
-	        callback(dragState.target, pos, start);
-	    }
-
-	    function onEnd(e, cancelled) {
-	        if(!dragState) { return; }
-
-	        if(callbackEnd || callbackClick) {
-	            const isClick = !dragState.actuallyDragged,
-	                  pos = isClick ? dragState.startPos : getMousePos(e, container, dragState.mouseOffset, !dragOutside);
-
-	            if(callbackClick && isClick && !cancelled) {
-	                callbackClick(dragState.target, pos);
+	            return alpha ? 'hsla(' + vals + ')' : 'hsl(' + vals + ')';
+	        }
+	    }, {
+	        key: 'printHex',
+	        value: function printHex(alpha) {
+	            var hex = this.hex;
+	            return alpha ? hex : hex.substring(0, 7);
+	        }
+	    }, {
+	        key: 'rgba',
+	        get: function get$$1() {
+	            if (this._rgba) {
+	                return this._rgba;
 	            }
-	            //Call callbackEnd even if this was only a click, because we already called callbackStart.
-	            //If this was only a click *and that click was handled*, mark the drag as cancelled:
-	            if(callbackEnd) {
-	                callbackEnd(dragState.target, pos, dragState.startPos, cancelled || (isClick && callbackClick));
+	            if (!this._hsla) {
+	                throw new Error('No color is set');
 	            }
+
+	            return this._rgba = Color.hslToRgb(this._hsla);
+	        },
+	        set: function set$$1(rgb) {
+	            if (rgb.length === 3) {
+	                rgb[3] = 1;
+	            }
+
+	            this._rgba = rgb;
+	            this._hsla = null;
 	        }
-	        dragState = null;
+	    }, {
+	        key: 'rgbString',
+	        get: function get$$1() {
+	            return this.printRGB();
+	        }
+	    }, {
+	        key: 'rgbaString',
+	        get: function get$$1() {
+	            return this.printRGB(true);
+	        }
+	    }, {
+	        key: 'hsla',
+	        get: function get$$1() {
+	            if (this._hsla) {
+	                return this._hsla;
+	            }
+	            if (!this._rgba) {
+	                throw new Error('No color is set');
+	            }
+
+	            return this._hsla = Color.rgbToHsl(this._rgba);
+	        },
+	        set: function set$$1(hsl) {
+	            if (hsl.length === 3) {
+	                hsl[3] = 1;
+	            }
+
+	            this._hsla = hsl;
+	            this._rgba = null;
+	        }
+	    }, {
+	        key: 'hslString',
+	        get: function get$$1() {
+	            return this.printHSL();
+	        }
+	    }, {
+	        key: 'hslaString',
+	        get: function get$$1() {
+	            return this.printHSL(true);
+	        }
+	    }, {
+	        key: 'hex',
+	        get: function get$$1() {
+	            var rgb = this.rgba,
+	                hex = rgb.map(function (x, i) {
+	                return i < 3 ? x.toString(16) : Math.round(x * 255).toString(16);
+	            });
+
+	            return '#' + hex.map(function (x) {
+	                return x.padStart(2, '0');
+	            }).join('');
+	        },
+	        set: function set$$1(hex) {
+	            this.rgba = Color.hexToRgb(hex);
+	        }
+	    }], [{
+	        key: 'hexToRgb',
+	        value: function hexToRgb(input) {
+
+	            var hex = (input.startsWith('#') ? input.slice(1) : input).replace(/^(\w{3})$/, '$1F').replace(/^(\w)(\w)(\w)(\w)$/, '$1$1$2$2$3$3$4$4').replace(/^(\w{6})$/, '$1FF');
+
+	            if (!hex.match(/^([0-9a-fA-F]{8})$/)) {
+	                throw new Error('Unknown hex color; ' + input);
+	            }
+
+	            var rgba = hex.match(/^(\w\w)(\w\w)(\w\w)(\w\w)$/).slice(1).map(function (x) {
+	                return parseInt(x, 16);
+	            });
+
+	            rgba[3] = rgba[3] / 255;
+	            return rgba;
+	        }
+	    }, {
+	        key: 'nameToRgb',
+	        value: function nameToRgb(input) {
+
+	            var hash = input.toLowerCase().replace('at', 'T').replace(/[aeiouyldf]/g, '').replace('ght', 'L').replace('rk', 'D').slice(-5, 4),
+	                hex = colorNames[hash];
+	            return hex === undefined ? hex : Color.hexToRgb(hex.replace(/\-/g, '00').padStart(6, 'f'));
+	        }
+	    }, {
+	        key: 'rgbToHsl',
+	        value: function rgbToHsl(_ref) {
+	            var _ref2 = slicedToArray(_ref, 4),
+	                r = _ref2[0],
+	                g = _ref2[1],
+	                b = _ref2[2],
+	                a = _ref2[3];
+
+	            r /= 255;
+	            g /= 255;
+	            b /= 255;
+
+	            var max = Math.max(r, g, b),
+	                min = Math.min(r, g, b);
+	            var h = void 0,
+	                s = void 0,
+	                l = (max + min) / 2;
+
+	            if (max === min) {
+	                h = s = 0;
+	            } else {
+	                var d = max - min;
+	                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+	                switch (max) {
+	                    case r:
+	                        h = (g - b) / d + (g < b ? 6 : 0);break;
+	                    case g:
+	                        h = (b - r) / d + 2;break;
+	                    case b:
+	                        h = (r - g) / d + 4;break;
+	                }
+
+	                h /= 6;
+	            }
+
+	            return [h, s, l, a];
+	        }
+	    }, {
+	        key: 'hslToRgb',
+	        value: function hslToRgb(_ref3) {
+	            var _ref4 = slicedToArray(_ref3, 4),
+	                h = _ref4[0],
+	                s = _ref4[1],
+	                l = _ref4[2],
+	                a = _ref4[3];
+
+	            var r = void 0,
+	                g = void 0,
+	                b = void 0;
+
+	            if (s === 0) {
+	                r = g = b = l;
+	            } else {
+	                var hue2rgb = function hue2rgb(p, q, t) {
+	                    if (t < 0) t += 1;
+	                    if (t > 1) t -= 1;
+	                    if (t < 1 / 6) return p + (q - p) * 6 * t;
+	                    if (t < 1 / 2) return q;
+	                    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+	                    return p;
+	                };
+
+	                var q = l < 0.5 ? l * (1 + s) : l + s - l * s,
+	                    p = 2 * l - q;
+
+	                r = hue2rgb(p, q, h + 1 / 3);
+	                g = hue2rgb(p, q, h);
+	                b = hue2rgb(p, q, h - 1 / 3);
+	            }
+
+	            var rgba = [r * 255, g * 255, b * 255].map(Math.round);
+	            rgba[3] = a;
+
+	            return rgba;
+	        }
+	    }]);
+	    return Color;
+	}();
+
+	var EventBucket = function () {
+	    function EventBucket() {
+	        classCallCheck(this, EventBucket);
+
+	        this._events = [];
 	    }
 
-
-	    /* Mouse/touch input */
-
-	    addEvent(container, 'mousedown', function(e) {
-	        if(isLeftButton(e)) {
-	            onDown(e);
+	    createClass(EventBucket, [{
+	        key: 'add',
+	        value: function add(target, type, handler) {
+	            target.addEventListener(type, handler, false);
+	            this._events.push({
+	                target: target,
+	                type: type,
+	                handler: handler
+	            });
 	        }
-	        else {
-	            onEnd(e, true);
+	    }, {
+	        key: 'remove',
+	        value: function remove(target, type, handler) {
+	            this._events = this._events.filter(function (e) {
+	                var isMatch = true;
+	                if (target && target !== e.target) {
+	                    isMatch = false;
+	                }
+	                if (type && type !== e.type) {
+	                    isMatch = false;
+	                }
+	                if (handler && handler !== e.handler) {
+	                    isMatch = false;
+	                }
+
+	                if (isMatch) {
+	                    EventBucket._doRemove(e.target, e.type, e.handler);
+	                }
+	                return !isMatch;
+	            });
 	        }
-	    });
-	    addEvent(container, 'touchstart', e => relayTouch(e, onDown));
-
-
-	    addEvent(root$1, 'mousemove', function(e) {
-	        if(!dragState) { return; }
-
-	        if(isLeftButton(e)) {
-	            onMove(e);
+	    }, {
+	        key: 'destroy',
+	        value: function destroy() {
+	            this._events.forEach(function (e) {
+	                return EventBucket._doRemove(e.target, e.type, e.handler);
+	            });
+	            this._events = [];
 	        }
-	        //"mouseup" outside of window
-	        else {
-	            onEnd(e);
+	    }], [{
+	        key: '_doRemove',
+	        value: function _doRemove(target, type, handler) {
+	            target.removeEventListener(type, handler, false);
 	        }
-	    });
-	    addEvent(root$1, 'touchmove', e => relayTouch(e, onMove));
-
-
-	    addEvent(container, 'mouseup', function(e) {
-	        //Here we check that the left button is *no longer* pressed:
-	        if(dragState && !isLeftButton(e)) { onEnd(e); }
-	    });
-	    function onTouchEnd(e, cancelled) { onEnd(tweakTouch(e), cancelled); }
-	    addEvent(container, 'touchend',    e => onTouchEnd(e));
-	    addEvent(container, 'touchcancel', e => onTouchEnd(e, true));
-
-
-	    function addEvent(target, type, handler) {
-	        target.addEventListener(type, handler);
-	    }
-	    function isLeftButton(e) {
-	        return (e.buttons !== undefined)
-	            ? (e.buttons === 1)
-	            //Safari: https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent#Browser_compatibility
-	            : (e.which === 1);
-	    }
-	    function relayTouch(e, handler) {
-	        //Don't interfere with pinch operations - those are probably handled somewhere else..
-	        if(e.touches.length !== 1) { onEnd(e, true); return; }
-
-	        handler(tweakTouch(e));
-	    }
-	    function tweakTouch(e) {
-	        let touch = e.targetTouches[0];
-	        //touchend:
-	        if(!touch) { touch = e.changedTouches[0]; }
-	        
-	        touch.preventDefault = e.preventDefault.bind(e);
-	        touch.stopPropagation = e.stopPropagation.bind(e);
-	        return touch;
-	    }
-	}
-
-	/*global HTMLElement*/
-
-
-	const BG_TRANSP = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Cpath d='M1,0H0V1H2V2H1' fill='lightgrey'/%3E%3C/svg%3E")`;
-	const HUES = 360;
-	//We need to use keydown instead of keypress to handle Esc from the editor textbox:
-	const EVENT_KEY = 'keydown', //'keypress'
-	      EVENT_CLICK_OUTSIDE = 'mousedown',
-	      EVENT_TAB_MOVE = 'focusin';
-
+	    }]);
+	    return EventBucket;
+	}();
 
 	function parseHTML(htmlString) {
-	    //https://stackoverflow.com/questions/494143/creating-a-new-dom-element-from-an-html-string-using-built-in-dom-methods-or-pro
-	    const div = document.createElement('div');
+
+	    var div = document.createElement('div');
 	    div.innerHTML = htmlString;
 	    return div.firstElementChild;
 	}
+
+	function dragTrack(eventBucket, area, callback) {
+	    var dragging = false;
+
+	    function clamp(val, min, max) {
+	        return Math.max(min, Math.min(val, max));
+	    }
+
+	    function onMove(e, info, starting) {
+	        if (starting) {
+	            dragging = true;
+	        }
+	        if (!dragging) {
+	            return;
+	        }
+
+	        e.preventDefault();
+
+	        var bounds = area.getBoundingClientRect(),
+	            w = bounds.width,
+	            h = bounds.height,
+	            x = info.clientX,
+	            y = info.clientY;
+
+	        var relX = clamp(x - bounds.left, 0, w),
+	            relY = clamp(y - bounds.top, 0, h);
+
+	        callback(relX / w, relY / h);
+	    }
+
+	    function onMouse(e, starting) {
+	        var button = e.buttons === undefined ? e.which : e.buttons;
+	        if (button === 1) {
+	            onMove(e, e, starting);
+	        } else {
+	            dragging = false;
+	        }
+	    }
+
+	    function onTouch(e, starting) {
+	        if (e.touches.length === 1) {
+	            onMove(e, e.touches[0], starting);
+	        } else {
+	            dragging = false;
+	        }
+	    }
+
+	    eventBucket.add(area, 'mousedown', function (e) {
+	        onMouse(e, true);
+	    });
+	    eventBucket.add(area, 'touchstart', function (e) {
+	        onTouch(e, true);
+	    });
+	    eventBucket.add(window, 'mousemove', onMouse);
+	    eventBucket.add(area, 'touchmove', onTouch);
+	    eventBucket.add(window, 'mouseup', function (e) {
+	        dragging = false;
+	    });
+	    eventBucket.add(area, 'touchend', function (e) {
+	        dragging = false;
+	    });
+	    eventBucket.add(area, 'touchcancel', function (e) {
+	        dragging = false;
+	    });
+	}
+
+	var BG_TRANSP = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'2\' height=\'2\'%3E%3Cpath d=\'M1,0H0V1H2V2H1\' fill=\'lightgrey\'/%3E%3C/svg%3E")';
+	var HUES = 360;
+
+	var EVENT_KEY = 'keydown',
+	    EVENT_CLICK_OUTSIDE = 'mousedown',
+	    EVENT_TAB_MOVE = 'focusin';
 
 	function $(selector, context) {
 	    return (context || document).querySelector(selector);
 	}
 
-	function addEvent(target, type, handler) {
-	    target.addEventListener(type, handler, false);
-	}
 	function stopEvent(e) {
-	    //Stop an event from bubbling up to the parent:
+
 	    e.preventDefault();
 	    e.stopPropagation();
 	}
-	function onKey(target, keys, handler, stop) {
-	    addEvent(target, EVENT_KEY, function(e) {
-	        if(keys.indexOf(e.key) >= 0) {
-	            if(stop) { stopEvent(e); }
+	function onKey(bucket, target, keys, handler, stop) {
+	    bucket.add(target, EVENT_KEY, function (e) {
+	        if (keys.indexOf(e.key) >= 0) {
+	            if (stop) {
+	                stopEvent(e);
+	            }
 	            handler(e);
 	        }
 	    });
 	}
 
+	var _style = document.createElement('style');
+	_style.textContent = '.picker_wrapper.no_alpha .picker_alpha{display:none}.picker_wrapper.no_editor .picker_editor{position:absolute;z-index:-1;opacity:0}.picker_wrapper.no_cancel .picker_cancel{display:none}.layout_default.picker_wrapper{display:-webkit-box;display:flex;-webkit-box-orient:horizontal;-webkit-box-direction:normal;flex-flow:row wrap;-webkit-box-pack:justify;justify-content:space-between;-webkit-box-align:stretch;align-items:stretch;font-size:10px;width:25em;padding:.5em}.layout_default.picker_wrapper input,.layout_default.picker_wrapper button{font-size:1rem}.layout_default.picker_wrapper>*{margin:.5em}.layout_default.picker_wrapper::before{content:\'\';display:block;width:100%;height:0;-webkit-box-ordinal-group:2;order:1}.layout_default .picker_slider,.layout_default .picker_selector{padding:1em}.layout_default .picker_hue{width:100%}.layout_default .picker_sl{-webkit-box-flex:1;flex:1 1 auto}.layout_default .picker_sl::before{content:\'\';display:block;padding-bottom:100%}.layout_default .picker_editor{-webkit-box-ordinal-group:2;order:1;width:6.5rem}.layout_default .picker_editor input{width:100%;height:100%}.layout_default .picker_sample{-webkit-box-ordinal-group:2;order:1;-webkit-box-flex:1;flex:1 1 auto}.layout_default .picker_done,.layout_default .picker_cancel{-webkit-box-ordinal-group:2;order:1}.picker_wrapper{box-sizing:border-box;background:#f2f2f2;box-shadow:0 0 0 1px silver;cursor:default;font-family:sans-serif;color:#444;pointer-events:auto}.picker_wrapper:focus{outline:none}.picker_wrapper button,.picker_wrapper input{box-sizing:border-box;border:none;box-shadow:0 0 0 1px silver;outline:none}.picker_wrapper button:focus,.picker_wrapper button:active,.picker_wrapper input:focus,.picker_wrapper input:active{box-shadow:0 0 2px 1px dodgerblue}.picker_wrapper button{padding:.4em .6em;cursor:pointer;background-color:whitesmoke;background-image:-webkit-gradient(linear, left bottom, left top, from(gainsboro), to(transparent));background-image:-webkit-linear-gradient(bottom, gainsboro, transparent);background-image:linear-gradient(0deg, gainsboro, transparent)}.picker_wrapper button:active{background-image:-webkit-gradient(linear, left bottom, left top, from(transparent), to(gainsboro));background-image:-webkit-linear-gradient(bottom, transparent, gainsboro);background-image:linear-gradient(0deg, transparent, gainsboro)}.picker_wrapper button:hover{background-color:white}.picker_selector{position:absolute;z-index:1;display:block;-webkit-transform:translate(-50%, -50%);transform:translate(-50%, -50%);border:2px solid white;border-radius:100%;box-shadow:0 0 3px 1px #67b9ff;background:currentColor;cursor:pointer}.picker_slider .picker_selector{border-radius:2px}.picker_hue{position:relative;background-image:-webkit-gradient(linear, left top, right top, from(red), color-stop(yellow), color-stop(lime), color-stop(cyan), color-stop(blue), color-stop(magenta), to(red));background-image:-webkit-linear-gradient(left, red, yellow, lime, cyan, blue, magenta, red);background-image:linear-gradient(90deg, red, yellow, lime, cyan, blue, magenta, red);box-shadow:0 0 0 1px silver}.picker_sl{position:relative;box-shadow:0 0 0 1px silver;background-image:-webkit-gradient(linear, left top, left bottom, from(white), color-stop(50%, rgba(255,255,255,0))),-webkit-gradient(linear, left bottom, left top, from(black), color-stop(50%, rgba(0,0,0,0))),-webkit-gradient(linear, left top, right top, from(gray), to(rgba(128,128,128,0)));background-image:-webkit-linear-gradient(top, white, rgba(255,255,255,0) 50%),-webkit-linear-gradient(bottom, black, rgba(0,0,0,0) 50%),-webkit-linear-gradient(left, gray, rgba(128,128,128,0));background-image:linear-gradient(180deg, white, rgba(255,255,255,0) 50%),linear-gradient(0deg, black, rgba(0,0,0,0) 50%),linear-gradient(90deg, gray, rgba(128,128,128,0))}.picker_alpha,.picker_sample{position:relative;background:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'2\' height=\'2\'%3E%3Cpath d=\'M1,0H0V1H2V2H1\' fill=\'lightgrey\'/%3E%3C/svg%3E") left top/contain white;box-shadow:0 0 0 1px silver}.picker_alpha .picker_selector,.picker_sample .picker_selector{background:none}.picker_editor input{font-family:monospace;padding:.2em .4em}.picker_sample::before{content:\'\';position:absolute;display:block;width:100%;height:100%;background:currentColor}.picker_arrow{position:absolute;z-index:-1}.picker_wrapper.popup{position:absolute;z-index:2;margin:1.5em}.picker_wrapper.popup,.picker_wrapper.popup .picker_arrow::before,.picker_wrapper.popup .picker_arrow::after{background:#f2f2f2;box-shadow:0 0 10px 1px rgba(0,0,0,0.4)}.picker_wrapper.popup .picker_arrow{width:3em;height:3em;margin:0}.picker_wrapper.popup .picker_arrow::before,.picker_wrapper.popup .picker_arrow::after{content:"";display:block;position:absolute;top:0;left:0;z-index:-99}.picker_wrapper.popup .picker_arrow::before{width:100%;height:100%;-webkit-transform:skew(45deg);transform:skew(45deg);-webkit-transform-origin:0 100%;transform-origin:0 100%}.picker_wrapper.popup .picker_arrow::after{width:150%;height:150%;box-shadow:none}.popup.popup_top{bottom:100%;left:0}.popup.popup_top .picker_arrow{bottom:0;left:0;-webkit-transform:rotate(-90deg);transform:rotate(-90deg)}.popup.popup_bottom{top:100%;left:0}.popup.popup_bottom .picker_arrow{top:0;left:0;-webkit-transform:rotate(90deg) scale(1, -1);transform:rotate(90deg) scale(1, -1)}.popup.popup_left{top:0;right:100%}.popup.popup_left .picker_arrow{top:0;right:0;-webkit-transform:scale(-1, 1);transform:scale(-1, 1)}.popup.popup_right{top:0;left:100%}.popup.popup_right .picker_arrow{top:0;left:0}';
+	document.documentElement.firstElementChild.appendChild(_style);
 
-	/* Inlined Picker CSS */
-	document.documentElement.firstElementChild //<head>, or <body> if there is no <head>
-	    .appendChild(document.createElement('style')).textContent = `.picker_wrapper.no_alpha .picker_alpha{display:none}.picker_wrapper.no_editor .picker_editor{position:absolute;z-index:-1;opacity:0}.layout_default.picker_wrapper{display:-webkit-box;display:-ms-flexbox;display:flex;-webkit-box-orient:horizontal;-webkit-box-direction:normal;-ms-flex-flow:row wrap;flex-flow:row wrap;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:stretch;-ms-flex-align:stretch;align-items:stretch;font-size:10px;width:25em;padding:.5em}.layout_default.picker_wrapper input,.layout_default.picker_wrapper button{font-size:1rem}.layout_default.picker_wrapper>*{margin:.5em}.layout_default.picker_wrapper::before{content:'';display:block;width:100%;height:0;-webkit-box-ordinal-group:2;-ms-flex-order:1;order:1}.layout_default .picker_slider,.layout_default .picker_selector{padding:1em}.layout_default .picker_hue{width:100%}.layout_default .picker_sl{-webkit-box-flex:1;-ms-flex:1 1 auto;flex:1 1 auto}.layout_default .picker_sl::before{content:'';display:block;padding-bottom:100%}.layout_default .picker_editor{-webkit-box-ordinal-group:2;-ms-flex-order:1;order:1;width:6rem}.layout_default .picker_editor input{width:calc(100% + 2px);height:calc(100% + 2px)}.layout_default .picker_sample{-webkit-box-ordinal-group:2;-ms-flex-order:1;order:1;-webkit-box-flex:1;-ms-flex:1 1 auto;flex:1 1 auto}.layout_default .picker_done{-webkit-box-ordinal-group:2;-ms-flex-order:1;order:1}.picker_wrapper{-webkit-box-sizing:border-box;box-sizing:border-box;background:#f2f2f2;-webkit-box-shadow:0 0 0 1px silver;box-shadow:0 0 0 1px silver;cursor:default;font-family:sans-serif;color:#444;pointer-events:auto}.picker_wrapper:focus{outline:none}.picker_wrapper button,.picker_wrapper input{margin:-1px}.picker_selector{position:absolute;z-index:1;display:block;-webkit-transform:translate(-50%, -50%);transform:translate(-50%, -50%);border:2px solid white;border-radius:100%;-webkit-box-shadow:0 0 3px 1px #67b9ff;box-shadow:0 0 3px 1px #67b9ff;background:currentColor;cursor:pointer}.picker_slider .picker_selector{border-radius:2px}.picker_hue{position:relative;background-image:-webkit-gradient(linear, left top, right top, from(red), color-stop(yellow), color-stop(lime), color-stop(cyan), color-stop(blue), color-stop(magenta), to(red));background-image:linear-gradient(90deg, red, yellow, lime, cyan, blue, magenta, red);-webkit-box-shadow:0 0 0 1px silver;box-shadow:0 0 0 1px silver}.picker_sl{position:relative;-webkit-box-shadow:0 0 0 1px silver;box-shadow:0 0 0 1px silver;background-image:-webkit-gradient(linear, left top, left bottom, from(white), color-stop(50%, rgba(255,255,255,0))),-webkit-gradient(linear, left bottom, left top, from(black), color-stop(50%, rgba(0,0,0,0))),-webkit-gradient(linear, left top, right top, from(gray), to(rgba(128,128,128,0)));background-image:linear-gradient(180deg, white, rgba(255,255,255,0) 50%),linear-gradient(0deg, black, rgba(0,0,0,0) 50%),linear-gradient(90deg, gray, rgba(128,128,128,0))}.picker_alpha,.picker_sample{position:relative;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Cpath d='M1,0H0V1H2V2H1' fill='lightgrey'/%3E%3C/svg%3E") left top/contain white;-webkit-box-shadow:0 0 0 1px silver;box-shadow:0 0 0 1px silver}.picker_alpha .picker_selector,.picker_sample .picker_selector{background:none}.picker_editor input{-webkit-box-sizing:border-box;box-sizing:border-box;font-family:monospace;padding:.1em .2em}.picker_sample::before{content:'';position:absolute;display:block;width:100%;height:100%;background:currentColor}.picker_done button{-webkit-box-sizing:border-box;box-sizing:border-box;padding:.2em .5em;cursor:pointer}.picker_arrow{position:absolute;z-index:-1}.picker_wrapper.popup{position:absolute;z-index:2;margin:1.5em}.picker_wrapper.popup,.picker_wrapper.popup .picker_arrow::before,.picker_wrapper.popup .picker_arrow::after{background:#f2f2f2;-webkit-box-shadow:0 0 10px 1px rgba(0,0,0,0.4);box-shadow:0 0 10px 1px rgba(0,0,0,0.4)}.picker_wrapper.popup .picker_arrow{width:3em;height:3em;margin:0}.picker_wrapper.popup .picker_arrow::before,.picker_wrapper.popup .picker_arrow::after{content:"";display:block;position:absolute;top:0;left:0;z-index:-99}.picker_wrapper.popup .picker_arrow::before{width:100%;height:100%;-webkit-transform:skew(45deg);transform:skew(45deg);-webkit-transform-origin:0 100%;transform-origin:0 100%}.picker_wrapper.popup .picker_arrow::after{width:150%;height:150%;-webkit-box-shadow:none;box-shadow:none}.popup.popup_top{bottom:100%;left:0}.popup.popup_top .picker_arrow{bottom:0;left:0;-webkit-transform:rotate(-90deg);transform:rotate(-90deg)}.popup.popup_bottom{top:100%;left:0}.popup.popup_bottom .picker_arrow{top:0;left:0;-webkit-transform:rotate(90deg) scale(1, -1);transform:rotate(90deg) scale(1, -1)}.popup.popup_left{top:0;right:100%}.popup.popup_left .picker_arrow{top:0;right:0;-webkit-transform:scale(-1, 1);transform:scale(-1, 1)}.popup.popup_right{top:0;left:100%}.popup.popup_right .picker_arrow{top:0;left:0}`;
+	var Picker = function () {
+	    function Picker(options) {
+	        classCallCheck(this, Picker);
 
 
-	class Picker {
-
-	    //https://stackoverflow.com/questions/24214962/whats-the-proper-way-to-document-callbacks-with-jsdoc
-	    /**
-	     * A callback that gets the picker's current color value.
-	     * 
-	     * @callback Picker~colorCallback
-	     * @param {Object} color
-	     * @param {number[]} color.rgba       - RGBA color components.
-	     * @param {number[]} color.hsla       - HSLA color components (all values between 0 and 1, inclusive).
-	     * @param {string}   color.rgbString  - RGB CSS value (e.g. `rgb(255,215,0)`).
-	     * @param {string}   color.rgbaString - RGBA CSS value (e.g. `rgba(255,215,0, .5)`).
-	     * @param {string}   color.hslString  - HSL CSS value (e.g. `hsl(50.6,100%,50%)`).
-	     * @param {string}   color.hslaString - HSLA CSS value (e.g. `hsla(50.6,100%,50%, .5)`).
-	     * @param {string}   color.hex        - 8 digit #RRGGBBAA (not supported in all browsers).
-	     */
-
-	    /**
-	     * Create a color picker.
-	     * 
-	     * @example
-	     * var picker = new Picker(myParentElement);
-	     * picker.onDone = function(color) {
-	     *     myParentElement.style.backgroundColor = color.rgbaString;
-	     * };
-	     * 
-	     * @example
-	     * var picker = new Picker({
-	     *     parent: myParentElement,
-	     *     color: 'gold',
-	     *     onChange: function(color) {
-	     *                   myParentElement.style.backgroundColor = color.rgbaString;
-	     *               },
-	     * });
-	     * 
-	     * @param {Object} options - @see {@linkcode Picker#setOptions|setOptions()}
-	     */
-	    constructor(options) {
-
-	        //Default settings
 	        this.settings = {
-	            //Allow creating a popup without putting it on screen yet.
-	            //  parent: document.body,
+
 	            popup: 'right',
 	            layout: 'default',
-	            alpha:  true,
+	            alpha: true,
 	            editor: true,
 	            editorFormat: 'hex',
+	            cancelButton: false,
+	            defaultColor: '#0cf'
 	        };
 
-	        //Keep openHandler() pluggable, but call it in the right context:
-	        //https://stackoverflow.com/questions/46014034/es6-removeeventlistener-from-arrow-function-oop
-	        this._openProxy  = (e) => this.openHandler(e);
+	        this._events = new EventBucket();
 
-	        /**
-	         * Callback whenever the color changes.
-	         * @member {Picker~colorCallback}
-	         */
 	        this.onChange = null;
-	        /**
-	         * Callback when the user clicks "Ok".
-	         * @member {Picker~colorCallback}
-	         */
+
 	        this.onDone = null;
-	        /**
-	         * Callback when the popup opens.
-	         * @member {Picker~colorCallback}
-	         */
+
 	        this.onOpen = null;
-	        /**
-	         * Callback when the popup closes.
-	         * @member {Picker~colorCallback}
-	         */
+
 	        this.onClose = null;
-	        
+
 	        this.setOptions(options);
 	    }
 
+	    createClass(Picker, [{
+	        key: 'setOptions',
+	        value: function setOptions(options) {
+	            var _this = this;
 
-	    /**
-	     * Set the picker options.
-	     * 
-	     * @param {Object}       options
-	     * @param {HTMLElement}  options.parent           - Which element the picker should be attached to.
-	     * @param {('top'|'bottom'|'left'|'right'|false)}
-	     *                       [options.popup=right]    - If the picker is used as a popup, where to place it relative to the parent. `false` to add the picker as a normal child element of the parent.
-	     * @param {string}       [options.template]       - Custom HTML string from which to build the picker. See /src/picker.pug for required elements and class names.
-	     * @param {string}       [options.layout=default] - Suffix of a custom "layout_..." CSS class to handle the overall arrangement of the picker elements.
-	     * @param {boolean}      [options.alpha=true]     - Whether to enable adjusting the alpha channel.
-	     * @param {boolean}      [options.editor=true]    - Whether to show a text field for color value editing.
-	     * @param {('hex'|'hsl'|'rgb')}
-	     *                       [options.editorFormat=hex] - How to display the selected color in the text field (the text field still supports *input* in any format).
-	     * @param {string}       [options.color]          - Initial color for the picker.
-	     * @param {function}     [options.onChange]       - @see {@linkcode Picker#onChange|onChange}
-	     * @param {function}     [options.onDone]         - @see {@linkcode Picker#onDone|onDone}
-	     * @param {function}     [options.onOpen]         - @see {@linkcode Picker#onOpen|onOpen}
-	     * @param {function}     [options.onClose]        - @see {@linkcode Picker#onClose|onClose}
-	     */
-	    setOptions(options) {
-	        if(!options) { return; }
-	        const settings = this.settings;
-
-	        function transfer(source, target, skipKeys) {
-	            for (const key in source) {
-	                if(skipKeys && (skipKeys.indexOf(key) >= 0)) { continue; }
-
-	                target[key] = source[key];
+	            if (!options) {
+	                return;
 	            }
-	        }
+	            var settings = this.settings;
 
-	        if(options instanceof HTMLElement) {
-	            settings.parent = options;
-	        }
-	        else {
-	            //const skipKeys = [];
-	            //
-	            //if(options.popup instanceof Object) {
-	            //    transfer(options.popup, settings.popup);
-	            //    skipKeys.push('popup');
-	            //}
-	            
-	            /* //TODO: options.layout -> Object
-	            {
-	                mode: 'hsla',       //'hsla', 'hasl', 'hsl'. Deprecate options.alpha
-	                verticalHue: false,
-	                verticalAlpha: true,
-	                alphaOnSL: false,
-	                editor: true,       //Deprecate options.editor
-	                css: undefined,     //Same as old options.layout. Default from mode
-	                //.template as well?
-	            }
-	            //*/
-	            
-	            //New parent?
-	            if(settings.parent && options.parent && (settings.parent !== options.parent)) {
-	                settings.parent.removeEventListener('click', this._openProxy, false);
-	                this._popupInited = false;
+	            function transfer(source, target, skipKeys) {
+	                for (var key in source) {
+	                    if (skipKeys && skipKeys.indexOf(key) >= 0) {
+	                        continue;
+	                    }
+
+	                    target[key] = source[key];
+	                }
 	            }
 
-	            transfer(options, settings/*, skipKeys*/);
-	        
-	            //Event callbacks. Hook these up before setColor() below,
-	            //because we'll need to fire onChange() if there is a color in the options
-	            if(options.onChange) { this.onChange = options.onChange; }
-	            if(options.onDone)   { this.onDone   = options.onDone; }
-	            if(options.onOpen)   { this.onOpen   = options.onOpen; }
-	            if(options.onClose)  { this.onClose  = options.onClose; }
-	        
-	            //Note: Look for color in 'options', as a color value in 'settings' may be an old one we don't want to revert to.
-	            const col = options.color || options.colour;
-	            if(col) { this._setColor(col); }
+	            if (options instanceof HTMLElement) {
+	                settings.parent = options;
+	            } else {
+
+	                if (settings.parent && options.parent && settings.parent !== options.parent) {
+	                    this._events.remove(settings.parent);
+	                    this._popupInited = false;
+	                }
+
+	                transfer(options, settings);
+
+	                if (options.onChange) {
+	                    this.onChange = options.onChange;
+	                }
+	                if (options.onDone) {
+	                    this.onDone = options.onDone;
+	                }
+	                if (options.onOpen) {
+	                    this.onOpen = options.onOpen;
+	                }
+	                if (options.onClose) {
+	                    this.onClose = options.onClose;
+	                }
+
+	                var col = options.color || options.colour;
+	                if (col) {
+	                    this._setColor(col);
+	                }
+	            }
+
+	            var parent = settings.parent;
+	            if (parent && settings.popup && !this._popupInited) {
+
+	                var openProxy = function openProxy(e) {
+	                    return _this.openHandler(e);
+	                };
+
+	                this._events.add(parent, 'click', openProxy);
+
+	                onKey(this._events, parent, [' ', 'Spacebar', 'Enter'], openProxy);
+
+	                this._popupInited = true;
+	            } else if (options.parent && !settings.popup) {
+	                this.show();
+	            }
 	        }
-	        
-	        //Init popup behavior once we have all the parts we need:
-	        const parent = settings.parent;
-	        if(parent && settings.popup && !this._popupInited) {
+	    }, {
+	        key: 'openHandler',
+	        value: function openHandler(e) {
+	            if (this.show()) {
 
-	            addEvent(parent, 'click', this._openProxy);
+	                e && e.preventDefault();
 
-	            //Keyboard navigation: Open on [Space] or [Enter] (but stop the event to avoid typing a " " in the editor textbox).
-	            //No, don't stop the event, as that would disable normal input behavior (typing a " " or clicking the Ok button with [Enter]).
-	            //Fix: setTimeout() in openHandler()..
-	            //
-	            //https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key/Key_Values#Whitespace_keys
-	            onKey(parent, [' ', 'Spacebar', 'Enter'], this._openProxy/*, true*/);
-	            
-	            //This must wait until we have created our DOM..
-	            //  addEvent(window, 'mousedown', (e) => this.closeHandler(e));
-	            //  addEvent(this._domOkay, 'click', (e) => this.closeHandler(e));
+	                this.settings.parent.style.pointerEvents = 'none';
 
-	            this._popupInited = true;
+	                var toFocus = e && e.type === EVENT_KEY ? this._domEdit : this.domElement;
+	                setTimeout(function () {
+	                    return toFocus.focus();
+	                }, 100);
+
+	                if (this.onOpen) {
+	                    this.onOpen(this.colour);
+	                }
+	            }
 	        }
-	        else if(options.parent && !settings.popup) {
-	            this.show();
-	        }
-	    }
+	    }, {
+	        key: 'closeHandler',
+	        value: function closeHandler(e) {
+	            var event = e && e.type;
+	            var doHide = false;
 
+	            if (!e) {
+	                doHide = true;
+	            } else if (event === EVENT_CLICK_OUTSIDE || event === EVENT_TAB_MOVE) {
 
-	    /**
-	     * Default behavior for opening the popup
-	     */
-	    openHandler(e) {
-	        if(this.show()) {
-	            //If the parent is an <a href="#"> element, avoid scrolling to the top:
-	            e && e.preventDefault();
-	            
-	            //A trick to avoid re-opening the dialog if you click the parent element while the dialog is open:
-	            this.settings.parent.style.pointerEvents = 'none';
+	                var knownTime = (this.__containedEvent || 0) + 100;
+	                if (e.timeStamp > knownTime) {
+	                    doHide = true;
+	                }
+	            } else {
 
-	            //Recommended popup behavior with keyboard navigation from http://whatsock.com/tsg/Coding%20Arena/Popups/Popup%20(Internal%20Content)/demo.htm
-	            //Wait a little before focusing the textbox, in case the dialog was just opened with [Space] (would overwrite the color value with a " "):
-	            const toFocus = (e && (e.type === EVENT_KEY)) ? this._domEdit : this.domElement;
-	            setTimeout(() => toFocus.focus(), 100);
+	                stopEvent(e);
 
-	            if(this.onOpen) { this.onOpen(this.colour); }
-	        }
-	    }
-
-
-	    /**
-	     * Default behavior for closing the popup
-	     */
-	    closeHandler(e) {
-	        const event = e && e.type;
-	        let doHide = false;
-
-	        //Close programmatically:
-	        if(!e) {
-	            doHide = true;
-	        }
-	        //Close by clicking/tabbing outside the popup:
-	        else if((event === EVENT_CLICK_OUTSIDE) || (event === EVENT_TAB_MOVE)) {
-
-	            //Note: Now that we have added the 'focusin' event,
-	            //this trick requires the picker wrapper to be focusable (via `tabindex` - see /src/picker.pug),
-	            //or else the popup loses focus if you click anywhere on the picker's background.
-	            if(!this.domElement.contains(e.target)) {
 	                doHide = true;
 	            }
+
+	            if (doHide && this.hide()) {
+	                this.settings.parent.style.pointerEvents = '';
+
+	                if (event !== EVENT_CLICK_OUTSIDE) {
+	                    this.settings.parent.focus();
+	                }
+
+	                if (this.onClose) {
+	                    this.onClose(this.colour);
+	                }
+	            }
 	        }
-	        //Close by clicking "Ok" or pressing "Esc":
-	        else {
-	            //Don't bubble the click up to the parent, because that's the trigger to re-open the popup:
-	            stopEvent(e);
+	    }, {
+	        key: 'movePopup',
+	        value: function movePopup(options, open) {
 
-	            doHide = true;
+	            this.closeHandler();
+
+	            this.setOptions(options);
+	            if (open) {
+	                this.openHandler();
+	            }
 	        }
-
-	        if(doHide && this.hide()) {
-	            this.settings.parent.style.pointerEvents = '';
-
-	            //Recommended popup behavior from http://whatsock.com/tsg/Coding%20Arena/Popups/Popup%20(Internal%20Content)/demo.htm
-	            //However, we don't re-focus the parent if the user closes the popup by clicking somewhere else on the screen,
-	            //because they may have scrolled to a different part of the page by then, and focusing would then inadvertently scroll the parent back into view:
-	            if(event !== EVENT_CLICK_OUTSIDE) {
-	                this.settings.parent.focus();
+	    }, {
+	        key: 'setColor',
+	        value: function setColor(color, silent) {
+	            this._setColor(color, { silent: silent });
+	        }
+	    }, {
+	        key: '_setColor',
+	        value: function _setColor(color, flags) {
+	            if (typeof color === 'string') {
+	                color = color.trim();
+	            }
+	            if (!color) {
+	                return;
 	            }
 
-	            if(this.onClose) { this.onClose(this.colour); }
+	            flags = flags || {};
+	            var c = void 0;
+	            try {
+
+	                c = new Color(color);
+	            } catch (ex) {
+	                if (flags.failSilently) {
+	                    return;
+	                }
+	                throw ex;
+	            }
+
+	            if (!this.settings.alpha) {
+	                var hsla = c.hsla;
+	                hsla[3] = 1;
+	                c.hsla = hsla;
+	            }
+	            this.colour = this.color = c;
+	            this._setHSLA(null, null, null, null, flags);
 	        }
-	    }
-
-
-	    /**
-	     * Move the popup to a different parent, optionally opening it at the same time.
-	     *
-	     * @param {Object}  options - @see {@linkcode Picker#setOptions|setOptions()} (Usually a new `.parent` and `.color`).
-	     * @param {boolean} open    - Whether to open the popup immediately.
-	     */
-	    movePopup(options, open) {
-	        //Cleanup if the popup is currently open (at least revert the current parent's .pointerEvents);
-	        this.closeHandler();
-	        
-	        this.setOptions(options);
-	        if(open) {
-	            this.openHandler();
+	    }, {
+	        key: 'setColour',
+	        value: function setColour(colour, silent) {
+	            this.setColor(colour, silent);
 	        }
-	    }
+	    }, {
+	        key: 'show',
+	        value: function show() {
+	            var parent = this.settings.parent;
+	            if (!parent) {
+	                return false;
+	            }
 
+	            if (this.domElement) {
+	                var toggled = this._toggleDOM(true);
 
-	    /**
-	     * Set/initialize the picker's color.
-	     * 
-	     * @param {string}  color  - Color name, RGBA/HSLA/HEX string, or RGBA array.
-	     * @param {boolean} silent - If true, won't trigger onChange.
-	     */
-	    setColor(color, silent) {
-	        this._setColor(color, { silent: silent });
-	    }
-	    _setColor(color, flags) {
-	        if(typeof color === 'string') { color = color.trim(); }
-	        if (!color) { return; }
+	                this._setPosition();
 
-	        flags = flags || {};
-	        let c;
-	        try {
-	            //Will throw on unknown colors:
-	            c = new Color(color);
-	        }
-	        catch (ex) {
-	            if(flags.failSilently) { return; }
-	            throw ex;
-	        }
+	                return toggled;
+	            }
 
-	        if(!this.settings.alpha) {
-	            const hsla = c.hsla;
-	            hsla[3] = 1;
-	            c.hsla = hsla;
-	        }
-	        this.colour = this.color = c;
-	        this._setHSLA(null, null, null, null, flags);
-	    }
-	    /**
-	     * @see {@linkcode Picker#setColor|setColor()}
-	     */
-	    setColour(colour, silent) {
-	        this.setColor(colour, silent);
-	    }
+	            var html = this.settings.template || '<div class="picker_wrapper" tabindex="-1"><div class="picker_arrow"></div><div class="picker_hue picker_slider"><div class="picker_selector"></div></div><div class="picker_sl"><div class="picker_selector"></div></div><div class="picker_alpha picker_slider"><div class="picker_selector"></div></div><div class="picker_editor"><input aria-label="Type a color name or hex value"/></div><div class="picker_sample"></div><div class="picker_done"><button>Ok</button></div><div class="picker_cancel"><button>Cancel</button></div></div>';
+	            var wrapper = parseHTML(html);
 
+	            this.domElement = wrapper;
+	            this._domH = $('.picker_hue', wrapper);
+	            this._domSL = $('.picker_sl', wrapper);
+	            this._domA = $('.picker_alpha', wrapper);
+	            this._domEdit = $('.picker_editor input', wrapper);
+	            this._domSample = $('.picker_sample', wrapper);
+	            this._domOkay = $('.picker_done button', wrapper);
+	            this._domCancel = $('.picker_cancel button', wrapper);
 
-	    /**
-	     * Show/open the picker.
-	     */
-	    show() {
-	        const parent = this.settings.parent;
-	        if(!parent) { return false; }
-	        
-	        //Unhide html if it exists
-	        if(this.domElement) {
-	            const toggled = this._toggleDOM(true);
+	            wrapper.classList.add('layout_' + this.settings.layout);
+	            if (!this.settings.alpha) {
+	                wrapper.classList.add('no_alpha');
+	            }
+	            if (!this.settings.editor) {
+	                wrapper.classList.add('no_editor');
+	            }
+	            if (!this.settings.cancelButton) {
+	                wrapper.classList.add('no_cancel');
+	            }
+	            this._ifPopup(function () {
+	                return wrapper.classList.add('popup');
+	            });
 
-	            //Things could have changed through setOptions():
 	            this._setPosition();
 
-	            return toggled;
+	            if (this.colour) {
+	                this._updateUI();
+	            } else {
+	                this._setColor(this.settings.defaultColor);
+	            }
+	            this._bindEvents();
+
+	            return true;
 	        }
-
-	        const html = this.settings.template || `<div class="picker_wrapper" tabindex="-1"><div class="picker_arrow"></div><div class="picker_hue picker_slider"><div class="picker_selector"></div></div><div class="picker_sl"><div class="picker_selector"></div></div><div class="picker_alpha picker_slider"><div class="picker_selector"></div></div><div class="picker_editor"><input aria-label="Type a color name or hex value"/></div><div class="picker_sample"></div><div class="picker_done"><button>Ok</button></div></div>`;
-	        const wrapper = parseHTML(html);
-	        
-	        this.domElement = wrapper;
-	        this._domH      = $('.picker_hue', wrapper);
-	        this._domSL     = $('.picker_sl', wrapper);
-	        this._domA      = $('.picker_alpha', wrapper);
-	        this._domEdit   = $('.picker_editor input', wrapper);
-	        this._domSample = $('.picker_sample', wrapper);
-	        this._domOkay   = $('.picker_done button', wrapper);
-
-	        wrapper.classList.add('layout_' + this.settings.layout);
-	        if(!this.settings.alpha) { wrapper.classList.add('no_alpha'); }
-	        if(!this.settings.editor) { wrapper.classList.add('no_editor'); }
-	        this._ifPopup(() => wrapper.classList.add('popup'));
-	        
-	        this._setPosition();
-
-
-	        if(this.colour) {
-	            this._updateUI();
+	    }, {
+	        key: 'hide',
+	        value: function hide() {
+	            return this._toggleDOM(false);
 	        }
-	        else {
-	            this._setColor('#0cf');
+	    }, {
+	        key: 'destroy',
+	        value: function destroy() {
+	            this._events.destroy();
+	            if (this.domElement) {
+	                this.settings.parent.removeChild(this.domElement);
+	            }
 	        }
-	        this._bindEvents();
-	        
-	        return true;
-	    }
+	    }, {
+	        key: '_bindEvents',
+	        value: function _bindEvents() {
+	            var _this2 = this;
 
+	            var that = this,
+	                dom = this.domElement,
+	                events = this._events;
 
-	    /**
-	     * Hide the picker.
-	     */
-	    hide() {
-	        return this._toggleDOM(false);
-	    }
-
-
-	    /*
-	     * Handle user input.
-	     * 
-	     * @private
-	     */
-	    _bindEvents() {
-	        const that = this,
-	              dom = this.domElement;
-	        
-	        //Prevent clicks while dragging from bubbling up to the parent:
-	        addEvent(dom, 'click', e => e.preventDefault());
-
-
-	        /* Draggable color selection */
-
-	        function createDragConfig(container, callbackRelative) {
-
-	            //Convert the px coordinates to relative coordinates (0-1) before invoking the callback:
-	            function relayDrag(_, pos) {
-	                const relX = pos[0]/container.clientWidth,
-	                      relY = pos[1]/container.clientHeight;
-	                callbackRelative(relX, relY);
+	            function addEvent(target, type, handler) {
+	                events.add(target, type, handler);
 	            }
 
-	            const config = {
-	                container:     container,
-	                dragOutside:   false,
-	                callback:      relayDrag,
-	                //Respond at once (mousedown), don't wait for click or drag:
-	                callbackDragStart: relayDrag,
-	                //When interacting with a picker, this allows other open picker popups to close:
-	                propagateEvents: true,
+	            addEvent(dom, 'click', function (e) {
+	                return e.preventDefault();
+	            });
+
+	            dragTrack(events, this._domH, function (x, y) {
+	                return that._setHSLA(x);
+	            });
+
+	            dragTrack(events, this._domSL, function (x, y) {
+	                return that._setHSLA(null, x, 1 - y);
+	            });
+
+	            if (this.settings.alpha) {
+	                dragTrack(events, this._domA, function (x, y) {
+	                    return that._setHSLA(null, null, null, 1 - y);
+	                });
+	            }
+
+	            var editInput = this._domEdit;
+	            {
+	                addEvent(editInput, 'input', function (e) {
+	                    that._setColor(this.value, { fromEditor: true, failSilently: true });
+	                });
+
+	                addEvent(editInput, 'focus', function (e) {
+	                    var input = this;
+
+	                    if (input.selectionStart === input.selectionEnd) {
+	                        input.select();
+	                    }
+	                });
+	            }
+
+	            this._ifPopup(function () {
+
+	                var popupCloseProxy = function popupCloseProxy(e) {
+	                    return _this2.closeHandler(e);
+	                };
+
+	                addEvent(window, EVENT_CLICK_OUTSIDE, popupCloseProxy);
+	                addEvent(window, EVENT_TAB_MOVE, popupCloseProxy);
+	                onKey(events, dom, ['Esc', 'Escape'], popupCloseProxy);
+
+	                var timeKeeper = function timeKeeper(e) {
+	                    _this2.__containedEvent = e.timeStamp;
+	                };
+	                addEvent(dom, EVENT_CLICK_OUTSIDE, timeKeeper);
+
+	                addEvent(dom, EVENT_TAB_MOVE, timeKeeper);
+
+	                addEvent(_this2._domCancel, 'click', popupCloseProxy);
+	            });
+
+	            var onDoneProxy = function onDoneProxy(e) {
+	                _this2._ifPopup(function () {
+	                    return _this2.closeHandler(e);
+	                });
+	                if (_this2.onDone) {
+	                    _this2.onDone(_this2.colour);
+	                }
 	            };
-	            return config;
+	            addEvent(this._domOkay, 'click', onDoneProxy);
+	            onKey(events, dom, ['Enter'], onDoneProxy);
 	        }
+	    }, {
+	        key: '_setPosition',
+	        value: function _setPosition() {
+	            var parent = this.settings.parent,
+	                elm = this.domElement;
 
-	        //Select hue
-	        dragTracker(createDragConfig(this._domH,  (x, y) => that._setHSLA(x)));
+	            if (parent !== elm.parentNode) {
+	                parent.appendChild(elm);
+	            }
 
-	        //Select saturation/lightness
-	        dragTracker(createDragConfig(this._domSL, (x, y) => that._setHSLA(null, x, 1 - y)));
+	            this._ifPopup(function (popup) {
 
-	        //Select alpha
-	        if(this.settings.alpha) {
-	            dragTracker(createDragConfig(this._domA,  (x, y) => that._setHSLA(null, null, null, 1 - y)));
-	        }
-	        
-	        
-	        /* Direct color value editing */
+	                if (getComputedStyle(parent).position === 'static') {
+	                    parent.style.position = 'relative';
+	                }
 
-	        //Always init the editor, for accessibility and screen readers (we'll hide it with CSS if `!settings.editor`)
-	        const editInput = this._domEdit;
-	        /*if(this.settings.editor)*/ {
-	            addEvent(editInput, 'input', function(e) {
-	                that._setColor(this.value, { fromEditor: true, failSilently: true });
+	                var cssClass = popup === true ? 'popup_right' : 'popup_' + popup;
+
+	                ['popup_top', 'popup_bottom', 'popup_left', 'popup_right'].forEach(function (c) {
+
+	                    if (c === cssClass) {
+	                        elm.classList.add(c);
+	                    } else {
+	                        elm.classList.remove(c);
+	                    }
+	                });
+
+	                elm.classList.add(cssClass);
 	            });
-	            //Select all text on focus:
-	            addEvent(editInput, 'focus', function(e) {
-	                const input = this;
-	                //If no current selection:
-	                if(input.selectionStart === input.selectionEnd) {
-	                    input.select();
+	        }
+	    }, {
+	        key: '_setHSLA',
+	        value: function _setHSLA(h, s, l, a, flags) {
+	            flags = flags || {};
+
+	            var col = this.colour,
+	                hsla = col.hsla;
+
+	            [h, s, l, a].forEach(function (x, i) {
+	                if (x || x === 0) {
+	                    hsla[i] = x;
 	                }
 	            });
+	            col.hsla = hsla;
+
+	            this._updateUI(flags);
+
+	            if (this.onChange && !flags.silent) {
+	                this.onChange(col);
+	            }
 	        }
+	    }, {
+	        key: '_updateUI',
+	        value: function _updateUI(flags) {
+	            if (!this.domElement) {
+	                return;
+	            }
+	            flags = flags || {};
 
+	            var col = this.colour,
+	                hsl = col.hsla,
+	                cssHue = 'hsl(' + hsl[0] * HUES + ', 100%, 50%)',
+	                cssHSL = col.hslString,
+	                cssHSLA = col.hslaString;
 
-	        /* Close the dialog */
+	            var uiH = this._domH,
+	                uiSL = this._domSL,
+	                uiA = this._domA,
+	                thumbH = $('.picker_selector', uiH),
+	                thumbSL = $('.picker_selector', uiSL),
+	                thumbA = $('.picker_selector', uiA);
 
-	        const popupCloseProxy = (e) => {
-	            this._ifPopup(() => this.closeHandler(e));
-	        };
-	        const onDoneProxy = (e) => {
-	            this._ifPopup(() => this.closeHandler(e));
-	            if(this.onDone) { this.onDone(this.colour); }
-	        };
-
-	        addEvent(window, EVENT_CLICK_OUTSIDE, popupCloseProxy);
-	        addEvent(window, EVENT_TAB_MOVE,      popupCloseProxy); //Keyboard navigation, closeHandler() will check if focus has moved outside the popup.
-	        onKey(   dom,    ['Esc', 'Escape'],   popupCloseProxy);
-
-	        addEvent(this._domOkay, 'click',   onDoneProxy);
-	        onKey(   dom,           ['Enter'], onDoneProxy);
-	    }
-
-
-	    /*
-	     * Position the picker on screen.
-	     * 
-	     * @private
-	     */
-	    _setPosition() {
-	        const parent = this.settings.parent,
-	              elm = this.domElement;
-
-	        if(parent !== elm.parentNode) { parent.appendChild(elm); }
-
-	        this._ifPopup((popup) => {
-
-	            //Allow for absolute positioning of the picker popup:
-	            if(getComputedStyle(parent).position === 'static') {
-	                parent.style.position = 'relative';
+	            function posX(parent, child, relX) {
+	                child.style.left = relX * 100 + '%';
+	            }
+	            function posY(parent, child, relY) {
+	                child.style.top = relY * 100 + '%';
 	            }
 
-	            const cssClass = (popup === true) ? 'popup_right' : 'popup_' + popup;
+	            posX(uiH, thumbH, hsl[0]);
 
-	            ['popup_top', 'popup_bottom', 'popup_left', 'popup_right'].forEach(c => {
-	                //Because IE doesn't support .classList.toggle()'s second argument...
-	                if(c === cssClass) {
-	                    elm.classList.add(c);
+	            this._domSL.style.backgroundColor = this._domH.style.color = cssHue;
+
+	            posX(uiSL, thumbSL, hsl[1]);
+	            posY(uiSL, thumbSL, 1 - hsl[2]);
+
+	            uiSL.style.color = cssHSL;
+
+	            posY(uiA, thumbA, 1 - hsl[3]);
+
+	            var opaque = cssHSL,
+	                transp = opaque.replace('hsl', 'hsla').replace(')', ', 0)'),
+	                bg = 'linear-gradient(' + [opaque, transp] + ')';
+
+	            this._domA.style.backgroundImage = bg + ', ' + BG_TRANSP;
+
+	            if (!flags.fromEditor) {
+	                var format = this.settings.editorFormat,
+	                    alpha = this.settings.alpha;
+
+	                var value = void 0;
+	                switch (format) {
+	                    case 'rgb':
+	                        value = col.printRGB(alpha);break;
+	                    case 'hsl':
+	                        value = col.printHSL(alpha);break;
+	                    default:
+	                        value = col.printHex(alpha);
 	                }
-	                else {
-	                    elm.classList.remove(c);
-	                }
-	            });
-
-	            //Allow for custom placement via CSS:
-	            elm.classList.add(cssClass);
-	        });
-	    }
-
-
-	    /*
-	     * "Hub" for all color changes
-	     * 
-	     * @private
-	     */
-	    _setHSLA(h, s, l, a,  flags) {
-	        flags = flags || {};
-
-	        const col = this.colour,
-	              hsla = col.hsla;
-
-	        [h, s, l, a].forEach((x, i) => {
-	            if(x || (x === 0)) { hsla[i] = x; }
-	        });
-	        col.hsla = hsla;
-
-	        this._updateUI(flags);
-
-	        if(this.onChange && !flags.silent) { this.onChange(col); }
-	    }
-
-	    _updateUI(flags) {
-	        if(!this.domElement) { return; }
-	        flags = flags || {};
-
-	        const col = this.colour,
-	              hsl = col.hsla,
-	              cssHue  = `hsl(${hsl[0] * HUES}, 100%, 50%)`,
-	              cssHSL  = col.hslString,
-	              cssHSLA = col.hslaString;
-
-	        const uiH  = this._domH,
-	              uiSL = this._domSL,
-	              uiA  = this._domA,
-	              thumbH  = $('.picker_selector', uiH),
-	              thumbSL = $('.picker_selector', uiSL),
-	              thumbA  = $('.picker_selector', uiA);
-	        
-	        function posX(parent, child, relX) {
-	            child.style.left = (relX * 100) + '%'; //(parent.clientWidth * relX) + 'px';
-	        }
-	        function posY(parent, child, relY) {
-	            child.style.top  = (relY * 100) + '%'; //(parent.clientHeight * relY) + 'px';
-	        }
-
-
-	        /* Hue */
-	        
-	        posX(uiH, thumbH, hsl[0]);
-	        
-	        //Use the fully saturated hue on the SL panel and Hue thumb:
-	        this._domSL.style.backgroundColor = this._domH.style.color = cssHue;
-
-
-	        /* S/L */
-	        
-	        posX(uiSL, thumbSL, hsl[1]);
-	        posY(uiSL, thumbSL, 1 - hsl[2]);
-	        
-	        //Use the opaque HSL on the SL thumb:
-	        uiSL.style.color = cssHSL;
-
-
-	        /* Alpha */
-	        
-	        posY(uiA,  thumbA,  1 - hsl[3]);
-
-	        const opaque = cssHSL,
-	              transp = opaque.replace('hsl', 'hsla').replace(')', ', 0)'),
-	              bg = `linear-gradient(${[opaque, transp]})`;
-
-	        //Let the Alpha slider fade from opaque to transparent:
-	        this._domA.style.backgroundImage = bg + ', ' + BG_TRANSP;
-
-
-	        /* Editable value */
-	        
-	        //Don't update the editor if the user is typing.
-	        //That creates too much noise because of our auto-expansion of 3/4/6 -> 8 digit hex codes.
-	        if(!flags.fromEditor) {
-	            const format = this.settings.editorFormat,
-	                  alpha = this.settings.alpha;
-
-	            let value;
-	            switch (format) {
-	                case 'rgb': value = col.printRGB(alpha); break;
-	                case 'hsl': value = col.printHSL(alpha); break;
-	                default:    value = col.printHex(alpha);
-	            }
-	            this._domEdit.value = value;
-	        }
-
-
-	        /* Sample swatch */
-	        
-	        this._domSample.style.color = cssHSLA;
-	    }
-	    
-	    
-	    _ifPopup(actionIf, actionElse) {
-	        if(this.settings.parent && this.settings.popup) {
-	            actionIf && actionIf(this.settings.popup);
-	        }
-	        else {
-	            actionElse && actionElse();
-	        }
-	    }
-
-
-	    _toggleDOM(toVisible) {
-	        const dom = this.domElement;
-	        if(!dom) { return false; }
-
-	        const displayStyle = toVisible ? '' : 'none',
-	              toggle = (dom.style.display !== displayStyle);
-	        
-	        if(toggle) { dom.style.display = displayStyle; }
-	        return toggle;
-	    }
-
-
-	/*
-	    //Feature: settings to flip hue & alpha 90deg (i.e. vertical or horizontal mode)
-	    
-	    
-	        function createDragConfig(container, callbackRelative) {
-	const flipped = true;
-
-	            function capRel(val) {
-	                return (val < 0) ? 0
-	                                 : (val > 1) ? 1 : val;
+	                this._domEdit.value = value;
 	            }
 
-	            //Convert the px coordinates to relative coordinates (0-1) before invoking the callback:
-	            function relayDrag(_, pos) {
-	                const w = container.clientWidth,
-	                      h = container.clientHeight;
-	                      
-	                const relX = pos[0]/(flipped ? h : w),
-	                      relY = pos[1]/(flipped ? w : h);
-	                      
-	                callbackRelative(capRel(relX), capRel(relY));
+	            this._domSample.style.color = cssHSLA;
+	        }
+	    }, {
+	        key: '_ifPopup',
+	        value: function _ifPopup(actionIf, actionElse) {
+	            if (this.settings.parent && this.settings.popup) {
+	                actionIf && actionIf(this.settings.popup);
+	            } else {
+	                actionElse && actionElse();
+	            }
+	        }
+	    }, {
+	        key: '_toggleDOM',
+	        value: function _toggleDOM(toVisible) {
+	            var dom = this.domElement;
+	            if (!dom) {
+	                return false;
 	            }
 
-	            const config = {
-	                container:     container,
-	                //dragOutside:   false,
-	                callback:      relayDrag,
-	                //Respond at once (mousedown), don't wait for click or drag:
-	                callbackDragStart: relayDrag,
-	            };
-	            return config;
-	        }
-	*/
+	            var displayStyle = toVisible ? '' : 'none',
+	                toggle = dom.style.display !== displayStyle;
 
-	}
+	            if (toggle) {
+	                dom.style.display = displayStyle;
+	            }
+	            return toggle;
+	        }
+	    }], [{
+	        key: 'StyleElement',
+	        get: function get$$1() {
+	            return _style;
+	        }
+	    }]);
+	    return Picker;
+	}();
 
 	// Positions for DnD
 	const POSITION_BEFORE_ELEMENT = -1;
@@ -63463,8 +66772,6 @@ public class Application extends SpringBootServletInitializer {
 	        break;
 	      case ")":
 	        parenCount--;
-	        break;
-	      default:
 	        break;
 	    }
 	    i++;
@@ -65157,8 +68464,6 @@ public class Application extends SpringBootServletInitializer {
 	      case POSITION_AFTER_ELEMENT:
 	        marker.style.border = "none";
 	        marker.style.borderBottom = "1px red solid";
-	        break;
-	      default:
 	        break;
 	    }
 	    e.preventDefault();
