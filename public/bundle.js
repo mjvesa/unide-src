@@ -67713,8 +67713,8 @@ public class Application extends SpringBootServletInitializer {
 	  [isTextField, "vaadin-text-field"],
 	  [isGrid, "unide-grid"],
 	  [isSplitLayout, "vaadin-split-layout"],
-	  [isVerticalLayout, "div"],
-	  [isHorizontalLayout, "div"],
+	  [isVerticalLayout, "vaadin-vertical-layout"],
+	  [isHorizontalLayout, "vaadin-horizontal-layout"],
 	  // [isGridLayout, "grid-layout"]
 	];
 
@@ -67939,7 +67939,12 @@ public class Application extends SpringBootServletInitializer {
 	    }
 
 	    // Use brute to determine flexbox properties for div
-	    if (tagName === "div" && rect.children) {
+	    if (
+	      ["div", "vaadin-vertical-layout", "vaadin-horizontal-layout"].includes(
+	        tagName
+	      ) &&
+	      rect.children
+	    ) {
 	      styles = styles + brute(rect.children, rect);
 	    }
 
