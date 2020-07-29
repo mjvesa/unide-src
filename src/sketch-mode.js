@@ -313,6 +313,15 @@ const getWord = () => {
   return ipsumLorem[(Math.random() * ipsumLorem.length) | 0];
 };
 
+const VAADIN_FIELDS = [
+  "vaadin-text-field",
+  "vaadin-password-field",
+  "vaadin-number-field",
+  "vaadin-email-field",
+  "vaadin-date-picker",
+  "vaadin-time-picker",
+];
+
 const createAndAppendChildElements = (rects) => {
   let tree = [];
   const setAttribute = (name, value) => {
@@ -441,13 +450,7 @@ const createAndAppendChildElements = (rects) => {
       setAttribute("theme", "primary");
     }
 
-    if (
-      [
-        "vaadin-text-field",
-        "vaadin-password-field",
-        "vaadin-date-field",
-      ].includes(tagName)
-    ) {
+    if (VAADIN_FIELDS.includes(tagName)) {
       setAttribute("label", getWord());
     }
 
@@ -493,18 +496,23 @@ const createAndAppendChildElementsToDOM = (parent, rects) => {
     let tagName = getTagForRect(rect);
     tagName = tagName.replace("unide-grid", "vaadin-grid");
     let el = document.createElement(tagName);
-    el.style.left = rect.left + "px";
-    el.style.top = rect.top + "px";
+
     el.style.minWidth = rect.right - rect.left + "px";
     el.style.minHeight = rect.bottom - rect.top + "px";
+    el.style.width = rect.right - rect.left + "px";
+    el.style.height = rect.bottom - rect.top + "px";
 
-    // if (
-    //   tagName !== "grid-layout" &&
-    //   tagName !== "vaadin-vertical-layout" &&
-    //   tagName !== "vaadin-horizontal-layout"
-    // ) {
-    //   el.style.margin = "0.5em";
-    // }
+    let topOffset = 0;
+    if (VAADIN_FIELDS.includes(tagName)) {
+      topOffset = -33;
+      el.style.width = "auto";
+      el.style.height = "auto";
+    } else if (tagName == "vaadin-button") {
+      topOffset = -3;
+    }
+
+    el.style.left = rect.left + "px";
+    el.style.top = topOffset + rect.top + "px";
 
     if (
       tagName === "vaadin-radio-group" ||
@@ -565,6 +573,36 @@ const createAndAppendChildElementsToDOM = (parent, rects) => {
         pointInsideRect(child, smallest.left, smallest.bottom)
       ) {
         el.setAttribute("orientation", "vertical");
+        const top = document.createElement("div");
+        const bottom = document.createElement("div");
+
+        const ratio =
+          ((((smallest.top + smallest.bottom) / 2 - rect.top) /
+            (rect.bottom - rect.top)) *
+            100) |
+          0;
+        top.style.minHeight = ratio + "%";
+        bottom.style.minHeight = 100 - ratio + "%";
+        top.style.position = "relative";
+        bottom.style.position = "relative";
+        el.appendChild(top);
+        el.appendChild(bottom);
+      } else {
+        const left = document.createElement("div");
+        const right = document.createElement("div");
+
+        const ratio =
+          ((((smallest.left + smallest.right) / 2 - rect.left) /
+            (rect.right - rect.left)) *
+            100) |
+          0;
+
+        left.style.width = ratio + "%";
+        right.style.width = 100 - ratio + "%";
+        left.style.position = "relative";
+        right.style.position = "relative";
+        el.appendChild(left);
+        el.appendChild(right);
       }
     }
 
@@ -612,7 +650,7 @@ const createAndAppendChildElementsToDOM = (parent, rects) => {
     el.setAttribute("label", getWord());
 
     if (tagName === "vaadin-button") {
-      el.textContent = getWord();
+      el.textContent = rect.text ? rect.text : getWord();
       el.setAttribute("theme", "primary");
     }
 
@@ -621,6 +659,22 @@ const createAndAppendChildElementsToDOM = (parent, rects) => {
       createAndAppendChildElementsToDOM(parent, rect.children);
     }
   });
+};
+
+const snapToNearestX = (x) => {
+  return (Math.round(x / 20) * 20) | 0; // - 5;
+};
+
+const snapToNearestY = (x) => {
+  return (Math.round(x / 20) * 20) | 0; // + 8;
+};
+
+const snapX = (x) => {
+  return ((x / 20) | 0) * 20 + 20;
+};
+
+const snapY = (x) => {
+  return ((x / 20) | 0) * 20 + 20;
 };
 
 const fixZIndexes = (rects) => {
@@ -642,7 +696,7 @@ const fixZIndexes = (rects) => {
 };
 
 export const enterSketchMode = (targetEl, designCallback) => {
-  const rects = [];
+  let rects = [];
   let draggedEl;
   let draggedRect = {};
   let originX, originY;
@@ -651,18 +705,32 @@ export const enterSketchMode = (targetEl, designCallback) => {
   $ = targetEl.shadowRoot.querySelector.bind(targetEl.shadowRoot);
   targetEl.shadowRoot.innerHTML = `
   <style>
+
+    #relative-wrapper {
+      position:relative;
+      height: 100%;
+      width: 100%;
+    }
+
     #sketch-canvas {
-        height: 100%;
+      display: block;
+      height: 100%;
+      width: 100%;
+      background-size: 20px 20px;
+      background-image:
+        linear-gradient(to right, lightgrey 1px, transparent 1px),
+        linear-gradient(to bottom, lightgrey 1px, transparent 1px);
     }
     #preview-canvas {
       position: absolute;
+      top: 0px;
       height: 100%;
-      margin-top: -100%;
+      width: 100%;
       pointer-events: none;
     }
 
     #preview-canvas * {
-      position: fixed;
+      position: absolute;
     }
 
     #preview-canvas vaadin-tab {
@@ -672,8 +740,20 @@ export const enterSketchMode = (targetEl, designCallback) => {
     #sketch-canvas div {
         border: solid 1px black;
         position: absolute;
-        opacity: 0.1;
+        opacity: 0.2;
+        cursor: default;
     }
+
+    #sketch-canvas div#snap-cursor {
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      border: 2px solid black;
+      z-index: 100000;
+      pointer-events: none;
+      opacity: 1.0;
+    }
+
     #sketch-canvas div:hover {
       opacity: 0.8;
     }
@@ -683,17 +763,23 @@ export const enterSketchMode = (targetEl, designCallback) => {
         z-index: 10000;
     }
   </style>
-  <span id="current-guess"></span>
   <vaadin-button id="generate-button"><iron-icon icon="vaadin:vaadin-h"></iron-icon></vaadin-button>
-  <div id="sketch-canvas"></div>
-  <div id="preview-canvas"></div>`;
+  <div id="relative-wrapper">
+    <div id="sketch-canvas">
+     <div id="snap-cursor"></div>
+      <span id="current-guess"></span>
+    </div>
+    <div id="preview-canvas"></div>
+  </div>`;
 
   const canvas = $("#sketch-canvas");
-  canvas.onkeypress = (event) => {
+  canvas.onkeydown = (event) => {
     if (event.key === "Delete") {
       if (focusedElement) {
-        rects.remove(focusedElement.rect);
+        rects = rects.filter((rect) => rect !== focusedElement.rect);
         canvas.removeChild(focusedElement);
+        hideCurrentGuess();
+        updatePreview();
       }
     }
   };
@@ -715,32 +801,41 @@ export const enterSketchMode = (targetEl, designCallback) => {
       event.target.focus();
       focusedElement = event.target;
       showCurrentGuess(event.target.rect, rects);
+      event.stopPropagation();
     };
 
-    draggedEl.onmousever = () => {
-      hideCurrentGuess();
-    };
-
-    originX = event.clientX;
-    originY = event.clientY;
+    const bcr = canvas.getBoundingClientRect();
+    originX = snapToNearestX(event.clientX - bcr.left);
+    originY = snapToNearestY(event.clientY - bcr.top);
     draggedEl.style.position = "absolute";
-    draggedEl.style.left = event.clientX + "px";
-    draggedEl.style.top = event.clientY + "px";
+    draggedEl.style.left = originX + "px";
+    draggedEl.style.top = originY + "px";
 
     canvas.appendChild(draggedEl);
   };
 
   canvas.onmousemove = (event) => {
+    const bcr = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - bcr.left;
+    const mouseY = event.clientY - bcr.top;
+
+    const snapCursor = $("#snap-cursor");
+
     if (draggedEl) {
-      draggedEl.style.width = event.clientX - originX + "px";
-      draggedEl.style.height = event.clientY - originY + "px";
+      snapCursor.style.display = "none";
+      draggedEl.style.width = snapX(mouseX - originX) + "px";
+      draggedEl.style.height = snapY(mouseY - originY) + "px";
       Object.assign(draggedRect, {
         left: originX,
         top: originY,
-        right: event.clientX,
-        bottom: event.clientY,
+        right: snapX(mouseX),
+        bottom: snapY(mouseY),
       });
       showCurrentGuess(draggedRect, rects);
+    } else {
+      snapCursor.style.display = "block";
+      snapCursor.style.left = snapToNearestX(mouseX) - 3 + "px";
+      snapCursor.style.top = snapToNearestY(mouseY) - 3 + "px";
     }
   };
 
