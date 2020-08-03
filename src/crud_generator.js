@@ -39,7 +39,7 @@ export const generateCrudFromBean = (bean) => {
   }
 
   let items = "";
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 20; i++) {
     let item = "{";
     for (let path of paths) {
       item = item + `"${path}": "aaa",`;
@@ -50,6 +50,9 @@ export const generateCrudFromBean = (bean) => {
   return [
     "vaadin-split-layout",
     "(",
+    "style",
+    "width:100%;height:100%",
+    "=",
     "vaadin-vertical-layout",
     "(",
     "style",
@@ -62,27 +65,32 @@ export const generateCrudFromBean = (bean) => {
       "style",
       "width:100%;height:100%",
       "=",
+      "entity",
+      packageName[1] + "." + className[1],
+      "=",
       "columnCaptions",
       "[" + gridColumns.substring(0, gridColumns.length - 1) + "]",
       "=",
       "items",
       "[" + items.substring(0, items.length - 1) + "]",
       "=",
-      "entity",
-      packageName[1] + "." + className[1],
-      "=",
       ")",
     ])
 
     .concat([
       ")",
+      "vaadin-vertical-layout",
+      "(",
+      "theme",
+      "spacing margin",
+      "=",
+      "style",
+      "width:25%",
+      "=",
       "vaadin-form-layout",
       "(",
       "theme",
       "margin",
-      "=",
-      "style",
-      "width:25%",
       "=",
     ])
     .concat(fields)
@@ -90,7 +98,7 @@ export const generateCrudFromBean = (bean) => {
       "vaadin-horizontal-layout",
       "(",
       "theme",
-      "spacing",
+      "spacing margin",
       "=",
       "vaadin-button",
       "(",
@@ -109,6 +117,7 @@ export const generateCrudFromBean = (bean) => {
       "theme",
       "primary",
       "=",
+      ")",
       ")",
       ")",
     ])
