@@ -66,7 +66,10 @@ test("Grid content generated without entity", () => {
   expect(exportedJava).toContain("setQuestion");
   // Contains entity object
   expect(exportedJava).toContain("public static class TestDesignGridType");
+  // Grid is of correct type
+  expect(exportedJava).toContain("Grid<TestDesignGridType>");
 });
+
 test("Entity results in no grid content", () => {
   const div = document.createElement("div");
   const exportedJava = modelToJava(
@@ -96,4 +99,6 @@ test("Entity results in no grid content", () => {
   // Contains entity object
   expect(exportedJava).not.toContain("setQuestion");
   expect(exportedJava).toContain("import com.example.pack.Entity;");
+  // Grid is of correct type
+  expect(exportedJava).toContain("Grid<Entity>");
 });
