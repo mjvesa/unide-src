@@ -173,7 +173,6 @@ export const modelToJava = (
           if (nos === "entity") {
             const entityClassPieces = tos.split(".");
             const entityClass = entityClassPieces[entityClassPieces.length - 1];
-            console.log("### Pau pau pau " + tos + "::: " + entityClass);
             result = result.replace("GridTypePlaceholder", entityClass);
             importStrings = importStrings + `import ${tos};\n`;
 

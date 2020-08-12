@@ -13754,7 +13754,6 @@
 	          if (nos === "entity") {
 	            const entityClassPieces = tos.split(".");
 	            const entityClass = entityClassPieces[entityClassPieces.length - 1];
-	            console.log("### Pau pau pau " + tos + "::: " + entityClass);
 	            result = result.replace("GridTypePlaceholder", entityClass);
 	            importStrings = importStrings + `import ${tos};\n`;
 
@@ -69319,7 +69318,6 @@ public class Application extends SpringBootServletInitializer {
 	    appLayoutClass.setAttribute("disabled", true);
 	  }
 	  useAppLayout.onchange = (event) => {
-	    console.log("perkele" + event.target.checked);
 	    if (event.target.checked) {
 	      appLayoutClass.removeAttribute("disabled");
 	    } else {

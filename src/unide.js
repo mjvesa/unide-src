@@ -758,7 +758,6 @@ const showProjectSettings = (event) => {
     appLayoutClass.setAttribute("disabled", true);
   }
   useAppLayout.onchange = (event) => {
-    console.log("perkele" + event.target.checked);
     if (event.target.checked) {
       appLayoutClass.removeAttribute("disabled");
     } else {
