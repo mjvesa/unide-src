@@ -56,6 +56,8 @@ let previousBegin, previousEnd;
 let designStack = [];
 let redoStack = [];
 
+let copiedTree;
+
 let textEditor;
 let htmlEditor;
 let currentMode = "Visual";
@@ -370,13 +372,11 @@ const modelToDOM = (code, target, inert = false) => {
         // Nested designs, attach shadow root, append style and content
         if (tag in storedDesigns.designs) {
           current = document.createElement("div");
-          const root = document.createElement("div");
           current.attachShadow({ mode: "open" });
-          current.shadowRoot.appendChild(root);
           const style = document.createElement("style");
           style.textContent = storedDesigns.designs[tag].css;
           current.shadowRoot.appendChild(style);
-          modelToDOM(storedDesigns.designs[tag].tree, root, true);
+          modelToDOM(storedDesigns.designs[tag].tree, current.shadowRoot, true);
         } else {
           current = document.createElement(tag);
         }
@@ -961,7 +961,38 @@ const installUIEventHandlers = () => {
 };
 
 const installKeyboardHandlers = () => {
-  document.body.onkeypress = (event) => {
+  document.body.onkeydown = (event) => {
+    if (event.key === "c" && event.ctrlKey) {
+      copiedTree = Model.copySubtree(selectedElement, currentDesign.tree);
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (event.key === "x" && event.ctrlKey) {
+      copiedTree = Model.copySubtree(selectedElement, currentDesign.tree);
+      const newDesign = {
+        tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
+        css: currentDesign.css,
+      };
+      showNewDesign(newDesign);
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (event.key === "v" && event.ctrlKey) {
+      if (copiedTree) {
+        const newDesign = {
+          tree: Model.insertSubtree(
+            selectedElement,
+            Model.POSITION_AFTER_ELEMENT,
+            copiedTree,
+            currentDesign.tree
+          ),
+          css: currentDesign.css,
+        };
+        showNewDesign(newDesign);
+      }
+      event.stopPropagation();
+      event.preventDefault();
+    }
     if (event.key === "z" && event.ctrlKey) {
       if (designStack.length > 0) {
         redoStack.push(currentDesign);

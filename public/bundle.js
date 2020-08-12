@@ -66856,6 +66856,13 @@ public class Application extends SpringBootServletInitializer {
 	  return newTree;
 	};
 
+	const copySubtree = (elementIndex, tree) => {
+	  return tree.slice(
+	    elementIndex - 1,
+	    findDanglingParen(tree, elementIndex + 1) + 1
+	  );
+	};
+
 	/**
 	 *
 	 * @param {*} attributes Attributes as ATIR containing full attrbute expressions ["key", "value", "="]
@@ -68612,6 +68619,8 @@ public class Application extends SpringBootServletInitializer {
 	let designStack = [];
 	let redoStack = [];
 
+	let copiedTree;
+
 	let textEditor;
 	let htmlEditor;
 	let currentMode = "Visual";
@@ -68924,13 +68933,11 @@ public class Application extends SpringBootServletInitializer {
 	        // Nested designs, attach shadow root, append style and content
 	        if (tag in storedDesigns.designs) {
 	          current = document.createElement("div");
-	          const root = document.createElement("div");
 	          current.attachShadow({ mode: "open" });
-	          current.shadowRoot.appendChild(root);
 	          const style = document.createElement("style");
 	          style.textContent = storedDesigns.designs[tag].css;
 	          current.shadowRoot.appendChild(style);
-	          modelToDOM(storedDesigns.designs[tag].tree, root, true);
+	          modelToDOM(storedDesigns.designs[tag].tree, current.shadowRoot, true);
 	        } else {
 	          current = document.createElement(tag);
 	        }
@@ -69515,7 +69522,38 @@ public class Application extends SpringBootServletInitializer {
 	};
 
 	const installKeyboardHandlers = () => {
-	  document.body.onkeypress = (event) => {
+	  document.body.onkeydown = (event) => {
+	    if (event.key === "c" && event.ctrlKey) {
+	      copiedTree = copySubtree(selectedElement, currentDesign.tree);
+	      event.stopPropagation();
+	      event.preventDefault();
+	    }
+	    if (event.key === "x" && event.ctrlKey) {
+	      copiedTree = copySubtree(selectedElement, currentDesign.tree);
+	      const newDesign = {
+	        tree: deleteSubtree(selectedElement, currentDesign.tree),
+	        css: currentDesign.css,
+	      };
+	      showNewDesign(newDesign);
+	      event.stopPropagation();
+	      event.preventDefault();
+	    }
+	    if (event.key === "v" && event.ctrlKey) {
+	      if (copiedTree) {
+	        const newDesign = {
+	          tree: insertSubtree(
+	            selectedElement,
+	            POSITION_AFTER_ELEMENT,
+	            copiedTree,
+	            currentDesign.tree
+	          ),
+	          css: currentDesign.css,
+	        };
+	        showNewDesign(newDesign);
+	      }
+	      event.stopPropagation();
+	      event.preventDefault();
+	    }
 	    if (event.key === "z" && event.ctrlKey) {
 	      if (designStack.length > 0) {
 	        redoStack.push(currentDesign);
