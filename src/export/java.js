@@ -112,6 +112,8 @@ export const modelToJava = (
   let currentTag = "";
   let currentVar = "this";
   let currentVarDefinition = "";
+  let gridHadEntity = false;
+  let importStrings = "";
 
   importedTags.add("div");
 
@@ -137,7 +139,8 @@ export const modelToJava = (
         variableCount++;
 
         if (currentTag === "unide-grid") {
-          currentVarDefinition = `${elementClass}<${pascalCaseName}GridType> ${newVar}`;
+          gridHadEntity = false;
+          currentVarDefinition = `${elementClass}<GridTypePlaceholder> ${newVar}`;
           result +=
             `${doubleIndent}${currentVarDefinition} = new ${elementClass}<>();\n` +
             `${doubleIndent}${currentVar}.add(${newVar});\n`;
@@ -167,7 +170,14 @@ export const modelToJava = (
         }
 
         if (currentTag === "unide-grid") {
-          if (nos === "items") {
+          if (nos === "entity") {
+            const entityClassPieces = tos.split(".");
+            const entityClass = entityClassPieces[entityClassPieces.length - 1];
+            result = result.replace("GridTypePlaceholder", entityClass);
+            importStrings = importStrings + `import ${tos};\n`;
+
+            gridHadEntity = true;
+          } else if (nos === "items" && !gridHadEntity) {
             const obj = JSON.parse(tos);
             let gridItems =
               `${doubleIndent}ArrayList<${pascalCaseName}GridType> items = new ArrayList<>();\n` +
@@ -186,20 +196,25 @@ export const modelToJava = (
               .concat(gridItems)
               .concat(`${doubleIndent}${currentVar}.setItems(items);\n`);
             return;
-          } else if (nos === "columnCaptions") {
+          } else if (nos === "columnCaptions" && !gridHadEntity) {
+            result = result.replace(
+              "GridTypePlaceholder",
+              `${pascalCaseName}GridType`
+            );
             const obj = JSON.parse(tos);
             let methods = "";
             let fields = "";
             let creation = "";
             obj.forEach((pair) => {
+              const fieldName = kebabToPascalCase(pair.path);
               creation = creation.concat(
-                `${doubleIndent}${currentVar}.addColumn(${pascalCaseName}GridType::get${pair.path}).setHeader("${pair.name}");\n`
+                `${doubleIndent}${currentVar}.addColumn(${pascalCaseName}GridType::get${fieldName}).setHeader("${pair.name}");\n`
               );
               fields = fields.concat(`private String ${pair.path};\n`);
-              methods = methods.concat(`public String get${pair.path}() {
+              methods = methods.concat(`public String get${fieldName}() {
                   return this.${pair.path};
               }
-              public void set${pair.path}(String value) {
+              public void set${fieldName}(String value) {
                 this.${pair.path}=value;
               }
                 `);
@@ -214,60 +229,60 @@ export const modelToJava = (
             result = result.concat(creation);
             return;
           }
-        }
-
-        if (nos === "targetRoute") {
-          result = result.concat(
-            `${doubleIndent}${currentVar}.getElement().addEventListener("click", e-> {\n` +
-              `${doubleIndent}${singleIndent}${currentVar}.getUI().ifPresent(ui -> ui.navigate("${kebabToPascalCase(
-                tos
-              )}"))\n;` +
-              `${doubleIndent}});`
-          );
-        } else if (nos === "fieldName") {
-          const fieldName = tos;
-          result = result.replace(currentVarDefinition, fieldName);
-          const re = new RegExp(currentVar, "g");
-          result = result.replace(re, fieldName);
-          fields =
-            fields +
-            `${singleIndent}${
-              currentVarDefinition.split(" ")[0]
-            } ${fieldName};\n`;
-          currentVar = fieldName;
-        } else if (nos in current) {
-          try {
-            JSON.parse(tos);
-            if (nos === "textContent") {
-              result = result.concat(
-                `        ${currentVar}.getElement().setText("${tos}");\n`
-              );
-            } else {
-              result = result.concat(
-                `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos.replace(
-                  /"/g,
-                  "'"
-                )}");\n`
-              );
-            }
-          } catch (e) {
-            if (nos === "textContent") {
-              result = result.concat(
-                `${doubleIndent}${currentVar}.getElement().setText("${tos.replace(
-                  /"/g,
-                  '\\"'
-                )}");\n`
-              );
-            } else {
-              result = result.concat(
-                `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos}");\n`
-              );
-            }
-          }
         } else {
-          result = result.concat(
-            `${doubleIndent}${currentVar}.getElement().setAttribute("${nos}","${tos}");\n`
-          );
+          if (nos === "targetRoute") {
+            result = result.concat(
+              `${doubleIndent}${currentVar}.getElement().addEventListener("click", e-> {\n` +
+                `${doubleIndent}${singleIndent}${currentVar}.getUI().ifPresent(ui -> ui.navigate("${kebabToPascalCase(
+                  tos
+                )}"))\n;` +
+                `${doubleIndent}});`
+            );
+          } else if (nos === "fieldName") {
+            const fieldName = tos;
+            result = result.replace(currentVarDefinition, fieldName);
+            const re = new RegExp(currentVar, "g");
+            result = result.replace(re, fieldName);
+            fields =
+              fields +
+              `${singleIndent}${
+                currentVarDefinition.split(" ")[0]
+              } ${fieldName};\n`;
+            currentVar = fieldName;
+          } else if (nos in current) {
+            try {
+              JSON.parse(tos);
+              if (nos === "textContent") {
+                result = result.concat(
+                  `        ${currentVar}.getElement().setText("${tos}");\n`
+                );
+              } else {
+                result = result.concat(
+                  `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos.replace(
+                    /"/g,
+                    "'"
+                  )}");\n`
+                );
+              }
+            } catch (e) {
+              if (nos === "textContent") {
+                result = result.concat(
+                  `${doubleIndent}${currentVar}.getElement().setText("${tos.replace(
+                    /"/g,
+                    '\\"'
+                  )}");\n`
+                );
+              } else {
+                result = result.concat(
+                  `${doubleIndent}${currentVar}.getElement().setProperty("${nos}","${tos}");\n`
+                );
+              }
+            }
+          } else {
+            result = result.concat(
+              `${doubleIndent}${currentVar}.getElement().setAttribute("${nos}","${tos}");\n`
+            );
+          }
         }
         break;
       }
@@ -275,8 +290,6 @@ export const modelToJava = (
         stack.push(trimmed);
     }
   });
-
-  let importStrings = "";
 
   importedTags.forEach((tag) => {
     importStrings = importStrings.concat(`${flowImports[tag].import}\n`);

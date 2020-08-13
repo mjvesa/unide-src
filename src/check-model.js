@@ -1,7 +1,7 @@
-export const checkModel = model => {
+export const checkModel = (model) => {
   let idents = 0;
   let parens = 0;
-  let hadIssues = false;
+  let isCorrect = true;
   model.forEach((str, index) => {
     let trimmed = str.trim();
     switch (trimmed) {
@@ -10,7 +10,7 @@ export const checkModel = model => {
           console.log(
             `Wrong number of idents for new element. Should be 1 was ${idents}`
           );
-          hadIssues = true;
+          isCorrect = false;
         }
         idents--;
         parens++;
@@ -19,7 +19,7 @@ export const checkModel = model => {
         parens--;
         if (parens < 0) {
           console.log("Parentheses not matched");
-          hadIssues = true;
+          isCorrect = false;
         }
         break;
       case "=":
@@ -27,7 +27,7 @@ export const checkModel = model => {
           console.log(
             `Wrong number of idents for attribute. Should be 2 was ${idents}`
           );
-          hadIssues = true;
+          isCorrect = false;
         }
         idents -= 2;
         break;
@@ -38,14 +38,14 @@ export const checkModel = model => {
 
   if (idents !== 0) {
     console.log("Extra idents.");
-    hadIssues = true;
+    isCorrect = false;
   }
   if (parens !== 0) {
     console.log("Parens not matched");
-    hadIssues = true;
+    isCorrect = false;
   }
-  if (hadIssues) {
+  if (!isCorrect) {
     console.log(JSON.stringify(model));
-    debugger;
   }
+  return isCorrect;
 };

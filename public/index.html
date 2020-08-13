@@ -252,11 +252,29 @@
   </div>
   </template>
 
+    <!-- crudgen template -->
+    <template id="crudgen-template">
+      <style>
+        .crudgen-page,
+        .crudgen-page > textarea {
+          width: 100%;
+          height: 100%;
+        }
+  
+      </style>
+      <div class="crudgen-page">
+        <button id="generate-crud-button">Generate CRUD</button>
+        <textarea id="bean-source"></textarea>
+      </div>
+    </template>
+  
+
   <!-- Header fields and buttons-->
   <div id="design-details">
-    <span>Unide 0.6.0</span>
+    <span>Unide 0.7.0</span>
     <button id="project-settings">Settings</button>
     <button id="new-design">New Design</button>
+    <button id="new-design-from-bean">New Design from bean</button>
     <button id="sketch-design">Sketch</button>
     <button id="html-mode">XML</button>
     <span>

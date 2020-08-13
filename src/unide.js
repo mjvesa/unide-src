@@ -33,6 +33,7 @@ import { cssPropertyTypes } from "./css-proprety-types";
 import { cssProperties } from "./css-properties.js";
 import { enterSketchMode } from "./sketch-mode";
 import { ATIRToXML, XMLToATIR } from "./xml";
+import { generateCrudFromBean } from "./crud_generator.js";
 
 // Global variables
 const $ = document.querySelector.bind(document);
@@ -54,6 +55,8 @@ let previousBegin, previousEnd;
 // Design stack for undo/redo
 let designStack = [];
 let redoStack = [];
+
+let copiedTree;
 
 let textEditor;
 let htmlEditor;
@@ -369,13 +372,11 @@ const modelToDOM = (code, target, inert = false) => {
         // Nested designs, attach shadow root, append style and content
         if (tag in storedDesigns.designs) {
           current = document.createElement("div");
-          const root = document.createElement("div");
           current.attachShadow({ mode: "open" });
-          current.shadowRoot.appendChild(root);
           const style = document.createElement("style");
           style.textContent = storedDesigns.designs[tag].css;
           current.shadowRoot.appendChild(style);
-          modelToDOM(storedDesigns.designs[tag].tree, root, true);
+          modelToDOM(storedDesigns.designs[tag].tree, current.shadowRoot, true);
         } else {
           current = document.createElement(tag);
         }
@@ -709,6 +710,23 @@ const newDesign = () => {
   showCurrentDesign();
 };
 
+const newDesignFromBean = () => {
+  const el = $("#visual-editor");
+  const node = document.importNode($("#crudgen-template").content, true);
+  el.shadowRoot.innerHTML = "";
+  el.shadowRoot.appendChild(node);
+
+  const button = el.shadowRoot.querySelector("#generate-crud-button");
+  button.onclick = () => {
+    const ta = el.shadowRoot.querySelector("#bean-source");
+    $("#design-name").value = "";
+    const crud = generateCrudFromBean(ta.value);
+    currentDesign = { css: "", tree: crud };
+    designStack.push(currentDesign);
+    showCurrentDesign();
+  };
+};
+
 const shareDesigns = () => {
   const designs = btoa(JSON.stringify(storedDesigns));
   const shareLink = window.location.href + "?share=" + designs;
@@ -740,7 +758,6 @@ const showProjectSettings = (event) => {
     appLayoutClass.setAttribute("disabled", true);
   }
   useAppLayout.onchange = (event) => {
-    console.log("perkele" + event.target.checked);
     if (event.target.checked) {
       appLayoutClass.removeAttribute("disabled");
     } else {
@@ -823,6 +840,7 @@ const installUIEventHandlers = () => {
   $("#sketch-design").onclick = switchToSketchMode;
   $("#delete-design").onclick = deleteDesign;
   $("#new-design").onclick = newDesign;
+  $("#new-design-from-bean").onclick = newDesignFromBean;
   $("#share-designs").onclick = shareDesigns;
   $("#project-settings").onclick = showProjectSettings;
   $("#html-mode").onclick = toggleXMLMode;
@@ -942,7 +960,38 @@ const installUIEventHandlers = () => {
 };
 
 const installKeyboardHandlers = () => {
-  document.body.onkeypress = (event) => {
+  document.body.onkeydown = (event) => {
+    if (event.key === "c" && event.ctrlKey) {
+      copiedTree = Model.copySubtree(selectedElement, currentDesign.tree);
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (event.key === "x" && event.ctrlKey) {
+      copiedTree = Model.copySubtree(selectedElement, currentDesign.tree);
+      const newDesign = {
+        tree: Model.deleteSubtree(selectedElement, currentDesign.tree),
+        css: currentDesign.css,
+      };
+      showNewDesign(newDesign);
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (event.key === "v" && event.ctrlKey) {
+      if (copiedTree) {
+        const newDesign = {
+          tree: Model.insertSubtree(
+            selectedElement,
+            Model.POSITION_AFTER_ELEMENT,
+            copiedTree,
+            currentDesign.tree
+          ),
+          css: currentDesign.css,
+        };
+        showNewDesign(newDesign);
+      }
+      event.stopPropagation();
+      event.preventDefault();
+    }
     if (event.key === "z" && event.ctrlKey) {
       if (designStack.length > 0) {
         redoStack.push(currentDesign);
