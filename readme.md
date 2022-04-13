@@ -1,3 +1,6 @@
+This project is no longer being worked on. A new project based on Unide called GUI Builder has been created and
+is actively developed. Check it out at [gui-builder.com](https://gui-builder.com)
+
 # Unide
 
 Unide is a visual designer for Vaadin. It exports to plain Java.
